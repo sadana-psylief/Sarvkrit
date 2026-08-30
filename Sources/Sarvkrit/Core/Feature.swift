@@ -1,0 +1,112 @@
+import CoreGraphics
+import Foundation
+import SwiftUI
+
+/// What the event tap should do with an event after a feature has looked at it.
+///
+/// Features mutate `CGEvent`s in place (it's a reference type), so `.pass` covers both
+/// "untouched" and "rewritten". `.swallow` is here for features that need to consume a
+/// key outright; none of the shipping features do.
+enum EventDecision {
+    case pass
+    case swallow
+}
+
+/// How features are grouped in the tray and the sidebar. Raw values are stable — they'd be
+/// persisted if grouping ever became collapsible — and declaration order is display order.
+enum FeatureCategory: String, CaseIterable, Identifiable {
+    case keyboard
+    case clipboard
+    case windows
+    case files
+    case system
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .keyboard: return "Keyboard"
+        case .clipboard: return "Clipboard"
+        case .windows: return "Windows"
+        case .files: return "Files"
+        case .system: return "System"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .keyboard: return "keyboard"
+        case .clipboard: return "doc.on.clipboard"
+        case .windows: return "macwindow"
+        case .files: return "folder"
+        case .system: return "gearshape.2"
+        }
+    }
+}
+
+/// A permission a feature can't work without.
+///
+/// Replaces the old `requiresAccessibility: Bool`, which couldn't express anything else. File
+/// features need folder access, which is a different grant with different UI, so the app has to be
+/// able to talk about more than one kind.
+enum Requirement: Hashable {
+    case accessibility
+}
+
+/// One toggleable system tweak — the contract the UI renders from.
+///
+/// Deliberately says nothing about *how* a feature does its job. Keystroke features consume the
+/// shared event tap via `EventTapFeature`; a folder-watching feature has no events at all and
+/// conforms to this alone.
+///
+/// Adding a feature is one file under `Features/` plus one line in `FeatureRegistry`. The tray, the
+/// sidebar, the detail pane, persistence and permission gating all follow with no further edits.
+protocol Feature: AnyObject {
+    /// Stable across releases: this is the UserDefaults key. Renaming it silently resets the
+    /// user's choice.
+    var id: String { get }
+    var category: FeatureCategory { get }
+    var title: String { get }
+    /// One line, shown under the title in the tray. Keep it under ~45 characters.
+    var summary: String { get }
+    /// A paragraph, shown in the detail window.
+    var details: String { get }
+    /// SF Symbol, used in the tray, the sidebar and the detail header alike.
+    var symbolName: String { get }
+    /// Optional "try it" line in the detail pane, e.g. "⌘X then ⌘V".
+    var shortcutHint: String? { get }
+    var requirements: Set<Requirement> { get }
+
+    func activate()
+    func deactivate()
+
+    /// A feature's own detail pane, when the generic one can't express it.
+    ///
+    /// `FeatureDetailView` renders title / toggle / prose / permission status for any feature, which
+    /// is all most of them need. A rules editor is not expressible in that shape, so features may
+    /// substitute their own. Returning nil — the default — keeps the generic pane.
+    @MainActor func makeDetailView() -> AnyView?
+}
+
+extension Feature {
+    var shortcutHint: String? { nil }
+    var requirements: Set<Requirement> { [.accessibility] }
+    func activate() {}
+    func deactivate() {}
+    @MainActor func makeDetailView() -> AnyView? { nil }
+
+    var requiresAccessibility: Bool { requirements.contains(.accessibility) }
+}
+
+/// A feature that reads or rewrites input events through the one shared `CGEventTap`.
+protocol EventTapFeature: Feature {
+    /// Which events this feature wants to see. The tap's mask is the union over all enabled
+    /// event-tap features.
+    var eventMask: CGEventMask { get }
+    func handle(event: CGEvent, type: CGEventType) -> EventDecision
+}
+
+/// Convenience for building an event mask from `CGEventType`s.
+func eventMask(_ types: CGEventType...) -> CGEventMask {
+    types.reduce(CGEventMask(0)) { $0 | (1 << CGEventMask($1.rawValue)) }
+}

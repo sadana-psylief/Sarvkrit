@@ -1,0 +1,70 @@
+name: Sarvkrit
+options:
+  bundleIdPrefix: ai.psylief
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: 77A36893HP
+    CODE_SIGN_STYLE: Manual
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_OBJC_ARC: YES
+
+targets:
+  Sarvkrit:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Sarvkrit
+        excludes:
+          - "Resources/Info.plist"
+    settings:
+      base:
+        PRODUCT_NAME: Sarvkrit
+        PRODUCT_BUNDLE_IDENTIFIER: ai.psylief.sarvkrit
+        INFOPLIST_FILE: Sources/Sarvkrit/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/Sarvkrit/Resources/Sarvkrit.entitlements
+        # Signed with the Apple Development cert on purpose: a STABLE signature is what
+        # keeps the Accessibility (TCC) grant alive across rebuilds. Never sign ad-hoc.
+        CODE_SIGN_IDENTITY: "Apple Development"
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+
+  SarvkritTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/SarvkritTests
+    dependencies:
+      - target: Sarvkrit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.psylief.sarvkrit.tests
+        CODE_SIGN_IDENTITY: "Apple Development"
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Sarvkrit:
+    build:
+      targets:
+        Sarvkrit: all
+        SarvkritTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SarvkritTests
+    archive:
+      config: Release

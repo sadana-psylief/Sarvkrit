@@ -1,0 +1,5 @@
+build/
+dist/
+Sarvkrit.xcodeproj/
+.DS_Store
+*.xcuserdatad
