@@ -46,10 +46,6 @@ final class KeepAwakeFeature: Feature, ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        // Check once, at launch, for a sleep flag stranded by a crash or a reboot. This used to
-        // happen as a side effect of `AppState.sync()` deactivating every feature on every toggle;
-        // it belongs here, where it runs once instead of on every unrelated switch.
-        reconcile()
     }
 
     // MARK: - Settings

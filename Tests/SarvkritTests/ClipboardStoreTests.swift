@@ -116,6 +116,7 @@ final class ClipboardStoreTests: XCTestCase {
         let item = textItem("pin me")
         store.add(item, limit: 10)
         store.setPinned(true, id: item.id)
+        store.flush()   // writes are coalesced onto a background queue; force one
 
         XCTAssertTrue(makeStore().items.first { $0.id == item.id }?.isPinned == true)
     }
@@ -132,6 +133,8 @@ final class ClipboardStoreTests: XCTestCase {
         store.add(ClipboardItem(kind: .text("pinned"), isPinned: true), limit: 10)
 
         store.clearHistory()
+        // Also settles the index write, whose atomic temp file would otherwise show up below.
+        store.flush()
 
         XCTAssertTrue(store.items.isEmpty)
         XCTAssertEqual(filesInDirectory(), [], "clearing left orphaned payload files behind")
@@ -144,6 +147,7 @@ final class ClipboardStoreTests: XCTestCase {
         let store = makeStore()
         store.add(textItem("survivor"), limit: 10)
         store.add(ClipboardItem(kind: .files(["/tmp/a.txt"])), limit: 10)
+        store.flush()
 
         let reloaded = makeStore()
         XCTAssertEqual(reloaded.items.count, 2)

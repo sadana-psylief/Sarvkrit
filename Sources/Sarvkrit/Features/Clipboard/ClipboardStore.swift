@@ -230,9 +230,73 @@ final class ClipboardStore: ObservableObject {
         }
     }
 
+    // MARK: - Persistence
+    //
+    // The index used to be re-encoded and rewritten **on the main thread on every change** — every
+    // copy, pin, delete and clear. With a 200-entry history and a 256KB inline-text ceiling that is
+    // a worst case of tens of megabytes of JSON, synchronously, on the thread the event tap's run
+    // loop lives on. A large copy could therefore be felt as input latency in whatever app the user
+    // was typing in.
+    //
+    // Writes now happen on a background queue and coalesce: a burst of copies collapses to one
+    // extra write rather than one per copy, because only the newest snapshot is worth writing.
+
+    /// The most recent snapshot not yet written, and whether a writer is draining. Both are touched
+    /// from the main thread and from `saveQueue`, so both live under the lock.
+    private var pendingSnapshot: [ClipboardItem]?
+    private var isDraining = false
+    private var saveLock = os_unfair_lock_s()
+
+    private let saveQueue = DispatchQueue(
+        label: "\(AppIdentity.bundleID).clipboard-save", qos: .utility
+    )
+
     private func save() {
+        // O(1): the array is copy-on-write, so this hands the writer a stable snapshot without
+        // duplicating any of the payloads.
+        let snapshot = items
+
+        os_unfair_lock_lock(&saveLock)
+        pendingSnapshot = snapshot
+        let writerAlreadyRunning = isDraining
+        if !writerAlreadyRunning { isDraining = true }
+        os_unfair_lock_unlock(&saveLock)
+
+        // A writer that is already running will pick this snapshot up on its next pass.
+        guard !writerAlreadyRunning else { return }
+        saveQueue.async { [weak self] in self?.drainPendingSaves() }
+    }
+
+    private func drainPendingSaves() {
+        while true {
+            os_unfair_lock_lock(&saveLock)
+            let snapshot = pendingSnapshot
+            pendingSnapshot = nil
+            if snapshot == nil { isDraining = false }
+            os_unfair_lock_unlock(&saveLock)
+
+            guard let snapshot else { return }
+            write(snapshot)
+        }
+    }
+
+    /// Writes any outstanding change and waits for it. Called when the app is quitting, where
+    /// "the write is in flight somewhere" is not good enough — the process is about to go away.
+    func flush() {
+        saveQueue.sync { }   // let a writer that is already running finish
+
+        os_unfair_lock_lock(&saveLock)
+        let snapshot = pendingSnapshot
+        pendingSnapshot = nil
+        isDraining = false
+        os_unfair_lock_unlock(&saveLock)
+
+        if let snapshot { write(snapshot) }
+    }
+
+    private func write(_ snapshot: [ClipboardItem]) {
         do {
-            try JSONEncoder().encode(items).write(to: indexURL, options: .atomic)
+            try JSONEncoder().encode(snapshot).write(to: indexURL, options: .atomic)
         } catch {
             log.error("could not save clipboard index: \(error.localizedDescription, privacy: .public)")
         }

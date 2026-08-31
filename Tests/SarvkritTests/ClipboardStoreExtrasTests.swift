@@ -41,6 +41,7 @@ final class ClipboardStoreExtrasTests: XCTestCase {
         let store = makeStore()
         store.add(ClipboardItem(kind: .text("x")), limit: 10)
         store.add(ClipboardItem(kind: .text("x")), limit: 10)
+        store.flush()   // writes are coalesced onto a background queue; force one
         XCTAssertEqual(makeStore().items.first?.copyCount, 2)
     }
 
@@ -53,6 +54,7 @@ final class ClipboardStoreExtrasTests: XCTestCase {
         store.add(ClipboardItem(kind: .text("keep me")), limit: 10)
 
         store.delete(id: doomed.id)
+        store.flush()
 
         XCTAssertEqual(store.items.map(\.searchableText), ["keep me"])
         XCTAssertEqual(makeStore().items.map(\.searchableText), ["keep me"], "the delete didn't persist")
@@ -69,6 +71,8 @@ final class ClipboardStoreExtrasTests: XCTestCase {
         store.add(drop, limit: 10)
 
         store.delete(id: drop.id)
+        // Also settles the index write, whose atomic temp file would otherwise show up here.
+        store.flush()
 
         XCTAssertEqual(filesInDirectory(), [keepName], "delete orphaned or over-deleted files")
     }
