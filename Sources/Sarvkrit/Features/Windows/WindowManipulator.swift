@@ -14,12 +14,7 @@ final class WindowManipulator {
     /// `AXUIElement` is `Hashable` in Swift (bridged to `CFHash`/`CFEqual`), so the element itself
     /// is the key. There is no public window ID to use instead. Entries for windows that have since
     /// closed simply go stale and are cleared with the feature.
-    private struct Memory {
-        var restore: CGRect
-        /// What we last set, so a frame the *user* moved can be told from one we placed.
-        var applied: CGRect
-    }
-    private var memory: [AXUIElement: Memory] = [:]
+    private var memory = RestoreMemory<AXUIElement>()
 
     func forget() { memory.removeAll() }
 
@@ -55,7 +50,7 @@ final class WindowManipulator {
             else { return false }
             target = moved
         } else if action == .restore {
-            guard let remembered = memory[window]?.restore else { return false }
+            guard let remembered = memory.restoreFrame(for: window) else { return false }
             target = remembered
         } else {
             let context = WindowLayout.Context(
@@ -67,7 +62,11 @@ final class WindowManipulator {
             target = rect
         }
 
-        remember(window, current: current, action: action)
+        if action == .restore {
+            memory.markRestored(window)
+        } else {
+            memory.record(window, current: current, target: target)
+        }
         apply(ScreenCoordinates.toAccessibility(target, primaryHeight: height), to: window)
         return true
     }
@@ -84,17 +83,6 @@ final class WindowManipulator {
         let moved = ScreenCoordinates.translate(current, from: screenFrame, to: destination)
         let visible = NSScreen.screens.first { $0.frame == destination }?.visibleFrame ?? destination
         return WindowLayout.clamped(moved, to: visible)
-    }
-
-    /// Records where to restore to, but only when the window isn't already sitting where we last
-    /// put it — otherwise a second snap would overwrite the original position with a snapped one
-    /// and Restore would become a no-op.
-    private func remember(_ window: AXUIElement, current: CGRect, action: WindowAction) {
-        guard action != .restore else { return }
-        if let existing = memory[window], WindowLayout.matches(current, existing.applied) {
-            return
-        }
-        memory[window] = Memory(restore: current, applied: current)
     }
 
     // MARK: - Accessibility
