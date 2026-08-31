@@ -35,6 +35,11 @@
 	<string>Sarvkrit needs access to your Documents folder to apply the file rules you create.</string>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Sarvkrit needs access to your Desktop to apply the file rules you create.</string>
+	<!-- The Volume Mixer routes another app's audio through Sarvkrit to change its level, which
+	     macOS classes as recording that audio. Its own TCC category, separate from the microphone.
+	     Must be written by hand: Xcode doesn't offer this key in its dropdown. -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Sarvkrit needs this to set the volume of individual apps. Their audio passes through Sarvkrit so it can be turned up or down, and is never recorded, stored or sent anywhere.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Sarvkrit</string>
 	<key>NSSupportsAutomaticTermination</key>

@@ -19,6 +19,7 @@ enum FeatureRegistry {
             OutputSwitcherFeature(),
             MuteMicrophoneFeature(),
             MusicBlockerFeature(),
+            VolumeMixerFeature(),
             KeepAwakeFeature(),
         ]
     }
