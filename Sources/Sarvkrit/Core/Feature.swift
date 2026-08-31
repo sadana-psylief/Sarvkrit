@@ -19,6 +19,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
     case clipboard
     case windows
     case files
+    case sound
     case system
 
     var id: String { rawValue }
@@ -29,6 +30,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .windows: return "Windows"
         case .files: return "Files"
+        case .sound: return "Sound"
         case .system: return "System"
         }
     }
@@ -39,6 +41,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.clipboard"
         case .windows: return "macwindow"
         case .files: return "folder"
+        case .sound: return "speaker.wave.2"
         case .system: return "gearshape.2"
         }
     }
@@ -86,6 +89,14 @@ protocol Feature: AnyObject {
     /// is all most of them need. A rules editor is not expressible in that shape, so features may
     /// substitute their own. Returning nil — the default — keeps the generic pane.
     @MainActor func makeDetailView() -> AnyView?
+
+    /// Extra content for the tray, shown under the feature's row while it is switched on.
+    ///
+    /// The tray is otherwise strictly one toggle row per feature, which is right for a feature you
+    /// turn on and forget. It is wrong for one you *operate* from the tray — picking an output
+    /// device, moving a volume slider — where the row is a switch for something you then need to
+    /// use. Returning nil, the default, keeps the plain row.
+    @MainActor func makeTrayView() -> AnyView?
 }
 
 extension Feature {
@@ -94,6 +105,7 @@ extension Feature {
     func activate() {}
     func deactivate() {}
     @MainActor func makeDetailView() -> AnyView? { nil }
+    @MainActor func makeTrayView() -> AnyView? { nil }
 
     var requiresAccessibility: Bool { requirements.contains(.accessibility) }
 }

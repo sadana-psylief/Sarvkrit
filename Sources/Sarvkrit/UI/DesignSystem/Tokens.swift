@@ -43,9 +43,13 @@ enum Theme {
     }
 
     enum Size {
-        /// Widened from 320 when the tray tabs were given real spacing: six tabs at an 8pt gap
-        /// inside 320 left each one narrow enough that "Clipboard" shrank to fit.
-        static let dropdownWidth: CGFloat = 360
+        /// Sized so the tabs stay legible, and re-measured every time one is added.
+        ///
+        /// 320 held six tabs at 42.7pt, narrow enough that "Clipboard" shrank to fit — which is why
+        /// it went to 360 (49.3pt each). A seventh tab for Sound would have put it back to 41.1pt,
+        /// *worse* than the state that prompted the first widening, so it goes to 420: seven tabs at
+        /// 49.7pt, holding the size that was already known to work.
+        static let dropdownWidth: CGFloat = 420
         static let iconTile: CGFloat = 28
         static let windowMin = CGSize(width: 680, height: 440)
         static let windowDefault = CGSize(width: 720, height: 480)

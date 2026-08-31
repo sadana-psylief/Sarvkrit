@@ -2,7 +2,9 @@ name: Sarvkrit
 options:
   bundleIdPrefix: ai.psylief
   deploymentTarget:
-    macOS: "14.0"
+    # 14.4, not 14.0: Core Audio process taps are the only public way to do per-app volume, and
+    # they do not exist before 14.4. Everything else here would run on 14.0.
+    macOS: "14.4"
   createIntermediateGroups: true
   groupSortPosition: top
 

@@ -16,6 +16,7 @@ enum FeatureRegistry {
             TrashCleanupFeature(),
             AppSweepFeature(),
             ShelfFeature(),
+            OutputSwitcherFeature(),
             KeepAwakeFeature(),
         ]
     }

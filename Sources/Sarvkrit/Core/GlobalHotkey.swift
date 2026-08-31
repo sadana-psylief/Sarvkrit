@@ -3,29 +3,50 @@ import Foundation
 
 /// A global shortcut registered with Carbon rather than the event tap.
 ///
-/// **This is the only global gesture in the app that doesn't go through `EventTapService`, and the
-/// reason is the whole point of the Shelf: `RegisterEventHotKey` needs no Accessibility permission.**
-/// An event tap does, and so does `NSEvent.addGlobalMonitorForEvents`. Since the Shelf's screen-edge
-/// and menu-bar triggers are permission-free too, routing the shortcut through the tap would have
-/// been the one thing forcing a permission the feature otherwise doesn't need.
+/// **The only global gesture mechanism in the app that doesn't go through `EventTapService`, and
+/// the reason is permissions: `RegisterEventHotKey` needs none.** An event tap requires
+/// Accessibility, and so does `NSEvent.addGlobalMonitorForEvents` for key events. Features whose
+/// other triggers are permission-free — the Shelf, the audio switcher — would otherwise be forced
+/// to demand a permission they never actually use.
 ///
-/// The cost is a second mechanism to understand, which is why it is confined to this file and why
-/// this comment exists.
-final class ShelfHotkey {
+/// The cost is a second mechanism to understand, which is why it lives in one file with this
+/// comment on it.
+///
+/// **Each instance must be given a distinct `id`.** Carbon identifies hot keys by a signature and
+/// an id, so two hotkeys sharing one would collide and only one would ever fire.
+final class GlobalHotkey {
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
     private var onFire: (() -> Void)?
 
-    /// ⌃⌥S. Chosen to avoid what the app already claims — ⌘⇧C and ⌃⌥1–5 belong to the clipboard,
-    /// and ⌃⌥ plus letters is the window feature's family, but S is not among its bindings.
-    static let defaultKeyCode = UInt32(kVK_ANSI_S)
+    /// ⌃⌥ plus a letter. Chosen to avoid what the app already claims — ⌘⇧C and ⌃⌥1–5 belong to the
+    /// clipboard, and ⌃⌥ plus letters is the window feature's family, so each caller picks a letter
+    /// that family doesn't bind.
     static let defaultModifiers = UInt32(controlKey | optionKey)
 
     /// Carbon identifies hot keys by a four-char code plus an id; both are ours to choose.
     private static let signature: OSType = 0x5341_5256   // "SARV"
-    private static let identifier: UInt32 = 1
 
-    func register(onFire: @escaping () -> Void) {
+    /// Every hot key id in the app, in one place so a duplicate is obvious rather than a silent
+    /// collision where one shortcut stops working for no visible reason.
+    enum ID {
+        static let shelf: UInt32 = 1
+        static let audioCycle: UInt32 = 2
+    }
+
+    /// Distinct per hotkey. Two sharing an id would collide.
+    private let identifier: UInt32
+
+    /// - Parameter id: unique across every `GlobalHotkey` alive at once.
+    init(id: UInt32) {
+        self.identifier = id
+    }
+
+    func register(
+        keyCode: UInt32,
+        modifiers: UInt32 = GlobalHotkey.defaultModifiers,
+        onFire: @escaping () -> Void
+    ) {
         unregister()
         self.onFire = onFire
 
@@ -44,11 +65,12 @@ final class ShelfHotkey {
                 event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                 nil, MemoryLayout<EventHotKeyID>.size, nil, &id
             )
-            guard status == noErr, id.id == ShelfHotkey.identifier else {
-                return OSStatus(eventNotHandledErr)
-            }
+            guard status == noErr else { return OSStatus(eventNotHandledErr) }
 
-            let hotkey = Unmanaged<ShelfHotkey>.fromOpaque(userData).takeUnretainedValue()
+            let hotkey = Unmanaged<GlobalHotkey>.fromOpaque(userData).takeUnretainedValue()
+            // Each instance installs its own handler, so it must ignore presses belonging to
+            // another hotkey's id or both would fire on either key.
+            guard id.id == hotkey.identifier else { return OSStatus(eventNotHandledErr) }
             hotkey.onFire?()
             return noErr
         }
@@ -62,10 +84,10 @@ final class ShelfHotkey {
             &handlerRef
         )
 
-        let hotKeyID = EventHotKeyID(signature: Self.signature, id: Self.identifier)
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: identifier)
         RegisterEventHotKey(
-            Self.defaultKeyCode,
-            Self.defaultModifiers,
+            keyCode,
+            modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,

@@ -69,6 +69,13 @@ struct MenuBarView: View {
                         isOn: app.binding(for: feature),
                         isBlocked: app.isBlocked(feature)
                     )
+                    // Some features are operated from the tray rather than merely switched on
+                    // there — picking an output device, say. Only while enabled: controls for a
+                    // feature that is off would do nothing.
+                    if app.isEnabled(feature), !app.isBlocked(feature),
+                       let tray = feature.makeTrayView() {
+                        tray
+                    }
                 }
             }
         case .general:
