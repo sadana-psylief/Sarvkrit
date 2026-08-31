@@ -29,10 +29,12 @@ final class FeatureCategoryTests: XCTestCase {
     func testShippingFeaturesLandInTheExpectedCategories() {
         let byID = Dictionary(uniqueKeysWithValues: features.map { ($0.id, $0.category) })
         XCTAssertEqual(byID["finder-cut-paste"], .keyboard)
+        XCTAssertEqual(byID["text-snippets"], .keyboard)
         XCTAssertEqual(byID["clipboard-history"], .clipboard)
         XCTAssertEqual(byID["quit-on-close"], .windows)
         XCTAssertEqual(byID["window-management"], .windows)
         XCTAssertEqual(byID["file-rules"], .files)
+        XCTAssertEqual(byID["shelf"], .files)
         XCTAssertEqual(byID["keep-awake"], .system)
     }
 
@@ -73,8 +75,8 @@ final class FeatureCategoryTests: XCTestCase {
         // The split's whole point: folder-watching and trash features must not be dragged into the
         // event tap, and must not require Accessibility on its behalf.
         let tapIDs = Set(features.compactMap { ($0 as? EventTapFeature)?.id })
-        XCTAssertEqual(tapIDs, ["finder-cut-paste", "clipboard-history", "quit-on-close",
-                                "window-management"])
+        XCTAssertEqual(tapIDs, ["finder-cut-paste", "text-snippets", "clipboard-history",
+                                "quit-on-close", "window-management"])
     }
 
     func testAccessibilityIsRequiredByTapFeaturesAndOnlyThem() {
@@ -107,7 +109,7 @@ final class FeatureCategoryTests: XCTestCase {
         MainActor.assumeIsolated {
             let needsOwnPane: Set<String> = [
                 "clipboard-history", "file-rules", "trash-cleanup", "app-sweep", "keep-awake",
-                "window-management",
+                "window-management", "text-snippets", "shelf",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()

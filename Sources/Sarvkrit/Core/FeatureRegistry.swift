@@ -8,12 +8,14 @@ enum FeatureRegistry {
     static func makeAll() -> [Feature] {
         [
             CutPasteFeature(),
+            SnippetFeature(),
             ClipboardFeature(),
             WindowFeature(),
             QuitOnCloseFeature(),
             FileRulesFeature(),
             TrashCleanupFeature(),
             AppSweepFeature(),
+            ShelfFeature(),
             KeepAwakeFeature(),
         ]
     }
