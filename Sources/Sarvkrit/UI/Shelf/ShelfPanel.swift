@@ -24,7 +24,8 @@ final class ShelfController: NSObject {
     private var feature: ShelfFeature?
     private var edgeStrips: [EdgeStripPanel] = []
 
-    private static let size = CGSize(width: 300, height: 340)
+    /// Width comes from the tile grid so the two can't disagree about how many columns fit.
+    private static let size = CGSize(width: ShelfLayout.panelWidth, height: 340)
 
     func configure(feature: ShelfFeature) {
         self.feature = feature
@@ -103,5 +104,11 @@ final class ShelfController: NSObject {
     func removeEdgeStrips() {
         edgeStrips.forEach { $0.orderOut(nil) }
         edgeStrips.removeAll()
+    }
+
+    /// Strips accept drags only while one is in progress. Inert, they'd never receive a drag at
+    /// all; live, they'd swallow every click along a screen edge.
+    func setEdgeStripsArmed(_ armed: Bool) {
+        edgeStrips.forEach { $0.setArmed(armed) }
     }
 }

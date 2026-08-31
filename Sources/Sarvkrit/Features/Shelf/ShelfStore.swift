@@ -63,6 +63,7 @@ final class ShelfStore: ObservableObject {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         deleteBackingFiles(of: items[index])
         thumbnails.removeValue(forKey: id)
+        MainActor.assumeIsolated { previews.forget(id) }
         items.remove(at: index)
         save()
     }
@@ -73,6 +74,7 @@ final class ShelfStore: ObservableObject {
         for item in items where ids.contains(item.id) {
             deleteBackingFiles(of: item)
             thumbnails.removeValue(forKey: item.id)
+            MainActor.assumeIsolated { previews.forget(item.id) }
         }
         items.removeAll { ids.contains($0.id) }
         save()
@@ -81,8 +83,16 @@ final class ShelfStore: ObservableObject {
     func clear() {
         items.forEach(deleteBackingFiles(of:))
         thumbnails.removeAll()
+        MainActor.assumeIsolated { previews.forgetAll() }
         items = []
         save()
+    }
+
+    /// The file an item points at, for previews and drags. Nil for anything that isn't a file, or
+    /// a file that has gone.
+    func fileURL(of item: ShelfItem) -> URL? {
+        guard case .files(let references) = item.kind, let first = references.first else { return nil }
+        return resolve(first)
     }
 
     /// Resolves a parked file, following it if it has been renamed or moved since.
@@ -114,6 +124,10 @@ final class ShelfStore: ObservableObject {
     // `ClipboardStore`.
 
     private var thumbnails: [UUID: NSImage] = [:]
+
+    /// Quick Look previews for parked files. Held here for the same reason as `thumbnails` — the
+    /// shelf rebuilds its view every time it opens.
+    @MainActor let previews = ShelfThumbnails()
 
     func thumbnail(for item: ShelfItem, height: CGFloat) -> NSImage? {
         if let cached = thumbnails[item.id] { return cached }

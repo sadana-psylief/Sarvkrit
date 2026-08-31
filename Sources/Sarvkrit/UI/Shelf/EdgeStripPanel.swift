@@ -2,10 +2,20 @@ import AppKit
 
 /// An invisible strip along a screen edge that reveals the shelf when a drag reaches it.
 ///
-/// The whole permission story rests on this class. A window registered for dragged types is told by
-/// AppKit when a drag passes over it — `draggingEntered` — so the shelf can react to a drag in
-/// progress **without watching the mouse globally and therefore without Accessibility.** Every other
-/// global gesture in this app goes through the event tap; this one does not have to.
+/// A window registered for dragged types is told by AppKit when a drag passes over it —
+/// `draggingEntered` — so the shelf can react without watching the mouse globally.
+///
+/// **The strip is only live while a drag is actually in progress**, and that is not a refinement,
+/// it is the fix for two bugs at once:
+///
+/// - The first version set `ignoresMouseEvents = true` permanently, under a comment claiming
+///   dragging was unaffected. **That was wrong.** A window ignoring mouse events passes them to the
+///   window behind it, and drag-destination callbacks never fire — so the strip never worked.
+/// - But a strip that *doesn't* ignore mouse events swallows every click along a whole screen edge,
+///   which reads as the Mac being broken rather than as a bug in this app.
+///
+/// Arming it only for the duration of a drag is what satisfies both. `ShelfDragMonitor` decides
+/// when.
 final class EdgeStripPanel: NSPanel {
     private let onDragEntered: () -> Void
 
@@ -25,12 +35,16 @@ final class EdgeStripPanel: NSPanel {
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isReleasedWhenClosed = false
-        // Clicks must pass straight through — an invisible strip down the side of the screen that
-        // swallowed clicks would be indistinguishable from the Mac being broken. Dragging is
-        // unaffected: `ignoresMouseEvents` does not disable dragging destinations.
+        // Inert until a drag begins. See the type's comment: live, it eats clicks; ignoring mouse
+        // events, it can't receive drags either.
         ignoresMouseEvents = true
 
         contentView = EdgeStripView(onDragEntered: onDragEntered)
+    }
+
+    /// Live for the duration of a drag, inert the rest of the time.
+    func setArmed(_ armed: Bool) {
+        ignoresMouseEvents = !armed
     }
 
     override var canBecomeKey: Bool { false }

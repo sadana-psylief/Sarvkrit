@@ -31,6 +31,10 @@ struct ShelfDetailView: View {
                         ForEach(ScreenPlacement.Edge.allCases) { Text($0.title).tag($0) }
                     }
                 }
+                Toggle("Open when I start dragging", isOn: Binding(
+                    get: { feature.opensWhenDraggingStarts },
+                    set: { feature.opensWhenDraggingStarts = $0 }
+                ))
                 Toggle("Open with ⌃⌥S", isOn: Binding(
                     get: { feature.globalShortcutEnabled },
                     set: { feature.globalShortcutEnabled = $0 }
@@ -41,8 +45,9 @@ struct ShelfDetailView: View {
                 Text("""
                     You can also open the shelf from the Sarvkrit menu. Every one of these works \
                     without any permission — the screen edge because macOS tells a window when a \
-                    drag passes over it, and the shortcut because it's registered with the system \
-                    rather than by watching your keyboard.
+                    drag passes over it, drag-to-open because watching the mouse needs no \
+                    permission the way watching the keyboard would, and the shortcut because it's \
+                    registered with the system rather than by listening for keys.
                     """)
                     .font(.caption)
                     .foregroundStyle(.secondary)

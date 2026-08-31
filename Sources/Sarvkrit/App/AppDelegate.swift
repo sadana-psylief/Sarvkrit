@@ -61,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shelf.removeEdgeStrips = {
             MainActor.assumeIsolated { ShelfController.shared.removeEdgeStrips() }
         }
+        shelf.setEdgeStripsArmed = { armed in
+            MainActor.assumeIsolated { ShelfController.shared.setEdgeStripsArmed(armed) }
+        }
     }
 
     /// The clipboard feature raises the picker through a closure so it never has to know about the

@@ -43,6 +43,8 @@ final class ShelfFeature: Feature, ObservableObject {
     var showShelf: (() -> Void)?
     var installEdgeStrips: ((ScreenPlacement.Edge, CGFloat) -> Void)?
     var removeEdgeStrips: (() -> Void)?
+    /// Edge strips are inert except while a drag is in flight — see `EdgeStripPanel`.
+    var setEdgeStripsArmed: ((Bool) -> Void)?
 
     // MARK: - Settings
 
@@ -73,6 +75,19 @@ final class ShelfFeature: Feature, ObservableObject {
     /// enough that an ordinary drag across the screen doesn't brush it.
     var edgeThickness: CGFloat { 6 }
 
+    /// Show the shelf the moment a drag starts, wherever the pointer is.
+    ///
+    /// Off by default: a panel that appears unbidden the first time someone drags a file would be
+    /// startling, and this is the one trigger that acts without being aimed at.
+    var opensWhenDraggingStarts: Bool {
+        get { defaults.bool(forKey: Self.dragOpenKey) }
+        set {
+            guard newValue != opensWhenDraggingStarts else { return }
+            objectWillChange.send()
+            defaults.set(newValue, forKey: Self.dragOpenKey)
+        }
+    }
+
     var globalShortcutEnabled: Bool {
         get { defaults.object(forKey: Self.shortcutKey) as? Bool ?? true }
         set {
@@ -86,11 +101,16 @@ final class ShelfFeature: Feature, ObservableObject {
     private static let edgeEnabledKey = "shelf.opensFromScreenEdge"
     private static let edgeKey = "shelf.screenEdge"
     private static let shortcutKey = "shelf.globalShortcut"
+    private static let dragOpenKey = "shelf.opensWhenDraggingStarts"
 
     init(store: ShelfStore = ShelfStore(), defaults: UserDefaults = .standard) {
         self.store = store
         self.defaults = defaults
     }
+
+    /// Watches for a drag starting anywhere. Mouse-only, so it needs no permission — the
+    /// Accessibility requirement on global monitors covers key events, not mice.
+    private lazy var dragMonitor = MainActor.assumeIsolated { ShelfDragMonitor() }
 
     // MARK: - Lifecycle
 
@@ -101,6 +121,19 @@ final class ShelfFeature: Feature, ObservableObject {
         isRunning = true
         applyHotkey()
         applyEdgeStrips()
+
+        MainActor.assumeIsolated {
+            dragMonitor.onDragBegan = { [weak self] in
+                guard let self else { return }
+                // The strips come alive for the duration of the drag, and only then.
+                self.setEdgeStripsArmed?(true)
+                if self.opensWhenDraggingStarts { self.showShelf?() }
+            }
+            dragMonitor.onDragEnded = { [weak self] in
+                self?.setEdgeStripsArmed?(false)
+            }
+            dragMonitor.start()
+        }
 
         // Strips are per screen, so plugging in a monitor needs new ones.
         screenObserver = NotificationCenter.default.addObserver(
@@ -115,6 +148,7 @@ final class ShelfFeature: Feature, ObservableObject {
     func deactivate() {
         isRunning = false
         hotkey.unregister()
+        MainActor.assumeIsolated { dragMonitor.stop() }
         removeEdgeStrips?()
         if let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
