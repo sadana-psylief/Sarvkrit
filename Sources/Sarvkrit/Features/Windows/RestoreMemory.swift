@@ -32,6 +32,13 @@ struct RestoreMemory<Key: Hashable> {
         entries[key] = Entry(restore: current, applied: target)
     }
 
+    /// Whether the window is still sitting where we last put it, rather than somewhere the user
+    /// has since moved it.
+    func isWhereWePutIt(_ key: Key, current: CGRect) -> Bool {
+        guard let entry = entries[key] else { return false }
+        return WindowLayout.matches(current, entry.applied)
+    }
+
     /// Nil for a window we have no record of — `Restore` then does nothing rather than guessing.
     func restoreFrame(for key: Key) -> CGRect? { entries[key]?.restore }
 

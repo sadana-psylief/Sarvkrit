@@ -196,6 +196,15 @@ final class AppState: ObservableObject {
         sync()
     }
 
+    /// Rebuild the event tap because a feature's *mask* changed, rather than its enabled state.
+    ///
+    /// Window Management subscribes to mouse events only while snap-by-dragging is on —
+    /// `leftMouseDragged` fires for every drag on the system, so it isn't something to listen for
+    /// speculatively. Changing that option has to reach the tap, and nothing else here would.
+    func resyncEventTap() {
+        sync()
+    }
+
     /// True when at least one enabled feature needs a permission we don't have.
     var needsAccessibility: Bool {
         !permissions.isTrusted && features.contains { store.isEnabled($0.id) && $0.requiresAccessibility }

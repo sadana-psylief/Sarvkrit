@@ -28,9 +28,12 @@ final class WindowManipulator {
     func perform(
         _ action: WindowAction,
         ultrawideEnabled: Bool,
-        maxWidthFraction: CGFloat = 2.0 / 3.0
+        maxWidthFraction: CGFloat = 2.0 / 3.0,
+        window explicitWindow: AXUIElement? = nil
     ) -> Bool {
-        guard let window = focusedWindow() else { return false }
+        // A drag supplies its own window. `focusedWindow()` would be wrong there: a window dragged
+        // by its titlebar in a background app is never necessarily the focused one.
+        guard let window = explicitWindow ?? focusedWindow() else { return false }
         // Ask before touching anything: a window that can't be resized should be left entirely
         // alone rather than moved and then found to be unresizable halfway through.
         guard isSettable(window, kAXPositionAttribute), isSettable(window, kAXSizeAttribute),
@@ -88,6 +91,58 @@ final class WindowManipulator {
         let moved = ScreenCoordinates.translate(current, from: screenFrame, to: destination)
         let visible = NSScreen.screens.first { $0.frame == destination }?.visibleFrame ?? destination
         return WindowLayout.clamped(moved, to: visible)
+    }
+
+    /// Where an action would put a window, without moving it.
+    ///
+    /// The footprint preview and the drop go through the same computation, so the overlay can't
+    /// promise a rect the drop then declines to use.
+    func targetRect(for action: WindowAction, window: AXUIElement,
+                    ultrawideEnabled: Bool, maxWidthFraction: CGFloat) -> CGRect? {
+        guard let currentAX = frame(of: window) else { return nil }
+        let screens = NSScreen.screens.map(\.frame)
+        guard !screens.isEmpty else { return nil }
+        let current = ScreenCoordinates.toCocoa(currentAX, primaryHeight: primaryHeight)
+        guard let screenFrame = ScreenCoordinates.screen(containing: current, screens: screens),
+              let screen = NSScreen.screens.first(where: { $0.frame == screenFrame })
+        else { return nil }
+
+        let context = WindowLayout.Context(
+            visibleFrame: screen.visibleFrame,
+            currentFrame: current,
+            isUltrawide: ultrawideEnabled && WindowLayout.isUltrawide(screen.frame),
+            ultrawideMaxWidthFraction: maxWidthFraction
+        )
+        return WindowLayout.rect(for: action, in: context)
+    }
+
+    /// True when the window is sitting where we last put it — the question "restore size when
+    /// unsnapped" has to answer before deciding whether a drag should resize it back.
+    func isSnapped(_ window: AXUIElement) -> Bool {
+        guard let currentAX = frame(of: window) else { return false }
+        let current = ScreenCoordinates.toCocoa(currentAX, primaryHeight: primaryHeight)
+        return memory.isWhereWePutIt(window, current: current)
+    }
+
+    func restoreSizeKeepingPointer(_ window: AXUIElement, pointerX: CGFloat) -> Bool {
+        guard let remembered = memory.restoreFrame(for: window),
+              let currentAX = frame(of: window) else { return false }
+        let current = ScreenCoordinates.toCocoa(currentAX, primaryHeight: primaryHeight)
+
+        // Keep the pointer at the same *proportion* along the titlebar, so the window doesn't jump
+        // out from under the cursor as it shrinks.
+        let grabFraction = current.width > 0
+            ? min(max((pointerX - current.minX) / current.width, 0), 1)
+            : 0.5
+        let restored = CGRect(
+            x: pointerX - remembered.width * grabFraction,
+            y: current.maxY - remembered.height,
+            width: remembered.width,
+            height: remembered.height
+        )
+        memory.markRestored(window)
+        apply(ScreenCoordinates.toAccessibility(restored, primaryHeight: primaryHeight), to: window)
+        return true
     }
 
     // MARK: - Accessibility

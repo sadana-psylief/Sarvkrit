@@ -28,10 +28,31 @@ final class WindowFeature: EventTapFeature, ObservableObject {
     let symbolName = "macwindow.on.rectangle"
     var shortcutHint: String? { "⌃⌥← / ⌃⌥→" }
 
-    var eventMask: CGEventMask { Sarvkrit.eventMask(.keyDown, .keyUp) }
+    /// Mouse events join the mask only while snap-by-dragging is on. `leftMouseDragged` fires at
+    /// pointer frequency for **every** drag on the system, so subscribing to it when the feature
+    /// can't use it would be a standing cost for nothing. `AppState.sync()` rebuilds the tap when
+    /// the option changes.
+    var eventMask: CGEventMask {
+        let keys = Sarvkrit.eventMask(.keyDown, .keyUp)
+        guard snapSettings.snapByDragging else { return keys }
+        return keys | Sarvkrit.eventMask(.leftMouseDown, .leftMouseDragged, .leftMouseUp)
+    }
 
     let shortcuts = WindowShortcutStore()
+    let snapSettings = SnapSettings()
     private let manipulator = WindowManipulator()
+    private lazy var snapController = MainActor.assumeIsolated {
+        SnapAreaController(manipulator: manipulator, settings: snapSettings)
+    }
+
+    /// Latest pointer position, written on the tap thread and read on main.
+    ///
+    /// A drag delivers events faster than the main thread can usefully redraw an overlay, so
+    /// instead of dispatching one block per event we keep only the newest point and dispatch again
+    /// only once the previous block has run. Coalescing rather than queueing is what keeps a drag
+    /// from falling behind the pointer.
+    private var pendingPoint: CGPoint?
+    private var dispatchInFlight = false
 
     /// Keys whose keyDown we swallowed, so the matching keyUp is swallowed too. Letting a keyUp
     /// through for a keyDown the app never saw leaves its modifier state confused — the same
@@ -104,6 +125,44 @@ final class WindowFeature: EventTapFeature, ObservableObject {
         shortcuts.bind(action, to: shortcut)
     }
 
+    // Snap settings go through the feature so the pane observes one object. Each is a guarded
+    // setter — SwiftUI writes back through two-way bindings as a matter of course, and an
+    // unchanged value that still republishes is the bug that once pinned a CPU core here.
+    func setSnapByDragging(_ value: Bool) {
+        guard value != snapSettings.snapByDragging else { return }
+        objectWillChange.send()
+        snapSettings.snapByDragging = value
+    }
+
+    func setRestoreSizeOnUnsnap(_ value: Bool) {
+        guard value != snapSettings.restoreSizeOnUnsnap else { return }
+        objectWillChange.send()
+        snapSettings.restoreSizeOnUnsnap = value
+    }
+
+    func setHapticFeedback(_ value: Bool) {
+        guard value != snapSettings.hapticFeedback else { return }
+        objectWillChange.send()
+        snapSettings.hapticFeedback = value
+    }
+
+    func setAnimateFootprint(_ value: Bool) {
+        guard value != snapSettings.animateFootprint else { return }
+        objectWillChange.send()
+        snapSettings.animateFootprint = value
+    }
+
+    func setSnapAction(_ action: WindowAction?, for zone: SnapZone) {
+        guard action != snapSettings.customAction(for: zone) else { return }
+        objectWillChange.send()
+        snapSettings.setAction(action, for: zone)
+    }
+
+    func resetSnapZones() {
+        objectWillChange.send()
+        snapSettings.resetZones()
+    }
+
     func resetShortcuts() {
         objectWillChange.send()
         shortcuts.resetToDefaults()
@@ -113,12 +172,35 @@ final class WindowFeature: EventTapFeature, ObservableObject {
     private static let ultrawideKey = "windows.ultrawide"
     private static let ultrawideWidthKey = "windows.ultrawideMaxWidthPercent"
 
+    func activate() {
+        MainActor.assumeIsolated {
+            snapController.configure(
+                ultrawideEnabled: { [weak self] in self?.ultrawideEnabled ?? false },
+                maxWidthFraction: { [weak self] in
+                    CGFloat(self?.ultrawideMaxWidthPercent ?? 67) / 100
+                }
+            )
+        }
+    }
+
     func deactivate() {
         swallowedKeyDowns.removeAll()
         manipulator.forget()
+        // A drag interrupted by the feature being switched off must not leave an overlay on screen.
+        DispatchQueue.main.async { [weak self] in self?.snapController.cancel() }
     }
 
     func handle(event: CGEvent, type: CGEventType) -> EventDecision {
+        // Mouse first, and always `.pass`: a drag is never swallowed. Branching on type before
+        // reading a keycode keeps mouse events out of the keyboard state entirely.
+        switch type {
+        case .leftMouseDown, .leftMouseDragged, .leftMouseUp:
+            handleMouse(event: event, type: type)
+            return .pass
+        default:
+            break
+        }
+
         // Stand down entirely while a shortcut is being recorded, so the combination being typed
         // reaches the recorder instead of moving a window.
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -133,6 +215,13 @@ final class WindowFeature: EventTapFeature, ObservableObject {
             return swallowedKeyDowns.remove(keyCode) != nil ? .swallow : .pass
         }
         guard type == .keyDown else { return .pass }
+
+        // Escape ends a drag without snapping. Passed on regardless — the key belongs to whatever
+        // the user is doing, not to us.
+        if keyCode == WindowShortcut.escapeKey, type == .keyDown {
+            DispatchQueue.main.async { [weak self] in self?.snapController.cancel() }
+            return .pass
+        }
 
         guard let action = shortcuts.action(keyCode: keyCode, flags: event.flags) else { return .pass }
 
@@ -154,6 +243,42 @@ final class WindowFeature: EventTapFeature, ObservableObject {
             )
         }
         return .swallow
+    }
+
+    // MARK: - Dragging
+
+    private func handleMouse(event: CGEvent, type: CGEventType) {
+        let location = event.location
+        switch type {
+        case .leftMouseDown:
+            DispatchQueue.main.async { [weak self] in self?.snapController.mouseDown(at: location) }
+
+        case .leftMouseDragged:
+            // The coalescing described on `pendingPoint`. At 120Hz a per-event dispatch would
+            // queue faster than main could drain it and the footprint would lag the pointer.
+            os_unfair_lock_lock(&lock)
+            pendingPoint = location
+            let shouldDispatch = !dispatchInFlight
+            if shouldDispatch { dispatchInFlight = true }
+            os_unfair_lock_unlock(&lock)
+
+            guard shouldDispatch else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                os_unfair_lock_lock(&self.lock)
+                let point = self.pendingPoint
+                self.pendingPoint = nil
+                self.dispatchInFlight = false
+                os_unfair_lock_unlock(&self.lock)
+                if let point { self.snapController.mouseDragged(to: point) }
+            }
+
+        case .leftMouseUp:
+            DispatchQueue.main.async { [weak self] in self?.snapController.mouseUp() }
+
+        default:
+            break
+        }
     }
 
     @MainActor func makeDetailView() -> AnyView? {
