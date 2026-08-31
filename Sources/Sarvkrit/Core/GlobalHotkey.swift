@@ -32,6 +32,7 @@ final class GlobalHotkey {
     enum ID {
         static let shelf: UInt32 = 1
         static let audioCycle: UInt32 = 2
+        static let micMute: UInt32 = 3
     }
 
     /// Distinct per hotkey. Two sharing an id would collide.

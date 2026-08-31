@@ -19,8 +19,13 @@ struct SarvkritApp: App {
         } label: {
             // Template rendering is what makes the icon invert correctly in light and dark
             // menu bars and dim when the menu bar is inactive. Never ship a coloured one.
-            if let keepAwake = state.features.compactMap({ $0 as? KeepAwakeFeature }).first {
-                MenuBarLabel(keepAwake: keepAwake)
+            // Both features are handed in directly rather than reached through AppState: SwiftUI
+            // doesn't observe through a nested ObservableObject, so an icon routed that way would
+            // change only on some unrelated redraw — and an indicator you can't rely on noticing is
+            // worse than none.
+            if let keepAwake = state.features.compactMap({ $0 as? KeepAwakeFeature }).first,
+               let micMute = state.features.compactMap({ $0 as? MuteMicrophoneFeature }).first {
+                MenuBarLabel(keepAwake: keepAwake, micMute: micMute)
             } else {
                 Image(systemName: MenuBarIconState.idle.symbolName)
             }
