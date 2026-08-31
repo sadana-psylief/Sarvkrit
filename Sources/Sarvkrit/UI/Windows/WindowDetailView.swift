@@ -4,6 +4,8 @@ struct WindowDetailView: View {
     @ObservedObject var feature: WindowFeature
     @EnvironmentObject private var app: AppState
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     @State private var expandedGroups: Set<WindowAction.Group> = [.halves, .size]
     @State private var zonesExpanded = false
 
@@ -128,12 +130,6 @@ struct WindowDetailView: View {
                 // one: nine zones each carrying a picker over ~39 actions is roughly 350 Text
                 // views, and they were being built on every render of this pane whether or not
                 // anyone had opened them.
-                CollapsibleHeader(
-                    title: "Zones",
-                    caption: customZoneCount,
-                    isExpanded: $zonesExpanded
-                )
-
                 if zonesExpanded {
                     ForEach(SnapZone.allCases) { zone in
                         LabeledContent(zone.title) {
@@ -156,6 +152,12 @@ struct WindowDetailView: View {
                     }
                     Button("Reset Zones") { feature.resetSnapZones() }
                 }
+            } header: {
+                CollapsibleHeader(
+                    title: "Zones",
+                    caption: customZoneCount,
+                    isExpanded: zonesExpanded
+                ) { toggleZones() }
             }
         }
     }
@@ -165,13 +167,11 @@ struct WindowDetailView: View {
     @ViewBuilder
     private var shortcutSections: some View {
         ForEach(WindowAction.Group.allCases) { group in
+            // The header goes in the `header:` slot rather than among the rows. A grouped Form is
+            // table-backed, so a header living as a sibling row meant every toggle inserted or
+            // removed rows in the same table as the control being clicked — which left it inert
+            // under a stationary cursor and took two clicks to close.
             Section {
-                CollapsibleHeader(
-                    title: group.title,
-                    caption: boundCount(in: group),
-                    isExpanded: expansion(for: group)
-                )
-
                 if expandedGroups.contains(group) {
                     // Bindings are built fresh on every render rather than cached. A shared cached
                     // Binding across view trees is exactly what once made toggles revert.
@@ -187,6 +187,12 @@ struct WindowDetailView: View {
                         }
                     }
                 }
+            } header: {
+                CollapsibleHeader(
+                    title: group.title,
+                    caption: boundCount(in: group),
+                    isExpanded: expandedGroups.contains(group)
+                ) { toggle(group) }
             }
         }
 
@@ -199,13 +205,23 @@ struct WindowDetailView: View {
         }
     }
 
-    private func expansion(for group: WindowAction.Group) -> Binding<Bool> {
-        Binding(
-            get: { expandedGroups.contains(group) },
-            set: { isOpen in
-                if isOpen { expandedGroups.insert(group) } else { expandedGroups.remove(group) }
+    private func toggle(_ group: WindowAction.Group) {
+        withAnimation(motion) {
+            if expandedGroups.contains(group) {
+                expandedGroups.remove(group)
+            } else {
+                expandedGroups.insert(group)
             }
-        )
+        }
+    }
+
+    private func toggleZones() {
+        withAnimation(motion) { zonesExpanded.toggle() }
+    }
+
+    /// Honours Reduce Motion, like every other animation in the app.
+    private var motion: Animation? {
+        Theme.Motion.resolved(reduceMotion: reduceMotion)
     }
 
     private func actions(in group: WindowAction.Group) -> [WindowAction] {
