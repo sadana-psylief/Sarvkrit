@@ -25,7 +25,11 @@ final class WindowManipulator {
     private var primaryHeight: CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
 
     @discardableResult
-    func perform(_ action: WindowAction, ultrawideEnabled: Bool) -> Bool {
+    func perform(
+        _ action: WindowAction,
+        ultrawideEnabled: Bool,
+        maxWidthFraction: CGFloat = 2.0 / 3.0
+    ) -> Bool {
         guard let window = focusedWindow() else { return false }
         // Ask before touching anything: a window that can't be resized should be left entirely
         // alone rather than moved and then found to be unresizable halfway through.
@@ -56,7 +60,8 @@ final class WindowManipulator {
             let context = WindowLayout.Context(
                 visibleFrame: screen.visibleFrame,
                 currentFrame: current,
-                isUltrawide: ultrawideEnabled && WindowLayout.isUltrawide(screen.frame)
+                isUltrawide: ultrawideEnabled && WindowLayout.isUltrawide(screen.frame),
+                ultrawideMaxWidthFraction: maxWidthFraction
             )
             guard let rect = WindowLayout.rect(for: action, in: context) else { return false }
             target = rect
