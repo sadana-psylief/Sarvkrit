@@ -60,8 +60,8 @@ final class FeatureStoreTests: XCTestCase {
         // A duplicate id would silently make two features share one toggle.
         let ids = FeatureRegistry.makeAll().map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count)
-        XCTAssertEqual(ids, ["finder-cut-paste", "clipboard-history", "window-management",
-                             "quit-on-close", "file-rules", "trash-cleanup", "app-sweep",
-                             "keep-awake"])
+        XCTAssertEqual(ids, ["finder-cut-paste", "text-snippets", "clipboard-history",
+                             "window-management", "quit-on-close", "file-rules", "trash-cleanup",
+                             "app-sweep", "keep-awake"])
     }
 }
