@@ -43,9 +43,24 @@ final class FileRulesFeature: Feature, ObservableObject {
 
     private static let recheckInterval: TimeInterval = 1.2
     private static let maxRechecks = 5
+
+    /// Everything below is touched **only** on `workQueue`.
+    ///
+    /// It used to be reachable from two queues at once: `handleChanges` arrives on the folder
+    /// watcher's queue and mutated all three on the way through `scheduleRecheck`, while the
+    /// recheck itself was dispatched to main and mutated them again. Unsynchronised `Set` and
+    /// `Dictionary` access across two threads is a rare crash rather than a visible bug, which is
+    /// the worst kind to leave in.
     private var recheckWorkItem: DispatchWorkItem?
     private var pendingRecheck: Set<URL> = []
     private var recheckAttempts: [URL: Int] = [:]
+
+    /// Serialises the rule state, and keeps the engine off the main thread.
+    ///
+    /// The work here is not small — a stat and an extended-attribute read per file, a regex
+    /// compiled per rule, and the file moves themselves. Running it on main also stalled the event
+    /// tap, whose run loop is there.
+    private let workQueue = DispatchQueue(label: "\(AppIdentity.bundleID).file-rules")
 
     init(store: RuleStore = RuleStore(), engine: RuleEngine = RuleEngine()) {
         self.store = store
@@ -78,10 +93,13 @@ final class FileRulesFeature: Feature, ObservableObject {
     func deactivate() {
         isActive = false
         watcher.stop()
-        recheckWorkItem?.cancel()
-        recheckWorkItem = nil
-        pendingRecheck.removeAll()
-        recheckAttempts.removeAll()
+        workQueue.async { [weak self] in
+            guard let self else { return }
+            self.recheckWorkItem?.cancel()
+            self.recheckWorkItem = nil
+            self.pendingRecheck.removeAll()
+            self.recheckAttempts.removeAll()
+        }
     }
 
     private func startWatching() {
@@ -94,9 +112,15 @@ final class FileRulesFeature: Feature, ObservableObject {
 
         // Sweep what's already there. Stability is not enforced for this pass: these files have
         // plainly finished arriving, and there's no second event coming to confirm it.
-        for folder in folders {
-            let reports = engine.processFolder(folder, rules: runnableRules(), mode: .perform)
-            record(reports)
+        //
+        // Off the main thread: this walks every watched folder and can move files, and it runs
+        // whenever the feature activates or a rule is edited.
+        let rules = runnableRules()
+        workQueue.async { [weak self] in
+            guard let self else { return }
+            for folder in folders {
+                self.record(self.engine.processFolder(folder, rules: rules, mode: .perform))
+            }
         }
     }
 
@@ -114,7 +138,7 @@ final class FileRulesFeature: Feature, ObservableObject {
     }
 
     private func handleChanges(_ urls: [URL]) {
-        process(urls)
+        workQueue.async { [weak self] in self?.process(urls) }
     }
 
     @discardableResult
@@ -155,7 +179,7 @@ final class FileRulesFeature: Feature, ObservableObject {
         recheckWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.runRecheck() }
         recheckWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.recheckInterval, execute: work)
+        workQueue.asyncAfter(deadline: .now() + Self.recheckInterval, execute: work)
     }
 
     private func runRecheck() {
@@ -177,12 +201,12 @@ final class FileRulesFeature: Feature, ObservableObject {
             return true
         }
         guard !interesting.isEmpty else { return }
-        let updated = (interesting + lastReports).prefix(100).map { $0 }
-        // On the main thread: this is @Published and drives the pane.
-        if Thread.isMainThread {
-            lastReports = updated
-        } else {
-            DispatchQueue.main.async { self.lastReports = updated }
+        // `lastReports` is @Published and drives the pane, so it is read *and* written on main —
+        // reading it from the work queue while main writes would be the same race this file just
+        // fixed elsewhere.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.lastReports = (interesting + self.lastReports).prefix(100).map { $0 }
         }
     }
 

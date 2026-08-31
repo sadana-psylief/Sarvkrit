@@ -60,7 +60,10 @@ final class FileRulesIntegrationTests: XCTestCase {
 
         feature.activate()
 
-        // The initial sweep is synchronous, so no waiting is needed here.
+        // The initial sweep runs on the feature's work queue rather than the caller's thread: it
+        // walks every watched folder and moves files, and it used to do that on main from inside
+        // `AppState.sync()` — where the event tap is also waiting.
+        waitUntil { self.exists("Text/already.txt") }
         XCTAssertTrue(exists("Text/already.txt"), "activation should file what's already there")
     }
 
