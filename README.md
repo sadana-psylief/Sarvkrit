@@ -289,8 +289,3 @@ term, not an oversight.
 **"Sarvkrit" is not licensed.** The licence covers the code — it grants no rights to the name, the
 icon, or the branding, and explicitly implies no licences beyond the ones it states. If you publish
 something built on this code, give it your own name.
-
----
-
-*Not legal advice. If the licence terms matter to your situation, read [LICENSE.md](LICENSE.md) in
-full.*
