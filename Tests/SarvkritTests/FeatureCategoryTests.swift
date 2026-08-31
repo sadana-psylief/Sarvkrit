@@ -31,6 +31,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["finder-cut-paste"], .keyboard)
         XCTAssertEqual(byID["clipboard-history"], .clipboard)
         XCTAssertEqual(byID["quit-on-close"], .windows)
+        XCTAssertEqual(byID["window-management"], .windows)
         XCTAssertEqual(byID["file-rules"], .files)
         XCTAssertEqual(byID["keep-awake"], .system)
     }
@@ -72,7 +73,8 @@ final class FeatureCategoryTests: XCTestCase {
         // The split's whole point: folder-watching and trash features must not be dragged into the
         // event tap, and must not require Accessibility on its behalf.
         let tapIDs = Set(features.compactMap { ($0 as? EventTapFeature)?.id })
-        XCTAssertEqual(tapIDs, ["finder-cut-paste", "clipboard-history", "quit-on-close"])
+        XCTAssertEqual(tapIDs, ["finder-cut-paste", "clipboard-history", "quit-on-close",
+                                "window-management"])
     }
 
     func testAccessibilityIsRequiredByTapFeaturesAndOnlyThem() {
