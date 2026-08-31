@@ -210,27 +210,43 @@ final class AppState: ObservableObject {
         !permissions.isTrusted && features.contains { store.isEnabled($0.id) && $0.requiresAccessibility }
     }
 
+    /// Which features are currently activated, so `sync()` can touch only what changed.
+    private var activeFeatureIDs: Set<String> = []
+
     private func sync() {
         let wanted = features.filter { store.isEnabled($0.id) }
-        let runnable = wanted.filter { permissions.isTrusted || !$0.requiresAccessibility }
+        let permitted = wanted.filter { permissions.isTrusted || !$0.requiresAccessibility }
 
-        // Rebuild from scratch rather than diffing: there is one tap, its mask is the union
+        // The tap itself is still rebuilt from scratch: there is one tap, its mask is the union
         // of its subscribers, and any change to the set means a new mask anyway.
-        for feature in features { feature.deactivate() }
-
-        // Only features that actually consume input events reach the tap. A folder-watching
-        // feature has no event mask and simply activates.
-        let tapFeatures = runnable.compactMap { $0 as? EventTapFeature }
+        //
+        // Only features that actually consume input events reach it. A folder-watching feature has
+        // no event mask and simply activates.
+        let tapFeatures = permitted.compactMap { $0 as? EventTapFeature }
         let started = tapFeatures.isEmpty || tap.setSubscribers(tapFeatures)
-        if started {
-            runnable.forEach { $0.activate() }
-        } else {
-            // The tap failed, so tap-driven features are blocked — but features that don't need
-            // it are unaffected and should still run.
-            runnable.filter { !($0 is EventTapFeature) }.forEach { $0.activate() }
-        }
 
-        let unrunnable = Set(wanted.map(\.id)).subtracting(runnable.map(\.id))
+        // A tap that failed to start blocks the features that depend on it — but features that
+        // don't need it are unaffected and should still run.
+        let runnable = started ? permitted : permitted.filter { !($0 is EventTapFeature) }
+        let runnableIDs = Set(runnable.map(\.id))
+
+        // Touch only the features whose state actually changed.
+        //
+        // This used to deactivate *every* feature and reactivate every runnable one, on every
+        // toggle. Activation is not cheap: between them the features fork `pmset`, enumerate
+        // /Applications, walk the Trash and sweep every watched folder — synchronously, on the
+        // thread the event tap runs on. Toggling one feature has no business restarting the other
+        // seven, and the cost was paid as input latency across the whole system.
+        for feature in features
+        where activeFeatureIDs.contains(feature.id) && !runnableIDs.contains(feature.id) {
+            feature.deactivate()
+        }
+        for feature in runnable where !activeFeatureIDs.contains(feature.id) {
+            feature.activate()
+        }
+        activeFeatureIDs = runnableIDs
+
+        let unrunnable = Set(wanted.map(\.id)).subtracting(permitted.map(\.id))
         let blocked = started
             ? unrunnable
             : unrunnable.union(wanted.filter { $0 is EventTapFeature }.map(\.id))

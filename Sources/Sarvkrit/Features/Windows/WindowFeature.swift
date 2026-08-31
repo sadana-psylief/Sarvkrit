@@ -33,10 +33,16 @@ final class WindowFeature: EventTapFeature, ObservableObject {
     /// can't use it would be a standing cost for nothing. `AppState.sync()` rebuilds the tap when
     /// the option changes.
     var eventMask: CGEventMask {
-        let keys = Sarvkrit.eventMask(.keyDown, .keyUp)
-        guard snapSettings.snapByDragging else { return keys }
-        return keys | Sarvkrit.eventMask(.leftMouseDown, .leftMouseDragged, .leftMouseUp)
+        snapSettings.snapByDragging ? Self.keysAndMouseMask : Self.keysMask
     }
+
+    /// Precomputed, because `eventMask` used to build its mask on the fly — including a
+    /// `UserDefaults` read for `snapByDragging` — and the tap consulted it once per subscriber per
+    /// event. That put a defaults lookup on every keystroke and every drag on the system, on the
+    /// main run loop the tap shares with whatever app the user is typing in.
+    private static let keysMask = Sarvkrit.eventMask(.keyDown, .keyUp)
+    private static let keysAndMouseMask =
+        keysMask | Sarvkrit.eventMask(.leftMouseDown, .leftMouseDragged, .leftMouseUp)
 
     let shortcuts: WindowShortcutStore
     let snapSettings: SnapSettings
