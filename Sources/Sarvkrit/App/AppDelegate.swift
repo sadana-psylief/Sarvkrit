@@ -30,6 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// Clipboard writes are coalesced onto a background queue so a copy never stalls the main
+    /// thread. That trade is only safe if quitting waits for the last one — otherwise the most
+    /// recent copies would be lost on the way out.
+    func applicationWillTerminate(_ notification: Notification) {
+        AppState.shared.features
+            .compactMap { $0 as? ClipboardFeature }
+            .forEach { $0.store.flush() }
+    }
+
     /// The clipboard feature raises the picker through a closure so it never has to know about the
     /// UI layer — the same separation that keeps `Feature` free of SwiftUI.
     private func wireClipboardPicker() {

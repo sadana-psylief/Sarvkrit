@@ -2,7 +2,7 @@
 
 A macOS menu bar app for the small things macOS does differently than you'd expect.
 
-Seven features, each an independent toggle you can turn on or off at any time. Nothing runs unless
+Eight features, each an independent toggle you can turn on or off at any time. Nothing runs unless
 you switch it on, and turning something off stops it immediately.
 
 ```
@@ -64,6 +64,36 @@ type to search, and press Return to paste.
 thing about this feature.
 
 ### 🪟 Windows
+
+#### Window Management
+
+Move and resize windows from the keyboard, or by dragging them to a screen edge.
+
+**⌃⌥←** and **⌃⌥→** snap the focused window to half the screen, **⌃⌥↩** maximizes it, and
+**⌃⌥⌫** puts it back where it was. Forty-one actions in all — halves, corners, thirds, fourths,
+sixths, nudges and moving between displays — and every one of them is rebindable. Click a shortcut
+in the settings pane to change it; **⌫** clears one and **⎋** cancels.
+
+The recorder refuses shortcuts that would do you harm. A bare letter is rejected, because Sarvkrit
+swallows what it matches and the letter would never reach the app you were typing in; so are ⌘Q,
+⌘W, ⌘Tab, ⌘Space and Escape. Anything that clashes with Sarvkrit's own shortcuts is allowed but
+tells you what it will cost first.
+
+**Ultrawide mode** retunes the layouts for very wide displays, where a half is wider than anyone
+wants a window. With it on, the arrow keys give thirds instead — press the same one again to cycle
+through a third, a half and two-thirds — and Maximize stops short of filling the screen, at a width
+you choose.
+
+It applies **per display**. A laptop alongside an ultrawide keeps its halves, so the setting is
+safe to leave on with either one plugged in. Sarvkrit will point out that an ultrawide is connected,
+but never switches the mode on by itself: a shortcut that quietly means something different
+depending on which monitor a window is on would be worse than one that is occasionally suboptimal.
+
+**Snap areas** are off until you ask for them, since they change what an ordinary window drag does.
+Turn them on and dragging a window to an edge or corner shows a preview of where it will land.
+Only the edges and corners react — dragging across the middle of the screen does nothing. Each of
+the nine zones can be reassigned, and a window dragged away from its edge can be given back the
+size it had before.
 
 #### Quit on Close
 
@@ -157,6 +187,15 @@ your Mac; if that happens, Sarvkrit tells you on next launch and offers to put i
 
 | Shortcut | Where | What it does |
 | --- | --- | --- |
+| **⌃⌥←** / **⌃⌥→** | Anywhere | Snap the window to half the screen (a third on an ultrawide) |
+| **⌃⌥↑** / **⌃⌥↓** | Anywhere | Snap to the top or bottom half |
+| **⌃⌥U** / **⌃⌥I** / **⌃⌥J** / **⌃⌥K** | Anywhere | Snap to a corner |
+| **⌃⌥D** / **⌃⌥F** / **⌃⌥G** | Anywhere | First, centre or last third |
+| **⌃⌥↩** | Anywhere | Maximize |
+| **⌃⌥C** | Anywhere | Centre without resizing |
+| **⌃⌥⌫** | Anywhere | Restore to where the window was before |
+| **⌃⌥−** / **⌃⌥=** | Anywhere | Make smaller or larger |
+| **⌃⌥⌘←** / **⌃⌥⌘→** | Anywhere | Move to the previous or next display |
 | **⌘X** then **⌘V** | Finder | Move files |
 | **⌘⇧C** | Anywhere | Open clipboard history at the cursor |
 | **⌃⌥1**–**⌃⌥5** | Anywhere | Paste one of the first five entries directly |
@@ -167,6 +206,10 @@ your Mac; if that happens, Sarvkrit tells you on next launch and offers to put i
 | **⌥P** | Clipboard picker | Pin or unpin |
 | **⌥⌫** | Clipboard picker | Delete that entry |
 | **Esc** | Clipboard picker | Close |
+
+Window shortcuts fire only while Window Management is switched on, and the keys go back to the app
+you're using the moment you turn it off. They are all rebindable — the table above is just what
+ships, chosen to match Rectangle so that switching over keeps your muscle memory.
 
 **Why ⌘1–⌘5 only works inside the picker.** ⌘1–⌘9 switches tabs in Safari, Chrome, Slack and
 essentially every tabbed app. Claiming it system-wide would take it away everywhere, so the short

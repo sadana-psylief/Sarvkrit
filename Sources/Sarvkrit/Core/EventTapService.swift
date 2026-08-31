@@ -18,7 +18,14 @@ final class EventTapService {
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var subscribers: [EventTapFeature] = []
+    /// Subscribers paired with their mask, **sampled once** when the tap is built.
+    ///
+    /// `eventMask` is a computed property on every feature, and one of them reads `UserDefaults`
+    /// to decide whether it wants mouse events. Reading it per subscriber per event meant a
+    /// defaults lookup on every keystroke and every drag on the system — and since this callback
+    /// runs on the main run loop, that cost is paid by whatever app the user is actually typing
+    /// in. A mask can only change through a resync, which rebuilds the tap and re-samples here.
+    private var subscribers: [(feature: EventTapFeature, mask: CGEventMask)] = []
 
     var isRunning: Bool { tap != nil }
 
@@ -37,8 +44,8 @@ final class EventTapService {
     func setSubscribers(_ features: [EventTapFeature]) -> Bool {
         stop()
         guard !features.isEmpty else { return true }
-        subscribers = features
-        let mask = features.reduce(CGEventMask(0)) { $0 | $1.eventMask }
+        subscribers = features.map { ($0, $0.eventMask) }
+        let mask = subscribers.reduce(CGEventMask(0)) { $0 | $1.mask }
         return start(mask: mask)
     }
 
@@ -112,8 +119,9 @@ final class EventTapService {
             return Unmanaged.passUnretained(event)
         }
 
-        for subscriber in subscribers {
-            guard subscriber.eventMask & (1 << CGEventMask(type.rawValue)) != 0 else { continue }
+        let bit = CGEventMask(1) << CGEventMask(type.rawValue)
+        for (subscriber, mask) in subscribers {
+            guard mask & bit != 0 else { continue }
             if case .swallow = subscriber.handle(event: event, type: type) {
                 return nil
             }

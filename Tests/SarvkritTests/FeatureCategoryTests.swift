@@ -31,6 +31,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["finder-cut-paste"], .keyboard)
         XCTAssertEqual(byID["clipboard-history"], .clipboard)
         XCTAssertEqual(byID["quit-on-close"], .windows)
+        XCTAssertEqual(byID["window-management"], .windows)
         XCTAssertEqual(byID["file-rules"], .files)
         XCTAssertEqual(byID["keep-awake"], .system)
     }
@@ -72,7 +73,8 @@ final class FeatureCategoryTests: XCTestCase {
         // The split's whole point: folder-watching and trash features must not be dragged into the
         // event tap, and must not require Accessibility on its behalf.
         let tapIDs = Set(features.compactMap { ($0 as? EventTapFeature)?.id })
-        XCTAssertEqual(tapIDs, ["finder-cut-paste", "clipboard-history", "quit-on-close"])
+        XCTAssertEqual(tapIDs, ["finder-cut-paste", "clipboard-history", "quit-on-close",
+                                "window-management"])
     }
 
     func testAccessibilityIsRequiredByTapFeaturesAndOnlyThem() {
@@ -97,20 +99,36 @@ final class FeatureCategoryTests: XCTestCase {
         // Returning nil keeps FeatureDetailView the single implementation for everything simple.
         // File Rules is the exception the extension point exists for: a rule list and editor can't
         // be expressed as title/toggle/prose.
+        //
+        // Asserted **per feature**, not per category. It used to be per category, which stopped
+        // being expressible the moment Windows held both Quit on Close — a toggle and a sentence,
+        // which is what the generic pane is for — and Window Management, which needs 41 shortcut
+        // recorders and the ultrawide controls.
         MainActor.assumeIsolated {
-            // Files and Clipboard need controls the generic pane can't express — a rule editor,
-            // age and size limits, a list of leftovers to approve, an ignore list. The
-            // keyboard/window tweaks are just a toggle and prose, which is exactly what the
-            // generic pane is for.
-            let needsOwnPane: Set<FeatureCategory> = [.files, .clipboard, .system]
+            let needsOwnPane: Set<String> = [
+                "clipboard-history", "file-rules", "trash-cleanup", "app-sweep", "keep-awake",
+                "window-management",
+            ]
             for feature in features {
                 let custom = feature.makeDetailView()
-                if needsOwnPane.contains(feature.category) {
+                if needsOwnPane.contains(feature.id) {
                     XCTAssertNotNil(custom, "\(feature.id) needs its own pane")
                 } else {
                     XCTAssertNil(custom, "\(feature.id) should use the generic pane")
                 }
             }
+        }
+    }
+
+    func testBothWindowsFeaturesCoexistWithDifferentPaneKinds() {
+        // The specific case that broke the per-category rule: one category, two kinds of pane.
+        MainActor.assumeIsolated {
+            let windows = features.filter { $0.category == .windows }
+            XCTAssertEqual(Set(windows.map(\.id)), ["quit-on-close", "window-management"])
+
+            let panes = windows.map { ($0.id, $0.makeDetailView() != nil) }
+            XCTAssertTrue(panes.contains { $0 == ("window-management", true) })
+            XCTAssertTrue(panes.contains { $0 == ("quit-on-close", false) })
         }
     }
 }

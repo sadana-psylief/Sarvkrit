@@ -30,7 +30,12 @@ enum AX {
         let result = AXUIElementCopyElementAtPosition(
             systemWide(), Float(point.x), Float(point.y), &element
         )
-        return result == .success ? element : nil
+        guard result == .success, let element else { return nil }
+        // The cap has to be set on *this* element too. It doesn't inherit from the system-wide one
+        // it came from, so without this every later `AX.string` on it waits the ~6s default against
+        // an app that may be busy — on whichever queue asked.
+        AXUIElementSetMessagingTimeout(element, messagingTimeout)
+        return element
     }
 
     static func string(_ element: AXUIElement, _ attribute: String) -> String? {

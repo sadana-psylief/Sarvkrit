@@ -23,9 +23,14 @@ final class ClipboardStoreTests: XCTestCase {
         ClipboardItem(kind: .text(value), createdAt: date)
     }
 
+    /// The payload files, ignoring the index.
+    ///
+    /// The prefix match matters: the index is written atomically, which means a transient
+    /// `clipboard.json.sb-XXXXXX` alongside it. Matching the exact name only made every test that
+    /// lists this directory flaky the moment saving moved off the main thread.
     private func filesInDirectory() -> [String] {
         (try? FileManager.default.contentsOfDirectory(atPath: directory.path))?
-            .filter { $0 != "clipboard.json" }.sorted() ?? []
+            .filter { !$0.hasPrefix("clipboard.json") }.sorted() ?? []
     }
 
     // MARK: - Ordering and dedupe
@@ -116,6 +121,7 @@ final class ClipboardStoreTests: XCTestCase {
         let item = textItem("pin me")
         store.add(item, limit: 10)
         store.setPinned(true, id: item.id)
+        store.flush()   // writes are coalesced onto a background queue; force one
 
         XCTAssertTrue(makeStore().items.first { $0.id == item.id }?.isPinned == true)
     }
@@ -132,6 +138,8 @@ final class ClipboardStoreTests: XCTestCase {
         store.add(ClipboardItem(kind: .text("pinned"), isPinned: true), limit: 10)
 
         store.clearHistory()
+        // Also settles the index write, whose atomic temp file would otherwise show up below.
+        store.flush()
 
         XCTAssertTrue(store.items.isEmpty)
         XCTAssertEqual(filesInDirectory(), [], "clearing left orphaned payload files behind")
@@ -144,6 +152,7 @@ final class ClipboardStoreTests: XCTestCase {
         let store = makeStore()
         store.add(textItem("survivor"), limit: 10)
         store.add(ClipboardItem(kind: .files(["/tmp/a.txt"])), limit: 10)
+        store.flush()
 
         let reloaded = makeStore()
         XCTAssertEqual(reloaded.items.count, 2)

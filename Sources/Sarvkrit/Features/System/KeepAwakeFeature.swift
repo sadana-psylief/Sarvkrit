@@ -142,19 +142,34 @@ final class KeepAwakeFeature: Feature, ObservableObject {
     }
 
     /// Compares what we believe against what the system reports, and updates the published state.
+    ///
+    /// The `pmset` read forks a subprocess and waits on it, so it must never run on the main
+    /// thread: the event tap's run loop is there, and a blocking fork shows up as input latency in
+    /// whatever app the user happens to be typing in. The answer is applied when it arrives, and
+    /// the pane simply renders with what it already had until then.
     func reconcile() {
-        let flagIsOn = SleepDisableFlag.currentState() ?? false
-        let situation = KeepAwakeState.Situation(
-            weSetIt: weSetFlag,
-            wantsLidClosed: isRunning && lidClosed,
-            flagIsOn: flagIsOn
-        )
+        let weSet = weSetFlag
+        let wantsLidClosed = isRunning && lidClosed
 
-        lidClosedActive = flagIsOn
-        hasStrandedFlag = KeepAwakeState.showsStrandedWarning(for: situation)
-        // Once the flag is genuinely gone, stop claiming ownership of it.
-        if !flagIsOn { weSetFlag = false }
+        Self.reconcileQueue.async { [weak self] in
+            let flagIsOn = SleepDisableFlag.currentState() ?? false
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let situation = KeepAwakeState.Situation(
+                    weSetIt: weSet,
+                    wantsLidClosed: wantsLidClosed,
+                    flagIsOn: flagIsOn
+                )
+                self.lidClosedActive = flagIsOn
+                self.hasStrandedFlag = KeepAwakeState.showsStrandedWarning(for: situation)
+                // Once the flag is genuinely gone, stop claiming ownership of it.
+                if !flagIsOn { self.weSetFlag = false }
+            }
+        }
     }
+
+    private static let reconcileQueue =
+        DispatchQueue(label: "\(AppIdentity.bundleID).keep-awake-reconcile")
 
     // MARK: - Timer
 

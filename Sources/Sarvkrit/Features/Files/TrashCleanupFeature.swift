@@ -191,6 +191,31 @@ final class TrashCleanupFeature: Feature, ObservableObject {
         return doomed
     }
 
+    /// The read-only probe the pane runs when it opens, done off the main thread.
+    ///
+    /// Enumerating the Trash stats every item, and it was running synchronously on main every time
+    /// the pane was shown — which is main-thread time the event tap is also waiting on. The pane
+    /// renders immediately with whatever it already knew and updates when the answer lands.
+    func probe() {
+        Self.probeQueue.async { [weak self] in
+            guard let self else { return }
+            let items = self.currentItems()
+            DispatchQueue.main.async {
+                guard let items else {
+                    self.trashItemCount = 0
+                    self.access = .denied
+                    self.log.error("cannot read the Trash — Full Disk Access is probably not granted")
+                    return
+                }
+                self.access = .granted
+                self.trashItemCount = items.count
+            }
+        }
+    }
+
+    private static let probeQueue =
+        DispatchQueue(label: "\(AppIdentity.bundleID).trash-probe")
+
     func openFullDiskAccessSettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!
         NSWorkspace.shared.open(url)

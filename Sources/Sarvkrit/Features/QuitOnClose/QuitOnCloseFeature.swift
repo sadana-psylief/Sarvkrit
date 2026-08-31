@@ -70,7 +70,15 @@ final class QuitOnCloseFeature: EventTapFeature {
 
         guard let element = AX.element(at: point),
               let pid = AX.pid(of: element),
-              let app = NSRunningApplication(processIdentifier: pid)
+              // Our own windows, decided *before* the role and subrole reads below.
+              //
+              // An Accessibility query is answered by the target process's own main run loop, so
+              // asking about our own window means asking our own main thread — the one already busy
+              // rendering whatever was just clicked. This ran on every left click anywhere on the
+              // system, our own settings window included.
+              pid != ProcessInfo.processInfo.processIdentifier,
+              let app = NSRunningApplication(processIdentifier: pid),
+              app.bundleIdentifier != Self.ownBundleID
         else { return }
 
         let target = CloseButtonHitTest.Target(

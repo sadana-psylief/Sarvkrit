@@ -9,6 +9,7 @@ enum FeatureRegistry {
         [
             CutPasteFeature(),
             ClipboardFeature(),
+            WindowFeature(),
             QuitOnCloseFeature(),
             FileRulesFeature(),
             TrashCleanupFeature(),

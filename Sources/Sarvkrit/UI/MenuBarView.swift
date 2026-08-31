@@ -36,8 +36,14 @@ struct MenuBarView: View {
         }
         .padding(Theme.Space.md)
         .frame(width: Theme.Size.dropdownWidth)
-        // Grow and shrink the panel rather than snapping it — Keyboard is one row, Files is three.
-        .standardMotion(value: selection)
+        // The panel's own height is deliberately NOT animated, though it does change between tabs
+        // — Keyboard is one row, Files is three.
+        //
+        // A MenuBarExtra window is positioned by the system, once, anchored under the menu bar
+        // icon. An NSWindow's origin is its bottom-left, so when the content shrinks and the panel
+        // is resized without its origin being adjusted, the top edge falls away from the menu bar.
+        // Animating the resize walks it through many intermediate heights and makes that far more
+        // likely. A panel that snaps to its new size is much better than one that comes unmoored.
         .standardMotion(value: app.needsAccessibility)
         .onAppear {
             selection = TrayTab.resolve(storedID: app.selectedTrayTabID, available: app.trayTabs)
@@ -108,6 +114,7 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .clickableCursor()
             .accessibilityLabel("Open Sarvkrit settings")
         }
         .padding(.horizontal, Theme.Space.xs)

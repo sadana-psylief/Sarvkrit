@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The only numbers any view is allowed to invent.
@@ -42,7 +43,9 @@ enum Theme {
     }
 
     enum Size {
-        static let dropdownWidth: CGFloat = 320
+        /// Widened from 320 when the tray tabs were given real spacing: six tabs at an 8pt gap
+        /// inside 320 left each one narrow enough that "Clipboard" shrank to fit.
+        static let dropdownWidth: CGFloat = 360
         static let iconTile: CGFloat = 28
         static let windowMin = CGSize(width: 680, height: 440)
         static let windowDefault = CGSize(width: 720, height: 480)
@@ -76,6 +79,26 @@ private struct StandardMotion<V: Equatable>: ViewModifier {
 }
 
 extension View {
+    /// Hand cursor over anything that responds to a click.
+    ///
+    /// Nothing in this app used to change the cursor at all, so custom `.buttonStyle(.plain)`
+    /// controls — tray tabs, menu rows, section headers — gave no sign they were clickable.
+    ///
+    /// `.pointerStyle` is macOS 15+ and the deployment target is 14.0, hence the gate. The
+    /// fallback uses `set()` rather than `push()`/`pop()` deliberately: a missed exit event would
+    /// leave an unbalanced cursor stack, and a hand cursor stuck over the whole screen is worse
+    /// than never having one.
+    @ViewBuilder
+    func clickableCursor() -> some View {
+        if #available(macOS 15.0, *) {
+            pointerStyle(.link)
+        } else {
+            onHover { inside in
+                if inside { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+            }
+        }
+    }
+
     /// Animate this view's changes to `value` with the app's one motion token.
     func standardMotion<V: Equatable>(value: V) -> some View {
         modifier(StandardMotion(value: value))
