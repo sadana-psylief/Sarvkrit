@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         observeDuplicateLaunches()
         wireClipboardPicker()
+        wireShelf()
         wireCutPasteToasts()
         reconcileKeepAwake()
 
@@ -37,6 +38,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppState.shared.features
             .compactMap { $0 as? ClipboardFeature }
             .forEach { $0.store.flush() }
+        AppState.shared.features
+            .compactMap { $0 as? ShelfFeature }
+            .forEach { $0.store.flush() }
+    }
+
+    /// Same closure-wiring as the clipboard picker, for the same reason: the feature never imports
+    /// the UI layer.
+    private func wireShelf() {
+        guard let shelf = AppState.shared.features
+            .compactMap({ $0 as? ShelfFeature }).first else { return }
+
+        ShelfController.shared.configure(feature: shelf)
+        shelf.showShelf = {
+            MainActor.assumeIsolated { ShelfController.shared.show() }
+        }
+        shelf.installEdgeStrips = { edge, thickness in
+            MainActor.assumeIsolated {
+                ShelfController.shared.installEdgeStrips(on: edge, thickness: thickness)
+            }
+        }
+        shelf.removeEdgeStrips = {
+            MainActor.assumeIsolated { ShelfController.shared.removeEdgeStrips() }
+        }
     }
 
     /// The clipboard feature raises the picker through a closure so it never has to know about the

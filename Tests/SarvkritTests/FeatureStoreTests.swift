@@ -62,6 +62,6 @@ final class FeatureStoreTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count)
         XCTAssertEqual(ids, ["finder-cut-paste", "text-snippets", "clipboard-history",
                              "window-management", "quit-on-close", "file-rules", "trash-cleanup",
-                             "app-sweep", "keep-awake"])
+                             "app-sweep", "shelf", "keep-awake"])
     }
 }

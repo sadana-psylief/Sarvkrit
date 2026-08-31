@@ -15,6 +15,7 @@ enum FeatureRegistry {
             FileRulesFeature(),
             TrashCleanupFeature(),
             AppSweepFeature(),
+            ShelfFeature(),
             KeepAwakeFeature(),
         ]
     }

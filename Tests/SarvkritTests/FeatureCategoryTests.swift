@@ -34,6 +34,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["quit-on-close"], .windows)
         XCTAssertEqual(byID["window-management"], .windows)
         XCTAssertEqual(byID["file-rules"], .files)
+        XCTAssertEqual(byID["shelf"], .files)
         XCTAssertEqual(byID["keep-awake"], .system)
     }
 
@@ -108,7 +109,7 @@ final class FeatureCategoryTests: XCTestCase {
         MainActor.assumeIsolated {
             let needsOwnPane: Set<String> = [
                 "clipboard-history", "file-rules", "trash-cleanup", "app-sweep", "keep-awake",
-                "window-management", "text-snippets",
+                "window-management", "text-snippets", "shelf",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()

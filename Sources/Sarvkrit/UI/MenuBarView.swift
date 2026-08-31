@@ -30,6 +30,9 @@ struct MenuBarView: View {
             selectedContent
 
             VStack(spacing: 2) {
+                if let shelf, app.isEnabled(shelf) {
+                    MenuActionRow(title: "Open Shelf", shortcut: "⌃⌥S") { openShelf() }
+                }
                 MenuActionRow(title: "Open Sarvkrit…", shortcut: "⌘,") { openMainWindow() }
                 MenuActionRow(title: "Quit Sarvkrit", shortcut: "⌘Q") { NSApp.terminate(nil) }
             }
@@ -118,6 +121,16 @@ struct MenuBarView: View {
             .accessibilityLabel("Open Sarvkrit settings")
         }
         .padding(.horizontal, Theme.Space.xs)
+    }
+
+    /// Only shown when the Shelf is switched on — a menu entry for a feature that is off would do
+    /// nothing.
+    private var shelf: ShelfFeature? {
+        app.features.compactMap { $0 as? ShelfFeature }.first
+    }
+
+    private func openShelf() {
+        ShelfController.shared.show()
     }
 
     private func openMainWindow() {
