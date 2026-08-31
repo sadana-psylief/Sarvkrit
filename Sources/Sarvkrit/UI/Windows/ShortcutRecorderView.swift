@@ -43,6 +43,7 @@ struct ShortcutRecorderView: View {
             }
             .buttonStyle(.plain)
             .onHover { isHovering = $0 }
+            .clickableCursor()
             .help(isRecording ? "Press a combination, or ⎋ to cancel" : "Click to change")
 
             if let refusal {

@@ -5,6 +5,7 @@ struct WindowDetailView: View {
     @EnvironmentObject private var app: AppState
 
     @State private var expandedGroups: Set<WindowAction.Group> = [.halves, .size]
+    @State private var zonesExpanded = false
 
     var body: some View {
         Form {
@@ -113,7 +114,9 @@ struct WindowDetailView: View {
             Text("Snap Areas")
         } footer: {
             Text("""
-                Drag a window to a screen edge or corner and a preview shows where it will land.                 Only the edges and corners react — dragging across the middle of the screen does                 nothing, so ordinary window moves are unaffected.
+                Drag a window to a screen edge or corner and a preview shows where it will land. \
+                Only the edges and corners react — dragging across the middle of the screen does \
+                nothing, so ordinary window moves are unaffected.
                 """)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -121,28 +124,38 @@ struct WindowDetailView: View {
 
         if feature.snapSettings.snapByDragging {
             Section {
-                ForEach(SnapZone.allCases) { zone in
-                    LabeledContent(zone.title) {
-                        Picker("", selection: Binding(
-                            get: { feature.snapSettings.customAction(for: zone) },
-                            set: { feature.setSnapAction($0, for: zone) }
-                        )) {
-                            // Nil means "whatever suits the display", which is not the same as any
-                            // one action: it resolves to thirds on an ultrawide and halves
-                            // elsewhere, per screen.
-                            Text("Default").tag(WindowAction?.none)
-                            Divider()
-                            ForEach(WindowAction.allCases.filter { !$0.isDisplayMove && $0 != .restore }) {
-                                Text($0.title).tag(WindowAction?.some($0))
+                // Collapsed by default, and that is a performance decision as much as a tidiness
+                // one: nine zones each carrying a picker over ~39 actions is roughly 350 Text
+                // views, and they were being built on every render of this pane whether or not
+                // anyone had opened them.
+                CollapsibleHeader(
+                    title: "Zones",
+                    caption: customZoneCount,
+                    isExpanded: $zonesExpanded
+                )
+
+                if zonesExpanded {
+                    ForEach(SnapZone.allCases) { zone in
+                        LabeledContent(zone.title) {
+                            Picker("", selection: Binding(
+                                get: { feature.snapSettings.customAction(for: zone) },
+                                set: { feature.setSnapAction($0, for: zone) }
+                            )) {
+                                // Nil means "whatever suits the display", which is not the same as
+                                // any one action: it resolves to thirds on an ultrawide and halves
+                                // elsewhere, per screen.
+                                Text("Default").tag(WindowAction?.none)
+                                Divider()
+                                ForEach(WindowAction.assignableToZone) {
+                                    Text($0.title).tag(WindowAction?.some($0))
+                                }
                             }
+                            .labelsHidden()
+                            .frame(width: 190)
                         }
-                        .labelsHidden()
-                        .frame(width: 190)
                     }
+                    Button("Reset Zones") { feature.resetSnapZones() }
                 }
-                Button("Reset Zones") { feature.resetSnapZones() }
-            } header: {
-                Text("Zones")
             }
         }
     }
@@ -151,33 +164,13 @@ struct WindowDetailView: View {
 
     @ViewBuilder
     private var shortcutSections: some View {
-        // Hand-built rather than a `DisclosureGroup`.
-        //
-        // A `DisclosureGroup` here renders its content correctly when it starts expanded, but
-        // inside a grouped `Form` it offers no working way to *toggle* — the label isn't a button
-        // and the triangle has no usable hit region, so the binding's setter was never called and
-        // six of the eight groups could not be opened at all. An explicit `Button` is what the
-        // rest of this app already does when macOS won't supply a usable control; see
-        // `TrayTabBar`, `MenuActionRow` and `ShortcutRecorderView`.
         ForEach(WindowAction.Group.allCases) { group in
             Section {
-                Button { toggle(group) } label: {
-                    HStack(spacing: Theme.Space.sm) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(expandedGroups.contains(group) ? 90 : 0))
-                        Text(group.title)
-                        Spacer()
-                        Text(boundCount(in: group))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    // Load-bearing: without it the `Spacer()` is dead space and only the text
-                    // itself would respond, which is most of the way back to the original bug.
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                CollapsibleHeader(
+                    title: group.title,
+                    caption: boundCount(in: group),
+                    isExpanded: expansion(for: group)
+                )
 
                 if expandedGroups.contains(group) {
                     // Bindings are built fresh on every render rather than cached. A shared cached
@@ -206,18 +199,22 @@ struct WindowDetailView: View {
         }
     }
 
-    private func toggle(_ group: WindowAction.Group) {
-        withAnimation(.easeOut(duration: 0.18)) {
-            if expandedGroups.contains(group) {
-                expandedGroups.remove(group)
-            } else {
-                expandedGroups.insert(group)
+    private func expansion(for group: WindowAction.Group) -> Binding<Bool> {
+        Binding(
+            get: { expandedGroups.contains(group) },
+            set: { isOpen in
+                if isOpen { expandedGroups.insert(group) } else { expandedGroups.remove(group) }
             }
-        }
+        )
     }
 
     private func actions(in group: WindowAction.Group) -> [WindowAction] {
-        WindowAction.allCases.filter { $0.group == group }
+        WindowAction.grouped[group] ?? []
+    }
+
+    private var customZoneCount: String {
+        let custom = SnapZone.allCases.filter { feature.snapSettings.customAction(for: $0) != nil }
+        return custom.isEmpty ? "All default" : "\(custom.count) changed"
     }
 
     private func boundCount(in group: WindowAction.Group) -> String {

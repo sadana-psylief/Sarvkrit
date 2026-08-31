@@ -70,7 +70,13 @@ struct KeepAwakeDetailView: View {
         .formStyle(.grouped)
         .navigationTitle("Keep Awake")
         .onAppear { feature.reconcile() }
-        .onReceive(tick) { now = $0 }
+        // Guarded, the way MenuBarLabel already guards its own tick: `now` exists only to drive
+        // the countdown, and writing it unconditionally re-rendered the whole Form once a second
+        // even with nothing counting down.
+        .onReceive(tick) { instant in
+            guard feature.remainingTime != nil else { return }
+            now = instant
+        }
     }
 
     private var strandedNotice: some View {

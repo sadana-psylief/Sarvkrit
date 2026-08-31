@@ -25,6 +25,16 @@ enum WindowAction: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Grouped once, rather than by filtering all 41 actions per group on every render. The
+    /// settings pane asked for eight groups and re-scanned the full list for each of them —
+    /// including the collapsed ones, whose contents were never shown.
+    static let grouped: [Group: [WindowAction]] = Dictionary(grouping: allCases, by: \.group)
+
+    /// The actions a snap zone may be assigned. A display move needs a second screen and Restore
+    /// has no meaning for a drop, so neither belongs in the menu.
+    static let assignableToZone: [WindowAction] =
+        allCases.filter { !$0.isDisplayMove && $0 != .restore }
+
     enum Group: String, CaseIterable, Identifiable {
         case halves, corners, size, thirds, fourths, sixths, move, displays
         var id: String { rawValue }

@@ -192,4 +192,29 @@ final class WindowLayoutTests: XCTestCase {
                        "an action belongs to no rendered group and cannot be bound")
         XCTAssertEqual(Set(grouped), Set(WindowAction.allCases))
     }
+
+    // MARK: - Lookup tables the settings pane renders from
+
+    func testTheGroupedTableMatchesFilteringByGroup() {
+        // The pane used to re-filter all 41 actions for each of eight groups on every render.
+        // Precomputing that is only safe if it agrees exactly with the filter it replaced.
+        for group in WindowAction.Group.allCases {
+            XCTAssertEqual(WindowAction.grouped[group] ?? [],
+                           WindowAction.allCases.filter { $0.group == group },
+                           "\(group.title) disagrees with the filter it replaced")
+        }
+    }
+
+    func testTheGroupedTableCoversEveryAction() {
+        let total = WindowAction.Group.allCases.reduce(0) { $0 + (WindowAction.grouped[$1]?.count ?? 0) }
+        XCTAssertEqual(total, WindowAction.allCases.count,
+                       "an action belongs to no rendered group and cannot be bound")
+    }
+
+    func testZoneAssignableActionsExcludeTheOnesADropCannotApply() {
+        // A display move needs a second screen and Restore has no meaning for a drop.
+        XCTAssertFalse(WindowAction.assignableToZone.contains { $0.isDisplayMove })
+        XCTAssertFalse(WindowAction.assignableToZone.contains(.restore))
+        XCTAssertEqual(WindowAction.assignableToZone.count, WindowAction.allCases.count - 3)
+    }
 }

@@ -1,21 +1,36 @@
 import SwiftUI
 
 /// Written once, renders any `Feature`. Adding a feature never touches this file.
+///
+/// Deliberately observes nothing. It used to hold an `@EnvironmentObject` on `AppState` for the
+/// generic pane's sake, which meant every unrelated AppState change — including a tray tab click
+/// in the other window — re-ran this body and rebuilt whichever custom pane was open. The generic
+/// pane keeps the observation it actually needs; the wrapper doesn't.
 struct FeatureDetailView: View {
-    @EnvironmentObject private var app: AppState
     let feature: any Feature
 
     var body: some View {
         // A feature may substitute its own pane when the generic one can't express it — a rules
-        // editor, say. Most features return nil and get everything below for free.
+        // editor, say. Most features return nil and get the generic one for free.
         if let custom = feature.makeDetailView() {
-            custom.navigationTitle(feature.title)
+            custom
+                // `makeDetailView` hands back a fresh `AnyView` each call, which erases the view's
+                // static type. Keying on the feature gives SwiftUI something stable to match on.
+                .id(feature.id)
+                .navigationTitle(feature.title)
         } else {
-            genericDetail
+            GenericFeatureDetailView(feature: feature)
         }
     }
+}
 
-    private var genericDetail: some View {
+/// Title, toggle, prose and permission status — everything a feature needs when it has no special
+/// controls of its own.
+private struct GenericFeatureDetailView: View {
+    @EnvironmentObject private var app: AppState
+    let feature: any Feature
+
+    var body: some View {
         Form {
             Section {
                 HStack(spacing: Theme.Space.lg) {

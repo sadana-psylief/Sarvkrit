@@ -13,7 +13,10 @@ struct TrayTabBar: View {
     @Binding var selection: TrayTab
 
     var body: some View {
-        HStack(spacing: 2) {
+        // 8pt, not the 2 it started at: with six tabs the selection and hover fills nearly
+        // touched. The dropdown was widened to 360 at the same time, because more gap inside the
+        // old 320 would only have made each tab narrower.
+        HStack(spacing: Theme.Space.sm) {
             ForEach(tabs) { tab in
                 TrayTabButton(tab: tab, isSelected: tab == selection) {
                     selection = tab
@@ -54,6 +57,10 @@ private struct TrayTabButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .standardMotion(value: isSelected)
+        .standardMotion(value: isHovering)
+        .clickableCursor()
+        // The 10pt labels can scale down to fit, so the full name stays available on hover.
+        .help(tab.title)
         // VoiceOver needs to hear that this is a tab and whether it's the current one; an icon and
         // a 10pt label alone don't convey that.
         .accessibilityLabel(tab.title)

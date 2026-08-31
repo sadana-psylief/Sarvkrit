@@ -98,8 +98,9 @@ struct TrashCleanupDetailView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Trash Cleanup")
-        // Probe on sight so the permission problem is visible before anything is clicked.
-        .onAppear { _ = feature.run(dryRun: true) }
+        // Probe on sight so the permission problem is visible before anything is clicked —
+        // off the main thread, so opening the pane doesn't stall on stat-ing every item.
+        .onAppear { feature.probe() }
     }
 
     private var fullDiskAccessNotice: some View {

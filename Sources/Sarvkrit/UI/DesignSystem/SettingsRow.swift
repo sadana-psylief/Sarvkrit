@@ -78,5 +78,7 @@ struct MenuActionRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .standardMotion(value: isHovering)
+        .clickableCursor()
     }
 }

@@ -108,6 +108,7 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .clickableCursor()
             .accessibilityLabel("Open Sarvkrit settings")
         }
         .padding(.horizontal, Theme.Space.xs)
