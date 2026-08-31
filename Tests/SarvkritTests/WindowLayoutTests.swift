@@ -178,4 +178,18 @@ final class WindowLayoutTests: XCTestCase {
         for _ in 0..<200 { frame = rect(.moveUp, context(frame)) }
         XCTAssertEqual(frame.maxY, screen.maxY, accuracy: 0.01)
     }
+
+    // MARK: - Reachability in the settings pane
+
+    func testEveryActionIsReachableFromExactlyOneGroupInThePane() {
+        // The pane renders strictly group by group, so an action whose group is never rendered is
+        // invisible and unbindable — the same failure, arrived at differently, as the group
+        // headers that couldn't be opened.
+        let grouped = WindowAction.Group.allCases.flatMap { group in
+            WindowAction.allCases.filter { $0.group == group }
+        }
+        XCTAssertEqual(grouped.count, WindowAction.allCases.count,
+                       "an action belongs to no rendered group and cannot be bound")
+        XCTAssertEqual(Set(grouped), Set(WindowAction.allCases))
+    }
 }

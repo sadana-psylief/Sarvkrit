@@ -16,12 +16,28 @@ final class SnapAreaController {
 
     /// The window the drag started on, captured once at mouse-down while it is still answering.
     private var draggedWindow: AXUIElement?
+    /// Its frame, in Cocoa space, read **once** when the drag was armed.
+    ///
+    /// Re-reading it per pointer move is what made the preview lag: each read is IPC to an app
+    /// that is busy redrawing itself mid-drag. A drag moves a window without resizing it, so the
+    /// size stays valid throughout, and the position only matters for actions that the drop
+    /// applies from the precomputed rect anyway.
+    private var draggedFrame: CGRect?
+    /// Whether the window was still sitting where we last snapped it when the drag began, decided
+    /// once. "Restore size when unsnapped" can only fire once per drag, so asking repeatedly was
+    /// pure cost.
+    private var wasSnapped = false
     /// The rect the footprint is currently promising, so the drop applies exactly what was shown.
     private var previewedZone: SnapZone?
     /// The screen the pointer is over, resolved once per move and used for the zone, the ultrawide
     /// decision and the target rect alike. Letting those disagree is what puts a footprint on one
     /// display and the window on another.
     private var activeScreen: NSScreen?
+    /// Every zone's target rect for `activeScreen`, computed once when the drag reaches that
+    /// screen. Moving between zones is then a dictionary lookup rather than arithmetic plus two
+    /// blocking Accessibility reads.
+    private var zoneRects: [SnapZone: CGRect] = [:]
+    private var zoneRectsScreen: CGRect?
 
     private var ultrawideEnabled: () -> Bool = { false }
     private var maxWidthFraction: () -> CGFloat = { 2.0 / 3.0 }
@@ -52,17 +68,30 @@ final class SnapAreaController {
             // Hit-test while the titlebar is still under the pointer and the app is answering.
             // Waiting for the drag to start races the window moving out from under the point.
             guard let window = self.titlebarWindow(at: point) else { return }
-            Task { @MainActor in self.armDrag(window: window, at: point) }
+            // Read the frame here too, on the same background hop, so the drag path never has to
+            // ask the app anything again. Both are IPC; neither belongs on main.
+            let axFrame = WindowManipulator.accessibilityFrame(of: window)
+            Task { @MainActor in self.armDrag(window: window, axFrame: axFrame, at: point) }
         }
     }
 
-    private func armDrag(window: AXUIElement, at point: CGPoint) {
-        guard settings.snapByDragging else { return }
+    private func armDrag(window: AXUIElement, axFrame: CGRect?, at point: CGPoint) {
+        guard settings.snapByDragging, let axFrame else { return }
         // The hit-test is asynchronous, so the button may already be back up by the time it lands.
         // Arming then would leave the session armed with no drag in progress, and the next
         // unrelated drag on the system would be treated as ours.
         guard !session.isArmed else { return }
+
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let frame = ScreenCoordinates.toCocoa(axFrame, primaryHeight: primaryHeight)
+
         draggedWindow = window
+        draggedFrame = frame
+        wasSnapped = settings.restoreSizeOnUnsnap && manipulator.isSnapped(window, at: frame)
+        zoneRects = [:]
+        zoneRectsScreen = nil
+        // Pay the window server's first-show cost now, while nothing is waiting on it.
+        footprint.prepare()
         _ = session.pressed(at: point)
     }
 
@@ -75,9 +104,19 @@ final class SnapAreaController {
 
         // "Restore size when unsnapped": a snapped window dragged away from its edge goes back to
         // the size it had before, under the pointer, rather than staying full-height.
-        if settings.restoreSizeOnUnsnap, zone == nil, case .dragging = session.state,
-           manipulator.isSnapped(window) {
-            _ = manipulator.restoreSizeKeepingPointer(window, pointerX: cocoaX(of: point))
+        //
+        // `wasSnapped` was decided when the drag was armed and is cleared the moment this fires.
+        // It can only happen once per drag, and re-asking on every pointer move meant two blocking
+        // Accessibility reads for most of the screen — the single biggest source of the lag.
+        if wasSnapped, zone == nil, case .dragging = session.state {
+            wasSnapped = false
+            if manipulator.restoreSizeKeepingPointer(window, pointerX: cocoaX(of: point)) {
+                // The window is a different size now, so every precomputed rect that depended on
+                // it is stale.
+                draggedFrame = manipulator.cocoaFrame(of: window) ?? draggedFrame
+                zoneRects = [:]
+                zoneRectsScreen = nil
+            }
         }
 
         guard let effect = session.moved(to: point, zone: zone) else { return }
@@ -100,8 +139,12 @@ final class SnapAreaController {
 
     private func finishDrag() {
         draggedWindow = nil
+        draggedFrame = nil
+        wasSnapped = false
         previewedZone = nil
         activeScreen = nil
+        zoneRects = [:]
+        zoneRectsScreen = nil
         footprint.hide()
     }
 
@@ -110,7 +153,7 @@ final class SnapAreaController {
     private func apply(_ effect: SnapDragSession.Effect, window: AXUIElement) {
         switch effect {
         case .showFootprint(let zone), .moveFootprint(let zone):
-            guard let rect = rect(for: zone, window: window) else { return }
+            guard let rect = rect(for: zone) else { return }
             previewedZone = zone
             footprint.show(rect, animated: settings.animateFootprint && effect.isMove)
             if settings.hapticFeedback {
@@ -123,26 +166,44 @@ final class SnapAreaController {
 
         case .snap(let zone):
             footprint.hide()
-            _ = manipulator.perform(
-                settings.action(for: zone, ultrawide: isUltrawide(activeScreen)),
-                ultrawideEnabled: ultrawideEnabled(),
-                maxWidthFraction: maxWidthFraction(),
-                window: window,
-                onScreen: activeScreen
-            )
+            // The rect the footprint promised, applied verbatim. Recomputing here would re-read
+            // the window's live frame, and any action that depends on its current position would
+            // resolve differently at the drop than it did in the preview.
+            guard let rect = rect(for: zone) else { return }
+            manipulator.perform(rect: rect, on: window)
         }
     }
 
-    /// The footprint and the drop go through the same call, so the overlay cannot promise a rect
-    /// the drop then declines to use.
-    private func rect(for zone: SnapZone, window: AXUIElement) -> CGRect? {
-        manipulator.targetRect(
-            for: settings.action(for: zone, ultrawide: isUltrawide(activeScreen)),
-            window: window,
-            ultrawideEnabled: ultrawideEnabled(),
-            maxWidthFraction: maxWidthFraction(),
-            onScreen: activeScreen
+    /// The footprint and the drop read the same table, so the overlay cannot promise a rect the
+    /// drop then declines to use.
+    private func rect(for zone: SnapZone) -> CGRect? {
+        guard let screen = activeScreen else { return nil }
+        if zoneRectsScreen != screen.frame { rebuildZoneRects(for: screen) }
+        return zoneRects[zone]
+    }
+
+    /// All nine rects for one screen, in one pass of pure arithmetic.
+    ///
+    /// Recomputed only when the drag crosses onto another display — never per pointer move, and
+    /// never touching Accessibility.
+    private func rebuildZoneRects(for screen: NSScreen) {
+        zoneRects = [:]
+        zoneRectsScreen = screen.frame
+        guard let frame = draggedFrame else { return }
+
+        let ultrawide = isUltrawide(screen)
+        let context = WindowLayout.Context(
+            visibleFrame: screen.visibleFrame,
+            currentFrame: frame,
+            isUltrawide: ultrawide,
+            ultrawideMaxWidthFraction: maxWidthFraction()
         )
+        for zone in SnapZone.allCases {
+            let action = settings.action(for: zone, ultrawide: ultrawide)
+            if let rect = WindowLayout.rect(for: action, in: context) {
+                zoneRects[zone] = rect
+            }
+        }
     }
 
     // MARK: - Geometry

@@ -151,16 +151,35 @@ struct WindowDetailView: View {
 
     @ViewBuilder
     private var shortcutSections: some View {
+        // Hand-built rather than a `DisclosureGroup`.
+        //
+        // A `DisclosureGroup` here renders its content correctly when it starts expanded, but
+        // inside a grouped `Form` it offers no working way to *toggle* — the label isn't a button
+        // and the triangle has no usable hit region, so the binding's setter was never called and
+        // six of the eight groups could not be opened at all. An explicit `Button` is what the
+        // rest of this app already does when macOS won't supply a usable control; see
+        // `TrayTabBar`, `MenuActionRow` and `ShortcutRecorderView`.
         ForEach(WindowAction.Group.allCases) { group in
             Section {
-                DisclosureGroup(
-                    isExpanded: Binding(
-                        get: { expandedGroups.contains(group) },
-                        set: { isOpen in
-                            if isOpen { expandedGroups.insert(group) } else { expandedGroups.remove(group) }
-                        }
-                    )
-                ) {
+                Button { toggle(group) } label: {
+                    HStack(spacing: Theme.Space.sm) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(expandedGroups.contains(group) ? 90 : 0))
+                        Text(group.title)
+                        Spacer()
+                        Text(boundCount(in: group))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    // Load-bearing: without it the `Spacer()` is dead space and only the text
+                    // itself would respond, which is most of the way back to the original bug.
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if expandedGroups.contains(group) {
                     // Bindings are built fresh on every render rather than cached. A shared cached
                     // Binding across view trees is exactly what once made toggles revert.
                     ForEach(actions(in: group)) { action in
@@ -174,14 +193,6 @@ struct WindowDetailView: View {
                             )
                         }
                     }
-                } label: {
-                    HStack {
-                        Text(group.title)
-                        Spacer()
-                        Text(boundCount(in: group))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
         }
@@ -192,6 +203,16 @@ struct WindowDetailView: View {
             Text("Click a shortcut to change it. ⌫ clears one, ⎋ cancels.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func toggle(_ group: WindowAction.Group) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            if expandedGroups.contains(group) {
+                expandedGroups.remove(group)
+            } else {
+                expandedGroups.insert(group)
+            }
         }
     }
 

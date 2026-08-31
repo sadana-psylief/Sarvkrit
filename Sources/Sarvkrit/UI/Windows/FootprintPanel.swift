@@ -11,7 +11,7 @@ final class FootprintPanel {
     private let hosting: NSHostingView<FootprintView>
 
     init() {
-        hosting = NSHostingView(rootView: FootprintView(isVisible: false))
+        hosting = NSHostingView(rootView: FootprintView())
         panel = NSPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -30,15 +30,23 @@ final class FootprintPanel {
         panel.contentView = hosting
     }
 
+    /// Called when a drag arms, so the first show isn't also paying for the panel's very first
+    /// layout pass while the pointer is already waiting on it.
+    func prepare() {
+        hosting.layoutSubtreeIfNeeded()
+    }
+
     /// - Parameter rect: in Cocoa screen coordinates, exactly the rect the drop will apply.
     func show(_ rect: CGRect, animated: Bool) {
-        // The root view is replaced rather than the panel rebuilt: a reused `NSHostingView` that
-        // is never given fresh content is what once made the clipboard picker show stale entries.
-        hosting.rootView = FootprintView(isVisible: true)
-
+        // The root view is set once, at init, and deliberately not rebuilt here. It was being
+        // replaced on every call by analogy with the clipboard picker's stale-content bug, but the
+        // analogy doesn't hold: this view is a fixed coloured rectangle whose content never varies,
+        // so rebuilding it only bought a SwiftUI layout pass per zone change during a drag.
         if panel.isVisible, animated {
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
+                // Short enough to read as the footprint following the pointer rather than
+                // catching up with it.
+                context.duration = 0.07
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 panel.animator().setFrame(rect, display: true)
             }
@@ -56,8 +64,6 @@ final class FootprintPanel {
 }
 
 private struct FootprintView: View {
-    let isVisible: Bool
-
     var body: some View {
         RoundedRectangle(cornerRadius: Theme.Radius.module, style: .continuous)
             .fill(Color.accentColor.opacity(0.18))
@@ -65,7 +71,6 @@ private struct FootprintView: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.module, style: .continuous)
                     .strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 2)
             )
-            .opacity(isVisible ? 1 : 0)
             .padding(2)
     }
 }

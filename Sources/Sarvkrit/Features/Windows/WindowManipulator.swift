@@ -28,13 +28,9 @@ final class WindowManipulator {
     func perform(
         _ action: WindowAction,
         ultrawideEnabled: Bool,
-        maxWidthFraction: CGFloat = 2.0 / 3.0,
-        window explicitWindow: AXUIElement? = nil,
-        onScreen explicitScreen: NSScreen? = nil
+        maxWidthFraction: CGFloat = 2.0 / 3.0
     ) -> Bool {
-        // A drag supplies its own window. `focusedWindow()` would be wrong there: a window dragged
-        // by its titlebar in a background app is never necessarily the focused one.
-        guard let window = explicitWindow ?? focusedWindow() else { return false }
+        guard let window = focusedWindow() else { return false }
         // Ask before touching anything: a window that can't be resized should be left entirely
         // alone rather than moved and then found to be unresizable halfway through.
         guard isSettable(window, kAXPositionAttribute), isSettable(window, kAXSizeAttribute),
@@ -48,13 +44,8 @@ final class WindowManipulator {
 
         // Containment is judged against full `frame`s; layout against `visibleFrame`. Mixing the
         // two makes a window near the Dock look like it belongs to the neighbouring display.
-        // A drag supplies the screen the *pointer* is over. Falling back to the window's own
-        // screen would be wrong there: dragging a wide window toward a second display's edge
-        // leaves most of the window on the first one, and the drop would land on the wrong
-        // monitor — invisible on a single-display Mac.
-        guard let screen = explicitScreen
-                ?? ScreenCoordinates.screen(containing: current, screens: screens)
-                    .flatMap({ frame in NSScreen.screens.first { $0.frame == frame } })
+        guard let screen = ScreenCoordinates.screen(containing: current, screens: screens)
+                .flatMap({ frame in NSScreen.screens.first { $0.frame == frame } })
         else { return false }
         let screenFrame = screen.frame
 
@@ -100,37 +91,36 @@ final class WindowManipulator {
         return WindowLayout.clamped(moved, to: visible)
     }
 
-    /// Where an action would put a window, without moving it.
-    ///
-    /// The footprint preview and the drop go through the same computation, so the overlay can't
-    /// promise a rect the drop then declines to use.
-    func targetRect(for action: WindowAction, window: AXUIElement,
-                    ultrawideEnabled: Bool, maxWidthFraction: CGFloat,
-                    onScreen explicitScreen: NSScreen? = nil) -> CGRect? {
-        guard let currentAX = frame(of: window) else { return nil }
-        let screens = NSScreen.screens.map(\.frame)
-        guard !screens.isEmpty else { return nil }
-        let current = ScreenCoordinates.toCocoa(currentAX, primaryHeight: primaryHeight)
-        guard let screen = explicitScreen
-                ?? ScreenCoordinates.screen(containing: current, screens: screens)
-                    .flatMap({ frame in NSScreen.screens.first { $0.frame == frame } })
-        else { return nil }
-
-        let context = WindowLayout.Context(
-            visibleFrame: screen.visibleFrame,
-            currentFrame: current,
-            isUltrawide: ultrawideEnabled && WindowLayout.isUltrawide(screen.frame),
-            ultrawideMaxWidthFraction: maxWidthFraction
-        )
-        return WindowLayout.rect(for: action, in: context)
+    /// The window's frame in Cocoa space. Reads the app, so keep it off any hot path.
+    func cocoaFrame(of window: AXUIElement) -> CGRect? {
+        guard let axFrame = frame(of: window) else { return nil }
+        return ScreenCoordinates.toCocoa(axFrame, primaryHeight: primaryHeight)
     }
 
-    /// True when the window is sitting where we last put it — the question "restore size when
-    /// unsnapped" has to answer before deciding whether a drag should resize it back.
-    func isSnapped(_ window: AXUIElement) -> Bool {
-        guard let currentAX = frame(of: window) else { return false }
-        let current = ScreenCoordinates.toCocoa(currentAX, primaryHeight: primaryHeight)
-        return memory.isWhereWePutIt(window, current: current)
+    /// Same question, answered from a frame the caller already has.
+    ///
+    /// The drag path reads the window's frame once when the drag is armed and reuses it, rather
+    /// than asking the app again on every pointer move — which is what made the footprint lag.
+    func isSnapped(_ window: AXUIElement, at cocoaFrame: CGRect) -> Bool {
+        memory.isWhereWePutIt(window, current: cocoaFrame)
+    }
+
+    /// Apply a rect that was computed elsewhere.
+    ///
+    /// The drag path needs this so the window lands on **exactly** the rect the footprint
+    /// promised. Recomputing at drop time would re-read the window's live frame, and any action
+    /// that depends on the current position — `maximizeHeight`, the nudges — would then resolve
+    /// differently at the drop than it did when the preview was drawn.
+    @discardableResult
+    func perform(rect target: CGRect, on window: AXUIElement) -> Bool {
+        guard isSettable(window, kAXPositionAttribute), isSettable(window, kAXSizeAttribute),
+              let currentAX = frame(of: window)
+        else { return false }
+        let height = primaryHeight
+        memory.record(window, current: ScreenCoordinates.toCocoa(currentAX, primaryHeight: height),
+                      target: target)
+        apply(ScreenCoordinates.toAccessibility(target, primaryHeight: height), to: window)
+        return true
     }
 
     func restoreSizeKeepingPointer(_ window: AXUIElement, pointerX: CGFloat) -> Bool {
@@ -176,21 +166,30 @@ final class WindowManipulator {
         return settable.boolValue
     }
 
-    private func frame(of window: AXUIElement) -> CGRect? {
+    /// The window's frame in **Accessibility** space (origin top-left of the primary display).
+    ///
+    /// `static` on purpose: it reads nothing but the window itself, so it is safe to call from a
+    /// background queue. The drag path does exactly that — reading a frame is IPC to another app
+    /// and has no business happening on the main thread while a drag is in flight.
+    static func accessibilityFrame(of window: AXUIElement) -> CGRect? {
         guard let origin = point(window, kAXPositionAttribute),
               let size = size(window, kAXSizeAttribute)
         else { return nil }
         return CGRect(origin: origin, size: size)
     }
 
-    private func point(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
+    private func frame(of window: AXUIElement) -> CGRect? {
+        Self.accessibilityFrame(of: window)
+    }
+
+    private static func point(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
         var result = CGPoint.zero
         guard let value = attributeValue(element, attribute),
               AXValueGetValue(value, .cgPoint, &result) else { return nil }
         return result
     }
 
-    private func size(_ element: AXUIElement, _ attribute: String) -> CGSize? {
+    private static func size(_ element: AXUIElement, _ attribute: String) -> CGSize? {
         var result = CGSize.zero
         guard let value = attributeValue(element, attribute),
               AXValueGetValue(value, .cgSize, &result) else { return nil }
@@ -199,7 +198,7 @@ final class WindowManipulator {
 
     /// Returns nil rather than force-casting: an app can answer `.success` with a value of an
     /// entirely different type, and a force cast would turn that into a crash.
-    private func attributeValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
+    private static func attributeValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
               let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
