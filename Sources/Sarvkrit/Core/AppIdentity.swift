@@ -13,6 +13,21 @@ enum AppIdentity {
 
     static let logSubsystem = bundleID
 
+    /// Whether this process is an XCTest host, set by XCTest in the environment.
+    ///
+    /// Not a convenience. Two things this app does are **global side effects on the user's Mac** —
+    /// posting keyboard events and writing the pasteboard — and a unit test that reaches either one
+    /// does not fail loudly; it types into whatever app the user happens to be looking at. That
+    /// happened: every snippet test uses `expansion: "X"`, `SnippetFeatureTests` drove the real
+    /// feature, and the expansion path posted genuine backspaces and a capital X into the
+    /// foreground app on every test run. It read as the app randomly typing an X out of nowhere.
+    ///
+    /// Dependency injection is the real fix and is applied at those call sites. This is the backstop
+    /// for the next test that forgets, because the failure mode is invisible from inside the suite.
+    static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
     /// Posted by a duplicate launch to ask the instance that's already running to come forward.
     static let showWindowNotification = Notification.Name("\(bundleID).showWindow")
 }

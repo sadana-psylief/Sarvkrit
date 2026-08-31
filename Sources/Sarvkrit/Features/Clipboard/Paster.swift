@@ -84,6 +84,9 @@ struct Paster {
     /// Synthesizes ⌘V, tagged so our own event tap passes it through untouched. Without the tag,
     /// `CutPasteFeature` would see a ⌘V in Finder and turn this paste into a file *move*.
     func postCommandV() {
+        // Same hazard as `SnippetTyper.replace`: a test reaching this would paste into the user's
+        // foreground app. No test does today; this keeps that true.
+        guard !AppIdentity.isRunningTests else { return }
         guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
         let vKeyCode: CGKeyCode = 9
 

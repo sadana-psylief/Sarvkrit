@@ -22,10 +22,9 @@ enum SingleInstance {
         return otherInstancePIDs.contains { $0 != ownPID }
     }
 
-    /// Set by XCTest in the host process's environment.
-    static var isRunningTests: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-    }
+    /// Set by XCTest in the host process's environment. Lives on `AppIdentity` because posting
+    /// events and writing the pasteboard need the same guard.
+    static var isRunningTests: Bool { AppIdentity.isRunningTests }
 
     /// If another Sarvkrit is already running, ask it to show its window and bow out.
     ///

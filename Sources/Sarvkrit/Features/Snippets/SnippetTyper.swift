@@ -23,6 +23,9 @@ enum SnippetTyper {
     ///   - deleteCount: how many characters the user typed that must come back out.
     ///   - text: the already-expanded replacement.
     static func replace(deleteCount: Int, with text: String) {
+        // A test that reaches this types into whatever app the user is looking at, and *passes*.
+        // See `AppIdentity.isRunningTests` for the incident this prevents recurring.
+        guard !AppIdentity.isRunningTests else { return }
         guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
 
         for _ in 0..<max(0, deleteCount) {

@@ -11,19 +11,36 @@ final class SnippetFeatureTests: XCTestCase {
 
     /// - Parameter snippets: the *complete* table. A fresh store ships example snippets, so those
     ///   are cleared first — otherwise "no snippets" would quietly mean "three snippets".
+    /// What the feature *would* have typed, instead of typing it.
+    ///
+    /// This is not tidiness. Before it existed these tests drove the real `SnippetTyper`, which
+    /// posts genuine `CGEvent`s to `.cghidEventTap` — so every run typed backspaces and a capital
+    /// X (the placeholder expansion used throughout this file) into whatever app the user had in
+    /// front of them, and passed while doing it. It presented as the app randomly emitting an X.
+    private final class TypistSpy {
+        private(set) var calls: [(deleteCount: Int, text: String)] = []
+        func record(_ deleteCount: Int, _ text: String) {
+            calls.append((deleteCount, text))
+        }
+    }
+
     private func makeFeature(
         _ snippets: [Snippet] = [],
-        frontmost: String? = nil
+        frontmost: String? = nil,
+        typist: TypistSpy? = nil
     ) -> SnippetFeature {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("snippet-\(UUID().uuidString)")
         let store = SnippetStore(directory: directory)
         for example in store.snippets { store.delete(id: example.id) }
         for snippet in snippets { store.add(snippet) }
+        let spy = typist ?? TypistSpy()
         return SnippetFeature(
             store: store,
             defaults: UserDefaults(suiteName: "snippets.\(UUID().uuidString)")!,
-            frontmostBundleID: { frontmost }
+            frontmostBundleID: { frontmost },
+            // Never the real typist. See `TypistSpy`.
+            typeReplacement: { [spy] deleteCount, text in spy.record(deleteCount, text) }
         )
     }
 
@@ -210,5 +227,44 @@ final class SnippetFeatureTests: XCTestCase {
         feature.deactivate()
         XCTAssertFalse(swallowed(feature.handle(event: keyDown("a"), type: .keyDown)),
                        "state must not survive the feature being switched off")
+    }
+
+    // MARK: - What gets typed
+
+    /// The expansion path was previously unobserved: these tests only checked that the keystroke
+    /// was swallowed, so nothing pinned *what* replaced it — while the real typist quietly typed it
+    /// into the foreground app.
+    func testAnExpansionTypesTheReplacementAndDeletesWhatReachedTheApp() {
+        let typist = TypistSpy()
+        let feature = makeFeature(
+            [Snippet(trigger: ";a", expansion: "hello", style: .prefix)], typist: typist)
+
+        _ = feature.handle(event: keyDown(";"), type: .keyDown)
+        _ = feature.handle(event: keyDown("a"), type: .keyDown)
+
+        // Dispatched with `DispatchQueue.main.async`, so let the main queue drain.
+        let drained = expectation(description: "expansion dispatched")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 1)
+
+        XCTAssertEqual(typist.calls.count, 1)
+        XCTAssertEqual(typist.calls.first?.text, "hello")
+        // ";a" is two characters, but the "a" that completed the trigger was swallowed and never
+        // reached the app — so only the ";" has to come back out.
+        XCTAssertEqual(typist.calls.first?.deleteCount, 1)
+    }
+
+    func testNoExpansionTypesNothing() {
+        let typist = TypistSpy()
+        let feature = makeFeature(
+            [Snippet(trigger: ";a", expansion: "hello", style: .prefix)], typist: typist)
+
+        _ = feature.handle(event: keyDown("z"), type: .keyDown)
+
+        let drained = expectation(description: "nothing dispatched")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 1)
+
+        XCTAssertTrue(typist.calls.isEmpty)
     }
 }
