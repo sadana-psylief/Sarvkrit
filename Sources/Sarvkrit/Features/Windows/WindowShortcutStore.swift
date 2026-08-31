@@ -69,6 +69,12 @@ final class WindowShortcutStore {
 
     // MARK: - Persistence
 
+    /// Stores the whole map, including bindings identical to the defaults.
+    ///
+    /// Deliberate, and the opposite of what `SnapSettings` does with its zones: a *cleared*
+    /// binding is meaningful here and a missing key cannot express it. Storing only the
+    /// differences would make "no shortcut for Maximize" indistinguishable from "Maximize is
+    /// unconfigured", and the default would come back the next time the app started.
     private func save() {
         let encodable = Dictionary(uniqueKeysWithValues: bindings.map { ($0.key.rawValue, $0.value) })
         guard let data = try? JSONEncoder().encode(encodable) else { return }

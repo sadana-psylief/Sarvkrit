@@ -29,7 +29,8 @@ final class WindowManipulator {
         _ action: WindowAction,
         ultrawideEnabled: Bool,
         maxWidthFraction: CGFloat = 2.0 / 3.0,
-        window explicitWindow: AXUIElement? = nil
+        window explicitWindow: AXUIElement? = nil,
+        onScreen explicitScreen: NSScreen? = nil
     ) -> Bool {
         // A drag supplies its own window. `focusedWindow()` would be wrong there: a window dragged
         // by its titlebar in a background app is never necessarily the focused one.
@@ -47,9 +48,15 @@ final class WindowManipulator {
 
         // Containment is judged against full `frame`s; layout against `visibleFrame`. Mixing the
         // two makes a window near the Dock look like it belongs to the neighbouring display.
-        guard let screenFrame = ScreenCoordinates.screen(containing: current, screens: screens),
-              let screen = NSScreen.screens.first(where: { $0.frame == screenFrame })
+        // A drag supplies the screen the *pointer* is over. Falling back to the window's own
+        // screen would be wrong there: dragging a wide window toward a second display's edge
+        // leaves most of the window on the first one, and the drop would land on the wrong
+        // monitor — invisible on a single-display Mac.
+        guard let screen = explicitScreen
+                ?? ScreenCoordinates.screen(containing: current, screens: screens)
+                    .flatMap({ frame in NSScreen.screens.first { $0.frame == frame } })
         else { return false }
+        let screenFrame = screen.frame
 
         let target: CGRect
         if action.isDisplayMove {
@@ -98,13 +105,15 @@ final class WindowManipulator {
     /// The footprint preview and the drop go through the same computation, so the overlay can't
     /// promise a rect the drop then declines to use.
     func targetRect(for action: WindowAction, window: AXUIElement,
-                    ultrawideEnabled: Bool, maxWidthFraction: CGFloat) -> CGRect? {
+                    ultrawideEnabled: Bool, maxWidthFraction: CGFloat,
+                    onScreen explicitScreen: NSScreen? = nil) -> CGRect? {
         guard let currentAX = frame(of: window) else { return nil }
         let screens = NSScreen.screens.map(\.frame)
         guard !screens.isEmpty else { return nil }
         let current = ScreenCoordinates.toCocoa(currentAX, primaryHeight: primaryHeight)
-        guard let screenFrame = ScreenCoordinates.screen(containing: current, screens: screens),
-              let screen = NSScreen.screens.first(where: { $0.frame == screenFrame })
+        guard let screen = explicitScreen
+                ?? ScreenCoordinates.screen(containing: current, screens: screens)
+                    .flatMap({ frame in NSScreen.screens.first { $0.frame == frame } })
         else { return nil }
 
         let context = WindowLayout.Context(

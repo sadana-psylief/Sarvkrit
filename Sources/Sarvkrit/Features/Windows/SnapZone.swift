@@ -87,6 +87,35 @@ enum SnapZoneLayout {
         return middle.contains(point) ? .center : nil
     }
 
+    /// Everything a drop needs, decided from the pointer alone: which screen it is over and which
+    /// zone of that screen.
+    ///
+    /// Pure, and taking screen frames rather than `NSScreen`, because this is the one place where a
+    /// multi-display mistake is both easy and invisible on a single-display Mac. Two distinct
+    /// errors live here — testing the pointer against the wrong screen, and deciding "ultrawide"
+    /// from whether *any* ultrawide is attached rather than from the screen being dropped onto.
+    ///
+    /// - Parameters:
+    ///   - point: pointer position in Accessibility space (origin top-left of the primary display).
+    ///   - screenFrames: screen frames in Cocoa space.
+    static func resolve(
+        at point: CGPoint, screenFrames: [CGRect], primaryHeight: CGFloat
+    ) -> (zone: SnapZone, screen: CGRect)? {
+        for frame in screenFrames {
+            let axFrame = ScreenCoordinates.toAccessibility(frame, primaryHeight: primaryHeight)
+            guard axFrame.contains(point) else { continue }
+            guard let zone = zone(at: point, in: axFrame, flipped: true) else { return nil }
+            return (zone, frame)
+        }
+        return nil
+    }
+
+    /// Whether the mode applies to *this* screen. The per-display rule in one place, so the drag
+    /// path and the keyboard path can't drift apart.
+    static func usesUltrawideLayout(screen: CGRect, settingEnabled: Bool) -> Bool {
+        settingEnabled && WindowLayout.isUltrawide(screen)
+    }
+
     /// What each zone does by default.
     static let defaultActions: [SnapZone: WindowAction] = [
         .topLeft: .topLeft, .top: .maximize, .topRight: .topRight,
