@@ -11,6 +11,9 @@ struct MenuBarLabel: View {
     /// Observed directly for the same reason as Keep Awake — an icon that only updated on some
     /// unrelated redraw would be worse than no indicator, since the whole point is noticing.
     @ObservedObject var micMute: MuteMicrophoneFeature
+    /// Observed directly for the same reason as the others — an indicator that only updated on some
+    /// unrelated redraw would defeat the whole point of having one.
+    @ObservedObject var privacy: PrivacyGuardFeature
 
     /// Re-read only while a countdown is running, and only twice a minute: minute resolution needs
     /// nothing finer, and a per-second timer in the menu bar is exactly the idle cost this app has
@@ -40,7 +43,8 @@ struct MenuBarLabel: View {
         MenuBarIconState.current(
             keepAwakeRunning: keepAwake.isRunning,
             systemSleepDisabled: keepAwake.systemSleepDisabled,
-            microphoneMuted: micMute.isMuted
+            microphoneMuted: micMute.isMuted || privacy.isMicrophoneMuted,
+            cameraOn: privacy.isCameraOn
         )
     }
 

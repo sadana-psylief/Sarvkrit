@@ -16,6 +16,9 @@ enum MenuBarIconState: Equatable {
     /// is actually muted has an immediate cost — you talk to nobody — where sleep behaviour does
     /// not.
     case microphoneMuted
+    /// The camera is on. Outranks everything: a mic that is muted is a safety measure already
+    /// working, whereas a camera that is on is a live exposure the user may not have noticed.
+    case cameraOn
 
     /// All template symbols, so the icon still inverts on light and dark menu bars and dims when the
     /// menu bar is inactive. A coloured icon would opt out of all of that.
@@ -25,6 +28,7 @@ enum MenuBarIconState: Equatable {
         case .awake: return "cup.and.saucer.fill"
         case .systemSleepDisabled: return "bolt.fill"
         case .microphoneMuted: return "mic.slash.fill"
+        case .cameraOn: return "video.fill"
         }
     }
 
@@ -35,17 +39,23 @@ enum MenuBarIconState: Equatable {
         case .awake: return "Sarvkrit — keeping your Mac awake"
         case .systemSleepDisabled: return "Sarvkrit — system sleep is disabled"
         case .microphoneMuted: return "Sarvkrit — microphone muted"
+        case .cameraOn: return "Sarvkrit — the camera is on"
         }
     }
 
-    /// The more consequential state wins: a muted microphone beats everything, because the cost of
-    /// not noticing it is immediate and personal. Below that, a Mac that can't sleep at all matters
-    /// more than one that merely won't idle out.
+    /// The more consequential state wins, and the order is deliberate.
+    ///
+    /// A camera that is on beats everything: it is a live exposure the user may not have noticed. A
+    /// muted microphone comes next — the cost of not noticing it is immediate and personal, though
+    /// it is a safety measure already working rather than a risk. Below those, a Mac that can't
+    /// sleep at all matters more than one that merely won't idle out.
     static func current(
         keepAwakeRunning: Bool,
         systemSleepDisabled: Bool,
-        microphoneMuted: Bool = false
+        microphoneMuted: Bool = false,
+        cameraOn: Bool = false
     ) -> MenuBarIconState {
+        if cameraOn { return .cameraOn }
         if microphoneMuted { return .microphoneMuted }
         if systemSleepDisabled { return .systemSleepDisabled }
         return keepAwakeRunning ? .awake : .idle
@@ -67,6 +77,7 @@ enum MenuBarIconState: Equatable {
         case .awake: prefix = "Awake"
         case .systemSleepDisabled: prefix = "Sleep disabled"
         case .microphoneMuted: return "Mic muted"
+        case .cameraOn: return "Camera on"
         }
         guard let countdown = countdownText(remaining: remaining) else { return prefix }
         return "\(prefix) · \(countdown) left"

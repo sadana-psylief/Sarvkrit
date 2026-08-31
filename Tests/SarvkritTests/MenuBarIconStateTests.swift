@@ -150,4 +150,60 @@ final class MenuBarIconStateTests: XCTestCase {
         XCTAssertEqual(
             MenuBarIconState.statusLine(state: .microphoneMuted, remaining: 300), "Mic muted")
     }
+
+    // MARK: - The camera outranks even a muted mic
+
+    func testAnActiveCameraWinsOverEverything() {
+        // The order is a judgement: a muted mic is a safety measure already working, while a camera
+        // that is on is a live exposure the user may not have noticed.
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: true,
+                microphoneMuted: true, cameraOn: true),
+            .cameraOn
+        )
+    }
+
+    func testTheRestOfTheOrderIsUndisturbedByTheCameraCase() {
+        // Adding a state at the top must not shuffle anything below it.
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: true,
+                microphoneMuted: true, cameraOn: false),
+            .microphoneMuted
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: true,
+                microphoneMuted: false, cameraOn: false),
+            .systemSleepDisabled
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: false,
+                microphoneMuted: false, cameraOn: false),
+            .awake
+        )
+    }
+
+    func testTheCameraDefaultsToOffSoOlderCallersAreUnaffected() {
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: false, systemSleepDisabled: false, microphoneMuted: true),
+            .microphoneMuted
+        )
+    }
+
+    func testTheCameraStateHasItsOwnSymbolAndSpokenLabel() {
+        XCTAssertEqual(MenuBarIconState.cameraOn.symbolName, "video.fill")
+        XCTAssertTrue(
+            MenuBarIconState.cameraOn.accessibilityLabel.lowercased().contains("camera"),
+            "the icon says nothing to VoiceOver without this"
+        )
+    }
+
+    func testTheCameraStatusLineCarriesNoCountdown() {
+        XCTAssertEqual(MenuBarIconState.statusLine(state: .cameraOn, remaining: nil), "Camera on")
+        XCTAssertEqual(MenuBarIconState.statusLine(state: .cameraOn, remaining: 300), "Camera on")
+    }
 }

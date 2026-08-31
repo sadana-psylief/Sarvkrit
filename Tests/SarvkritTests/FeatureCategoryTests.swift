@@ -39,6 +39,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["mute-microphone"], .sound)
         XCTAssertEqual(byID["music-blocker"], .sound)
         XCTAssertEqual(byID["volume-mixer"], .sound)
+        XCTAssertEqual(byID["privacy-guard"], .sound)
         XCTAssertEqual(byID["keep-awake"], .system)
     }
 
@@ -114,7 +115,7 @@ final class FeatureCategoryTests: XCTestCase {
             let needsOwnPane: Set<String> = [
                 "clipboard-history", "file-rules", "trash-cleanup", "app-sweep", "keep-awake",
                 "window-management", "text-snippets", "shelf", "audio-switcher",
-                "mute-microphone", "music-blocker", "volume-mixer",
+                "mute-microphone", "music-blocker", "volume-mixer", "privacy-guard",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()

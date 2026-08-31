@@ -103,56 +103,28 @@ final class MuteMicrophoneFeature: Feature, ObservableObject {
 
     func setMuted(_ muted: Bool) {
         Self.workQueue.async { [weak self] in
-            guard let self, let device = AudioSystem.defaultDevice(.input) else { return }
-            let scope = kAudioObjectPropertyScopeInput
-
-            let capability = MicMuteState.Capability(
-                muteIsSettable: AudioSystem.isSettable(device, kAudioDevicePropertyMute, scope: scope),
-                volumeIsSettable: AudioSystem.isSettable(
-                    device, kAudioDevicePropertyVolumeScalar, scope: scope),
-                currentVolume: AudioSystem.volume(device, scope: scope)
-            )
-
-            // Read what to restore *before* changing anything, or the value is already zero.
-            let remembered = muted
-                ? MicMuteState.volumeToRemember(capability: capability)
-                : self.restoreVolume
-
-            switch MicMuteState.action(
-                muting: muted, capability: capability, restoreVolume: remembered
-            ) {
-            case .setMute(let value):
-                AudioSystem.setMute(value, on: device, scope: scope)
-            case .setVolume(let value):
-                if muted, let remembered { DispatchQueue.main.async { self.restoreVolume = remembered } }
-                AudioSystem.setVolume(value, on: device, scope: scope)
-            case .unsupported:
-                break
-            }
+            guard let self else { return }
+            // The mechanism lives in `MicrophoneMuter`, shared with the privacy lock. Its failure
+            // mode -- looking muted while the mic stays live -- is the worst in this project, so it
+            // exists once rather than in each feature that needs it.
+            let remembered = MicrophoneMuter.setMuted(muted, restoreVolume: self.restoreVolume)
+            if let remembered { DispatchQueue.main.async { self.restoreVolume = remembered } }
             self.readState()
         }
     }
 
     /// Re-reads the device's actual state rather than tracking what we asked for — muting can also
-    /// happen in System Settings or on the hardware itself.
+    /// happen in System Settings, on the hardware, or from the privacy lock.
     private func readState() {
         Self.workQueue.async { [weak self] in
             guard let self else { return }
-            guard let device = AudioSystem.defaultDevice(.input) else {
-                DispatchQueue.main.async { self.apply(muted: false, unsupported: true, name: nil) }
-                return
-            }
-            let scope = kAudioObjectPropertyScopeInput
-            let mute = AudioSystem.mute(device, scope: scope)
-            let volume = AudioSystem.volume(device, scope: scope)
-            let unsupported =
-                !AudioSystem.isSettable(device, kAudioDevicePropertyMute, scope: scope)
-                && !AudioSystem.isSettable(device, kAudioDevicePropertyVolumeScalar, scope: scope)
-            let name = AudioSystem.devices().first { $0.id == device }?.name
-
-            let muted = MicMuteState.isMuted(muteProperty: mute, volume: volume)
+            let reading = MicrophoneMuter.read()
             DispatchQueue.main.async {
-                self.apply(muted: muted, unsupported: unsupported, name: name)
+                self.apply(
+                    muted: reading.isMuted,
+                    unsupported: reading.isUnsupported,
+                    name: reading.deviceName
+                )
             }
         }
     }
