@@ -13,9 +13,13 @@ struct SnippetMatcher {
         case ignore
         /// Delete `deleteCount` characters, then type `expansion`.
         ///
-        /// `deleteCount` counts the characters the *user typed*, which for `.wordBoundary` includes
-        /// the delimiter that triggered it — the delimiter is re-emitted as part of the expansion so
-        /// the user doesn't lose the space they typed.
+        /// **`deleteCount` is how many characters actually reached the app — not the trigger's
+        /// length.** The keystroke that completes a trigger is swallowed by `SnippetFeature`, so it
+        /// never arrives, and counting it deletes one character of whatever the user had typed
+        /// before the trigger.
+        ///
+        /// For `.wordBoundary` the delimiter is the swallowed keystroke, and it is re-emitted as
+        /// part of the expansion so the user keeps the space they typed.
         case expand(snippet: Snippet, deleteCount: Int, expansion: String)
     }
 
@@ -115,7 +119,9 @@ struct SnippetMatcher {
         for snippet in prefixSnippets where buffer.hasSuffix(snippet.trigger) {
             return .expand(
                 snippet: snippet,
-                deleteCount: snippet.trigger.count,
+                // Minus one: the final character of the trigger is the keystroke being swallowed,
+                // so only the ones before it are on screen.
+                deleteCount: snippet.trigger.count - 1,
                 expansion: SnippetPattern.expand(snippet.expansion, context: context)
             )
         }
@@ -141,8 +147,10 @@ struct SnippetMatcher {
 
             return .expand(
                 snippet: snippet,
-                // +1 for the delimiter, which the expansion re-emits so the user keeps their space.
-                deleteCount: snippet.trigger.count + 1,
+                // Just the trigger: every one of its characters reached the app, and the delimiter
+                // that completed it is the swallowed keystroke. The expansion re-emits the
+                // delimiter so the user keeps the space they typed.
+                deleteCount: snippet.trigger.count,
                 expansion: SnippetPattern.expand(snippet.expansion, context: context)
                     + String(delimiter)
             )

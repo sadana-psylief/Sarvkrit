@@ -102,6 +102,25 @@ final class EventTapService {
     /// means a new feature that posts events can't forget.
     static let syntheticEventTag: Int64 = 0x5341_5256   // "SARV"
 
+    /// Diagnostics for a stray capital X that inspection could not explain.
+    ///
+    /// Deliberately narrow: **only keycode 7 (the X key), and nothing else.** A tap sees every
+    /// keystroke on the Mac, so a diagnostic here is one careless line away from being a keylogger.
+    /// This records that an X passed, whether it carried our tag, and what modifiers it had — which
+    /// is enough to say whether the app produced it, and nothing more.
+    private static func noteIfX(_ event: CGEvent, type: CGEventType, ours: Bool) {
+        guard type == .keyDown || type == .keyUp else { return }
+        guard event.getIntegerValueField(.keyboardEventKeycode) == 7 else { return }
+        diagnosticLog.notice(
+            """
+            X key \(type == .keyDown ? "down" : "up", privacy: .public),             synthesized by Sarvkrit: \(ours, privacy: .public),             flags \(event.flags.rawValue, privacy: .public)
+            """
+        )
+    }
+
+    private static let diagnosticLog = Logger(
+        subsystem: AppIdentity.logSubsystem, category: "StrayKeyDiagnostic")
+
     /// Marks an event as ours before posting it.
     static func tagAsSynthetic(_ event: CGEvent) {
         event.setIntegerValueField(.eventSourceUserData, value: syntheticEventTag)
@@ -109,9 +128,12 @@ final class EventTapService {
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // Our own synthesized events pass straight through, untouched and unseen by any feature.
-        if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventTag {
+        let isOurs = event.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventTag
+        if isOurs {
+            Self.noteIfX(event, type: type, ours: true)
             return Unmanaged.passUnretained(event)
         }
+        Self.noteIfX(event, type: type, ours: false)
 
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             log.warning("tap disabled by system (\(type.rawValue)) — re-enabling")

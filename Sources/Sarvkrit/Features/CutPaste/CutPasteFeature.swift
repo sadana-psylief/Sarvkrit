@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import os
 
 /// Makes ⌘X / ⌘V move files in Finder, the way they do on Windows.
 ///
@@ -37,6 +38,10 @@ final class CutPasteFeature: EventTapFeature {
     /// keyDown rewrote this key, so its keyUp must be rewritten identically. A mismatched
     /// down/up pair leaves the receiving app's modifier state confused.
     private var rewrittenKeyDowns: Set<Int64> = []
+
+    /// Diagnostics for a stray keystroke. Records only rewrites this feature performs — never what
+    /// the user types.
+    private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "CutPaste")
 
     /// Called when something visible should be shown. Set by the UI layer so this type stays free
     /// of SwiftUI, the same way `ClipboardFeature` raises its picker.
@@ -97,6 +102,7 @@ final class CutPasteFeature: EventTapFeature {
             return .pass
 
         case .rewriteCutToCopy:
+            log.debug("rewriting keycode \(keyCode, privacy: .public) to C (cut becomes copy)")
             event.setIntegerValueField(.keyboardEventKeycode, value: CutPasteRewriter.keyC)
             rewrittenKeyDowns.insert(CutPasteRewriter.keyX)
             armCut()
@@ -113,6 +119,7 @@ final class CutPasteFeature: EventTapFeature {
 
     private func applyMatchingKeyUp(event: CGEvent, keyCode: Int64) {
         guard rewrittenKeyDowns.remove(keyCode) != nil else { return }
+        log.debug("rewriting the matching keyUp for keycode \(keyCode, privacy: .public)")
         switch keyCode {
         case CutPasteRewriter.keyX:
             event.setIntegerValueField(.keyboardEventKeycode, value: CutPasteRewriter.keyC)
