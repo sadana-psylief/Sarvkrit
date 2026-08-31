@@ -38,8 +38,17 @@ final class WindowFeature: EventTapFeature, ObservableObject {
         return keys | Sarvkrit.eventMask(.leftMouseDown, .leftMouseDragged, .leftMouseUp)
     }
 
-    let shortcuts = WindowShortcutStore()
-    let snapSettings = SnapSettings()
+    let shortcuts: WindowShortcutStore
+    let snapSettings: SnapSettings
+    private let defaults: UserDefaults
+
+    /// Defaults are injected so tests don't write into the real preferences domain — a test that
+    /// toggles snap-by-dragging would otherwise change the running app's actual settings.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.shortcuts = WindowShortcutStore(defaults: defaults)
+        self.snapSettings = SnapSettings(defaults: defaults)
+    }
     private let manipulator = WindowManipulator()
     private lazy var snapController = MainActor.assumeIsolated {
         SnapAreaController(manipulator: manipulator, settings: snapSettings)
@@ -168,7 +177,6 @@ final class WindowFeature: EventTapFeature, ObservableObject {
         shortcuts.resetToDefaults()
     }
 
-    private let defaults = UserDefaults.standard
     private static let ultrawideKey = "windows.ultrawide"
     private static let ultrawideWidthKey = "windows.ultrawideMaxWidthPercent"
 

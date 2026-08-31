@@ -97,7 +97,9 @@ final class SnapSettingsTests: XCTestCase {
     func testTheTapOnlyListensForDragsWhenSnappingIsOn() {
         // `leftMouseDragged` fires at pointer frequency for every drag on the system. Subscribing
         // to it when the feature can't use it would be a standing cost for nothing.
-        let feature = WindowFeature()
+        let feature = WindowFeature(
+            defaults: UserDefaults(suiteName: "SnapSettingsTests-\(UUID().uuidString)")!
+        )
         let dragBit = Sarvkrit.eventMask(.leftMouseDragged)
 
         feature.setSnapByDragging(false)
@@ -105,12 +107,12 @@ final class SnapSettingsTests: XCTestCase {
 
         feature.setSnapByDragging(true)
         XCTAssertNotEqual(feature.eventMask & dragBit, 0)
-
-        feature.setSnapByDragging(false)   // leave the shared defaults as they were
     }
 
     func testKeyboardEventsAreSubscribedEitherWay() {
-        let feature = WindowFeature()
+        let feature = WindowFeature(
+            defaults: UserDefaults(suiteName: "SnapSettingsTests-\(UUID().uuidString)")!
+        )
         XCTAssertNotEqual(feature.eventMask & Sarvkrit.eventMask(.keyDown), 0)
         XCTAssertNotEqual(feature.eventMask & Sarvkrit.eventMask(.keyUp), 0)
     }

@@ -25,20 +25,20 @@ final class WindowFeatureTapTests: XCTestCase {
 
     func testABoundShortcutIsSwallowed() {
         // Swallowed, not passed: the app behind must not also receive ⌃⌥←.
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         let decision = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
         if case .pass = decision { XCTFail("a bound shortcut should be swallowed") }
     }
 
     func testAnUnboundKeyPassesThrough() {
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         let decision = feature.handle(event: event(0, down: true, flags: []), type: .keyDown)
         guard case .pass = decision else { return XCTFail("ordinary typing must not be touched") }
     }
 
     func testTheWrongModifiersPassThrough() {
         // ⌃⌥⇧← belongs to someone else.
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         let flags: CGEventFlags = [.maskControl, .maskAlternate, .maskShift]
         guard case .pass = feature.handle(event: event(leftArrow, down: true, flags: flags),
                                           type: .keyDown)
@@ -49,7 +49,7 @@ final class WindowFeatureTapTests: XCTestCase {
 
     func testTheMatchingKeyUpIsSwallowedToo() {
         // A keyUp arriving for a keyDown the app never saw leaves its modifier state confused.
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         _ = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
 
         let up = feature.handle(event: event(leftArrow, down: false, flags: bound), type: .keyUp)
@@ -57,14 +57,14 @@ final class WindowFeatureTapTests: XCTestCase {
     }
 
     func testAnUnpairedKeyUpPassesThrough() {
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         guard case .pass = feature.handle(event: event(leftArrow, down: false, flags: bound),
                                           type: .keyUp)
         else { return XCTFail("a keyUp we never swallowed the down for must pass") }
     }
 
     func testEachKeyUpIsSwallowedOnlyOnce() {
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         _ = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
         _ = feature.handle(event: event(leftArrow, down: false, flags: bound), type: .keyUp)
 
@@ -79,7 +79,7 @@ final class WindowFeatureTapTests: XCTestCase {
         // The trap: recording a combination that is already bound — which is most of them, since
         // the recorder is usually used to *change* a binding — would otherwise snap a window while
         // the user was trying to type it.
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         feature.isRecording = true
 
         guard case .pass = feature.handle(event: event(leftArrow, down: true, flags: bound),
@@ -88,7 +88,7 @@ final class WindowFeatureTapTests: XCTestCase {
     }
 
     func testMatchingResumesWhenRecordingEnds() {
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         feature.isRecording = true
         _ = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
         feature.isRecording = false
@@ -100,7 +100,7 @@ final class WindowFeatureTapTests: XCTestCase {
     func testAPendingKeyUpIsStillDrainedWhenRecordingStartsMidPress() {
         // Shortcut pressed, then the recorder opens before the key comes back up. Releasing that
         // keyUp into the app leaves a modifier stuck down.
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         _ = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
         feature.isRecording = true
 
@@ -112,7 +112,7 @@ final class WindowFeatureTapTests: XCTestCase {
 
     func testHeldKeysAreStillSwallowedWhileRepeating() {
         // Letting repeats through would type into the app behind.
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         _ = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
 
         let repeated = feature.handle(
@@ -122,7 +122,7 @@ final class WindowFeatureTapTests: XCTestCase {
     }
 
     func testDeactivationForgetsPendingKeys() {
-        let feature = WindowFeature()
+        let feature = WindowFeature(defaults: UserDefaults(suiteName: "WindowTap-\(UUID().uuidString)")!)
         _ = feature.handle(event: event(leftArrow, down: true, flags: bound), type: .keyDown)
         feature.deactivate()
 
