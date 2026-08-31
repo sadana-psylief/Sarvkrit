@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import SwiftUI
 
@@ -35,7 +36,7 @@ final class ShelfFeature: Feature, ObservableObject {
     let requirements: Set<Requirement> = []
 
     let store: ShelfStore
-    private let hotkey = ShelfHotkey()
+    private let hotkey = GlobalHotkey(id: GlobalHotkey.ID.shelf)
     private let defaults: UserDefaults
 
     /// Set by the UI layer so this type never imports it, the same separation `ClipboardFeature`
@@ -168,7 +169,7 @@ final class ShelfFeature: Feature, ObservableObject {
             hotkey.unregister()
             return
         }
-        hotkey.register { [weak self] in
+        hotkey.register(keyCode: UInt32(kVK_ANSI_S)) { [weak self] in
             DispatchQueue.main.async { self?.showShelf?() }
         }
     }

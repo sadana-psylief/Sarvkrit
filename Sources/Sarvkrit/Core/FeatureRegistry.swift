@@ -16,6 +16,10 @@ enum FeatureRegistry {
             TrashCleanupFeature(),
             AppSweepFeature(),
             ShelfFeature(),
+            OutputSwitcherFeature(),
+            MuteMicrophoneFeature(),
+            MusicBlockerFeature(),
+            VolumeMixerFeature(),
             KeepAwakeFeature(),
         ]
     }

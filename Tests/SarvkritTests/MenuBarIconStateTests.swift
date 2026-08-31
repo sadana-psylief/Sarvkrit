@@ -91,4 +91,63 @@ final class MenuBarIconStateTests: XCTestCase {
         XCTAssertNil(MenuBarIconState.statusLine(state: .idle, remaining: 600),
                      "a leftover countdown must not resurrect the header")
     }
+
+    // MARK: - The microphone outranks everything
+
+    func testAMutedMicrophoneWinsOverEverySleepState() {
+        // Deliberate precedence: not noticing a muted mic costs you immediately and personally,
+        // where sleep behaviour does not.
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: true, microphoneMuted: true),
+            .microphoneMuted
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: false, systemSleepDisabled: false, microphoneMuted: true),
+            .microphoneMuted
+        )
+    }
+
+    func testTheSleepStatesAreUnchangedWhenTheMicIsLive() {
+        // Adding a state must not disturb the existing ordering.
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: true, microphoneMuted: false),
+            .systemSleepDisabled
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: true, systemSleepDisabled: false, microphoneMuted: false),
+            .awake
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: false, systemSleepDisabled: false, microphoneMuted: false),
+            .idle
+        )
+    }
+
+    func testMicMuteDefaultsToOffSoExistingCallersAreUnaffected() {
+        XCTAssertEqual(
+            MenuBarIconState.current(keepAwakeRunning: true, systemSleepDisabled: false),
+            .awake
+        )
+    }
+
+    func testTheMutedStateHasItsOwnSymbolAndSpokenLabel() {
+        XCTAssertEqual(MenuBarIconState.microphoneMuted.symbolName, "mic.slash.fill")
+        XCTAssertTrue(
+            MenuBarIconState.microphoneMuted.accessibilityLabel.contains("microphone muted"),
+            "the icon conveys nothing to VoiceOver without this"
+        )
+    }
+
+    func testTheMutedStateShowsAStatusLineWithNoCountdown() {
+        // There is nothing counting down, so it must not render "· 0m left".
+        XCTAssertEqual(
+            MenuBarIconState.statusLine(state: .microphoneMuted, remaining: nil), "Mic muted")
+        XCTAssertEqual(
+            MenuBarIconState.statusLine(state: .microphoneMuted, remaining: 300), "Mic muted")
+    }
 }

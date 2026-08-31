@@ -207,7 +207,23 @@ final class AppState: ObservableObject {
 
     /// True when at least one enabled feature needs a permission we don't have.
     var needsAccessibility: Bool {
-        !permissions.isTrusted && features.contains { store.isEnabled($0.id) && $0.requiresAccessibility }
+        !unmetRequirements.isEmpty
+    }
+
+    /// Which permissions the enabled features are missing.
+    ///
+    /// Only ever contains requirements the system lets us query — see
+    /// `PermissionsManager.isGranted`. A requirement we can't ask about can't be reported as
+    /// missing, only noticed as not working.
+    var unmetRequirements: Set<Requirement> {
+        var unmet: Set<Requirement> = []
+        for feature in features where store.isEnabled(feature.id) {
+            for requirement in feature.requirements
+            where requirement.isQueryable && !permissions.isGranted(requirement) {
+                unmet.insert(requirement)
+            }
+        }
+        return unmet
     }
 
     /// Which features are currently activated, so `sync()` can touch only what changed.
@@ -215,7 +231,12 @@ final class AppState: ObservableObject {
 
     private func sync() {
         let wanted = features.filter { store.isEnabled($0.id) }
-        let permitted = wanted.filter { permissions.isTrusted || !$0.requiresAccessibility }
+        let permitted = wanted.filter { feature in
+            // A requirement we cannot query cannot gate anything — see `Requirement.isQueryable`.
+            feature.requirements.allSatisfy {
+                !$0.isQueryable || permissions.isGranted($0)
+            }
+        }
 
         // The tap itself is still rebuilt from scratch: there is one tap, its mask is the union
         // of its subscribers, and any change to the set means a new mask anyway.

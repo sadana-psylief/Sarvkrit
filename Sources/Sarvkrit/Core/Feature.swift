@@ -19,6 +19,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
     case clipboard
     case windows
     case files
+    case sound
     case system
 
     var id: String { rawValue }
@@ -29,6 +30,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .windows: return "Windows"
         case .files: return "Files"
+        case .sound: return "Sound"
         case .system: return "System"
         }
     }
@@ -39,6 +41,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.clipboard"
         case .windows: return "macwindow"
         case .files: return "folder"
+        case .sound: return "speaker.wave.2"
         case .system: return "gearshape.2"
         }
     }
@@ -49,8 +52,49 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
 /// Replaces the old `requiresAccessibility: Bool`, which couldn't express anything else. File
 /// features need folder access, which is a different grant with different UI, so the app has to be
 /// able to talk about more than one kind.
-enum Requirement: Hashable {
+enum Requirement: Hashable, CaseIterable {
     case accessibility
+    /// Recording what other apps are playing. Its own TCC category, separate from the microphone.
+    ///
+    /// Unlike Accessibility there is **no API to request it or to ask whether it was granted**, and
+    /// denial is silent — Core Audio returns success and hands back empty buffers. So a feature
+    /// needing this can't be gated up front the way the tap features are; it has to notice
+    /// afterwards that it heard nothing. See `VolumeMixerFeature`.
+    case audioCapture
+
+    var title: String {
+        switch self {
+        case .accessibility: return "Accessibility access"
+        case .audioCapture: return "System audio recording"
+        }
+    }
+
+    /// Why the app wants it, in the user's terms.
+    var explanation: String {
+        switch self {
+        case .accessibility:
+            return "Sarvkrit can't watch for keys or clicks until you allow it in System Settings."
+        case .audioCapture:
+            return "Setting an app's volume means routing its audio through Sarvkrit, which macOS "
+                 + "treats as recording it."
+        }
+    }
+
+    /// Whether the app can tell for itself if this has been granted.
+    ///
+    /// False for audio: there is no query, so the only evidence is silence where sound should be.
+    var isQueryable: Bool { self == .accessibility }
+
+    var settingsURL: URL {
+        switch self {
+        case .accessibility:
+            return URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        case .audioCapture:
+            return URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")!
+        }
+    }
 }
 
 /// One toggleable system tweak — the contract the UI renders from.
@@ -86,6 +130,14 @@ protocol Feature: AnyObject {
     /// is all most of them need. A rules editor is not expressible in that shape, so features may
     /// substitute their own. Returning nil — the default — keeps the generic pane.
     @MainActor func makeDetailView() -> AnyView?
+
+    /// Extra content for the tray, shown under the feature's row while it is switched on.
+    ///
+    /// The tray is otherwise strictly one toggle row per feature, which is right for a feature you
+    /// turn on and forget. It is wrong for one you *operate* from the tray — picking an output
+    /// device, moving a volume slider — where the row is a switch for something you then need to
+    /// use. Returning nil, the default, keeps the plain row.
+    @MainActor func makeTrayView() -> AnyView?
 }
 
 extension Feature {
@@ -94,6 +146,7 @@ extension Feature {
     func activate() {}
     func deactivate() {}
     @MainActor func makeDetailView() -> AnyView? { nil }
+    @MainActor func makeTrayView() -> AnyView? { nil }
 
     var requiresAccessibility: Bool { requirements.contains(.accessibility) }
 }

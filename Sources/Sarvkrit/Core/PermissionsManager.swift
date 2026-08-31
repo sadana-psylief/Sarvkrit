@@ -72,7 +72,22 @@ final class PermissionsManager: ObservableObject {
     }
 
     func openSystemSettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-        NSWorkspace.shared.open(url)
+        openSystemSettings(for: .accessibility)
+    }
+
+    func openSystemSettings(for requirement: Requirement) {
+        NSWorkspace.shared.open(requirement.settingsURL)
+    }
+
+    /// Whether a requirement is satisfied.
+    ///
+    /// **Only meaningful for requirements the system lets us ask about.** Audio capture has no such
+    /// API, so this reports it as met and the feature that needs it detects denial by noticing it
+    /// heard nothing — gating on an answer we cannot obtain would disable the feature permanently.
+    func isGranted(_ requirement: Requirement) -> Bool {
+        switch requirement {
+        case .accessibility: return isTrusted
+        case .audioCapture: return true
+        }
     }
 }
