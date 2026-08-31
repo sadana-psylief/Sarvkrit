@@ -63,6 +63,7 @@ final class FeatureStoreTests: XCTestCase {
         XCTAssertEqual(ids, ["finder-cut-paste", "text-snippets", "clipboard-history",
                              "window-management", "quit-on-close", "file-rules", "trash-cleanup",
                              "app-sweep", "shelf", "audio-switcher",
-                             "mute-microphone", "keep-awake"])
+                             "mute-microphone", "music-blocker",
+                             "keep-awake"])
     }
 }

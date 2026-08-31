@@ -18,6 +18,7 @@ enum FeatureRegistry {
             ShelfFeature(),
             OutputSwitcherFeature(),
             MuteMicrophoneFeature(),
+            MusicBlockerFeature(),
             KeepAwakeFeature(),
         ]
     }
