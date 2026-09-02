@@ -51,11 +51,21 @@ final class ShelfController: NSObject {
             }
         )
 
-        let anchor = point ?? NSEvent.mouseLocation
-        if let screen = ScreenPlacement.screenUnderPointer() {
-            panel.setFrameTopLeftPoint(ScreenPlacement.topLeft(
-                forSize: Self.size, at: anchor, in: screen.visibleFrame
-            ))
+        // Placed only when it is actually being opened. `show()` is reached from five places — the
+        // menu bar, ⌃⌥S, drag-start auto-open, the edge strip's `draggingEntered` and `toggle()` —
+        // and the edge strip can fire repeatedly as one drag re-crosses it. Unguarded, a panel the
+        // user had dragged somewhere useful teleported back under the pointer on the next drag,
+        // which made moving it pointless even once it became possible.
+        //
+        // A fresh open still returns to the default position; only an already-visible panel is left
+        // where it was put.
+        if !panel.isVisible {
+            let anchor = point ?? NSEvent.mouseLocation
+            if let screen = ScreenPlacement.screenUnderPointer() {
+                panel.setFrameTopLeftPoint(ScreenPlacement.topLeft(
+                    forSize: Self.size, at: anchor, in: screen.visibleFrame
+                ))
+            }
         }
         panel.makeKeyAndOrderFront(nil)
     }
