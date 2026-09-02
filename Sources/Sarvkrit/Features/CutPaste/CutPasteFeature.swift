@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import os
 
 /// Makes ⌘X / ⌘V move files in Finder, the way they do on Windows.
 ///
@@ -34,9 +35,16 @@ final class CutPasteFeature: EventTapFeature {
     private var cutPending = false
     /// Sampled after Finder has actually written the pasteboard — see `armCut()`.
     private var changeCountAtCut: Int?
-    /// keyDown rewrote this key, so its keyUp must be rewritten identically. A mismatched
-    /// down/up pair leaves the receiving app's modifier state confused.
-    private var rewrittenKeyDowns: Set<Int64> = []
+    /// keyDowns this feature rewrote, awaiting their matching keyUps. See `PendingRewrites` for
+    /// why this is not a `Set`.
+    private var rewrittenKeyDowns = PendingRewrites()
+
+    /// Cleared alongside `rewrittenKeyDowns`; see the note there.
+    private var appSwitchObserver: NSObjectProtocol?
+
+    /// Diagnostics for a stray keystroke. Records only rewrites this feature performs — never what
+    /// the user types.
+    private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "CutPaste")
 
     /// Called when something visible should be shown. Set by the UI layer so this type stays free
     /// of SwiftUI, the same way `ClipboardFeature` raises its picker.
@@ -49,10 +57,27 @@ final class CutPasteFeature: EventTapFeature {
 
     func activate() {
         FrontmostAppMonitor.shared.start()
+        FocusedRoleCache.shared.start()
+
+        // A rewritten keyDown's keyUp is delivered to whoever has focus. Switching apps between the
+        // two strands the keycode here forever, so the switch itself retires it.
+        rewrittenKeyDowns.removeAll()
+        appSwitchObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.rewrittenKeyDowns.removeAll()
+        }
     }
 
     func deactivate() {
         FrontmostAppMonitor.shared.stop()
+        FocusedRoleCache.shared.stop()
+        if let appSwitchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(appSwitchObserver)
+            self.appSwitchObserver = nil
+        }
         cutPending = false
         changeCountAtCut = nil
         rewrittenKeyDowns.removeAll()
@@ -87,8 +112,11 @@ final class CutPasteFeature: EventTapFeature {
             cutPending: cutPending,
             changeCountAtCut: changeCountAtCut,
             currentChangeCount: NSPasteboard.general.changeCount,
-            // Only reached by ⌘X / ⌘V inside Finder, so at most a handful of times a minute.
-            isTextFieldFocused: isTextFieldFocused()
+            // A cached read. Asking AX directly here cost up to half a second *inside the event
+            // tap*, which is system-wide input latency rather than merely our own — see
+            // `FocusedRoleCache`. Unknown resolves to `true`, which is the harmless direction:
+            // ⌘X passes through untouched instead of turning into a ⌘C that copies the file.
+            isTextFieldFocused: FocusedRoleCache.shared.isTextFieldFocused ?? true
         )
 
         switch CutPasteRewriter.action(for: input) {
@@ -97,14 +125,15 @@ final class CutPasteFeature: EventTapFeature {
             return .pass
 
         case .rewriteCutToCopy:
+            log.debug("rewriting keycode \(keyCode, privacy: .public) to C (cut becomes copy)")
             event.setIntegerValueField(.keyboardEventKeycode, value: CutPasteRewriter.keyC)
-            rewrittenKeyDowns.insert(CutPasteRewriter.keyX)
+            rewrittenKeyDowns.record(CutPasteRewriter.keyX)
             armCut()
             return .pass
 
         case .rewriteToMove:
             event.flags.insert(.maskAlternate)
-            rewrittenKeyDowns.insert(CutPasteRewriter.keyV)
+            rewrittenKeyDowns.record(CutPasteRewriter.keyV)
             clearCut()
             toast("Moved", symbol: "checkmark.circle.fill")
             return .pass
@@ -112,7 +141,8 @@ final class CutPasteFeature: EventTapFeature {
     }
 
     private func applyMatchingKeyUp(event: CGEvent, keyCode: Int64) {
-        guard rewrittenKeyDowns.remove(keyCode) != nil else { return }
+        guard rewrittenKeyDowns.consume(keyCode) else { return }
+        log.debug("rewriting the matching keyUp for keycode \(keyCode, privacy: .public)")
         switch keyCode {
         case CutPasteRewriter.keyX:
             event.setIntegerValueField(.keyboardEventKeycode, value: CutPasteRewriter.keyC)
@@ -166,11 +196,4 @@ final class CutPasteFeature: EventTapFeature {
         changeCountAtCut = nil
     }
 
-    /// Renaming a file inline focuses a text field inside Finder. AX calls can block, so this
-    /// runs in the event tap only because it is cheap in the overwhelmingly common case —
-    /// and `AX` caps its messaging timeout to keep a wedged Finder from stalling the tap.
-    private func isTextFieldFocused() -> Bool {
-        guard let role = AX.focusedElementRole() else { return false }
-        return role == (kAXTextFieldRole as String) || role == (kAXTextAreaRole as String)
-    }
 }

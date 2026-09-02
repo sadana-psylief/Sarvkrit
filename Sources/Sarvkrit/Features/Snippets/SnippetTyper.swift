@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import os
 
 /// Deletes the typed trigger and types the expansion in its place.
 ///
@@ -22,6 +23,9 @@ enum SnippetTyper {
     ///   - deleteCount: how many characters the user typed that must come back out.
     ///   - text: the already-expanded replacement.
     static func replace(deleteCount: Int, with text: String) {
+        // A test that reaches this types into whatever app the user is looking at, and *passes*.
+        // See `AppIdentity.isRunningTests` for the incident this prevents recurring.
+        guard !AppIdentity.isRunningTests else { return }
         guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
 
         for _ in 0..<max(0, deleteCount) {
@@ -63,13 +67,35 @@ enum SnippetTyper {
         post(down, up)
     }
 
+    /// Diagnostics for a stray keystroke that inspection couldn't explain.
+    ///
+    /// Logs **only events this app synthesizes** — never what the user types. Snippets is built
+    /// around holding as little as possible, and a diagnostic that quietly wrote keystrokes to the
+    /// system log would undo the whole point of it.
+    private static let log = Logger(subsystem: AppIdentity.logSubsystem, category: "SnippetTyper")
+
     private static func post(_ down: CGEvent, _ up: CGEvent) {
+        // Flags are cleared explicitly, and this is not tidiness.
+        //
+        // `CGEventSource(stateID: .combinedSessionState)` hands back events carrying whatever
+        // modifiers are *physically held right now*. Expand a snippet while resting a finger on
+        // Shift and the whole expansion arrives shouted; do it while holding Command and the
+        // characters are interpreted as shortcuts instead — `⌘a` selects all, and the next one
+        // replaces the document. `Paster.postCommandV` already sets its flags for the same reason.
+        down.flags = []
+        up.flags = []
+
         // Without the tag these re-enter our own tap and the matcher sees its own expansion as
         // typing — which for a snippet whose expansion contains its trigger would loop. The tap
         // skips tagged events centrally, before any feature sees them.
         EventTapService.tagAsSynthetic(down)
         EventTapService.tagAsSynthetic(up)
+
+        let keyCode = down.getIntegerValueField(.keyboardEventKeycode)
+        log.debug("posting keycode \(keyCode, privacy: .public), flags \(down.flags.rawValue, privacy: .public)")
+
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
     }
+
 }

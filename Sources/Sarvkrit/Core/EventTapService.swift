@@ -102,6 +102,77 @@ final class EventTapService {
     /// means a new feature that posts events can't forget.
     static let syntheticEventTag: Int64 = 0x5341_5256   // "SARV"
 
+    /// Diagnostics for a stray capital X that inspection could not explain.
+    ///
+    /// **Scope is deliberately one character.** A tap sees every keystroke on the Mac, so a
+    /// diagnostic here is one careless line away from being a keylogger — which would undo the
+    /// entire premise of how Snippets is built. Nothing below records *which* keys were pressed:
+    /// only the X case in full, and elsewhere a bare count.
+    ///
+    /// Matching is on the **character**, not just the keycode. `SnippetTyper.type()` posts
+    /// `virtualKey: 0` with the text in the unicode string, so a keycode filter alone would let an
+    /// X this app typed pass unlogged — the exact case the log is supposed to settle.
+    private static func noteIfX(_ event: CGEvent, type: CGEventType, ours: Bool) {
+        guard type == .keyDown || type == .keyUp else { return }
+
+        if type == .keyDown { recentKeyDowns.record() }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        guard keyCode == 7 || carriesX(event) else { return }
+
+        // The field that actually answers the question. Every CGEvent records the PID of whatever
+        // posted it: 0 for real hardware coming up through the HID stack, otherwise the injecting
+        // process. Three rounds of reading code could not distinguish "we typed it", "another app
+        // typed it" and "the keyboard did it"; this integer does.
+        let postedBy = event.getIntegerValueField(.eventSourceUnixProcessID)
+        // A second, independent read on the same question: physical keyboards report a nonzero
+        // type, synthesized events almost always report 0.
+        let keyboardType = event.getIntegerValueField(.keyboardEventKeyboardType)
+
+        diagnosticLog.notice(
+            """
+            X key \(type == .keyDown ? "down" : "up", privacy: .public)             — posted by PID \(postedBy, privacy: .public),             tagged as ours: \(ours, privacy: .public),             keycode \(keyCode, privacy: .public),             keyboardType \(keyboardType, privacy: .public),             flags \(event.flags.rawValue, privacy: .public),             keyDowns in the last 10s: \(recentKeyDowns.count(), privacy: .public)
+            """
+        )
+    }
+
+    /// Whether the event would insert an "X", whatever keycode it claims to be.
+    private static func carriesX(_ event: CGEvent) -> Bool {
+        var length = 0
+        var buffer = [UniChar](repeating: 0, count: 4)
+        event.keyboardGetUnicodeString(
+            maxStringLength: 4, actualStringLength: &length, unicodeString: &buffer)
+        guard length == 1 else { return false }
+        return buffer[0] == 0x58   // "X"
+    }
+
+    /// How many keys were pressed recently — **a count, never which keys.**
+    ///
+    /// This is the one thing the previous diagnostic could not tell us: an X arriving in total
+    /// isolation while the user sits still is a bug, whereas the same X arriving mid-sentence is a
+    /// typo. Distinguishing them needs no knowledge of what was typed, so none is kept.
+    private struct KeyDownCounter {
+        private static let window: TimeInterval = 10
+        private var timestamps: [TimeInterval] = []
+
+        mutating func record() {
+            let now = Date.timeIntervalSinceReferenceDate
+            timestamps.removeAll { now - $0 > Self.window }
+            timestamps.append(now)
+        }
+
+        func count() -> Int {
+            let now = Date.timeIntervalSinceReferenceDate
+            return timestamps.filter { now - $0 <= Self.window }.count
+        }
+    }
+
+    /// Only ever touched from the tap callback, which runs on the main run loop.
+    private static var recentKeyDowns = KeyDownCounter()
+
+    private static let diagnosticLog = Logger(
+        subsystem: AppIdentity.logSubsystem, category: "StrayKeyDiagnostic")
+
     /// Marks an event as ours before posting it.
     static func tagAsSynthetic(_ event: CGEvent) {
         event.setIntegerValueField(.eventSourceUserData, value: syntheticEventTag)
@@ -109,12 +180,18 @@ final class EventTapService {
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // Our own synthesized events pass straight through, untouched and unseen by any feature.
-        if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventTag {
+        let isOurs = event.getIntegerValueField(.eventSourceUserData) == Self.syntheticEventTag
+        if isOurs {
+            Self.noteIfX(event, type: type, ours: true)
             return Unmanaged.passUnretained(event)
         }
+        Self.noteIfX(event, type: type, ours: false)
 
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            log.warning("tap disabled by system (\(type.rawValue)) — re-enabling")
+            // Logged where the X diagnostic can see it: a stalled tap delays real input, which
+            // is indistinguishable from a phantom keystroke to anyone watching the screen.
+            Self.diagnosticLog.notice(
+                "tap disabled by system (\(type.rawValue, privacy: .public)) — re-enabling")
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }

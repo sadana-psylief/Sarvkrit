@@ -36,7 +36,10 @@ final class SnippetMatcherTests: XCTestCase {
         var m = matcher([Snippet(trigger: ";addr", expansion: "221B Baker Street", style: .prefix)])
         let decision = type(";addr", into: &m)
         XCTAssertEqual(expansion(of: decision), "221B Baker Street")
-        XCTAssertEqual(deleteCount(of: decision), 5, "the five typed characters come back out")
+        // Four, not five: the `r` that completed `;addr` is swallowed by the feature and never
+        // reaches the app, so only `;add` is on screen. Counting it would eat a character of
+        // whatever the user had typed before the trigger.
+        XCTAssertEqual(deleteCount(of: decision), 4, "only the characters that actually arrived")
     }
 
     func testAPartialPrefixTriggerDoesNothing() {
@@ -77,10 +80,32 @@ final class SnippetMatcherTests: XCTestCase {
         XCTAssertEqual(expansion(of: m.typed(" ")), "221B ", "the space is given back")
     }
 
-    func testTheDelimiterIsCountedInWhatGetsDeleted() {
+    func testTheDelimiterIsNotCountedInWhatGetsDeleted() {
+        // Four, not five. All four characters of `addr` reached the app, but the space that
+        // completed the trigger is the swallowed keystroke — it never arrived, so deleting it
+        // would eat a real character.
         var m = matcher([Snippet(trigger: "addr", expansion: "221B", style: .wordBoundary)])
         _ = type("addr", into: &m)
-        XCTAssertEqual(deleteCount(of: m.typed(" ")), 5, "four characters plus the space")
+        XCTAssertEqual(deleteCount(of: m.typed(" ")), 4, "the trigger only; the space never arrived")
+    }
+
+    func testDeleteCountAlwaysMatchesWhatReachedTheApp() {
+        // Stated as a rule so nobody "corrects" it back to the trigger's length. The feature
+        // swallows the keystroke that completes a trigger, in both styles, so exactly one of the
+        // characters the user pressed is never on screen.
+        for length in 2...8 {
+            let trigger = ";" + String(repeating: "a", count: length - 1)
+
+            var prefix = matcher([Snippet(trigger: trigger, expansion: "X", style: .prefix)])
+            XCTAssertEqual(deleteCount(of: type(trigger, into: &prefix)), length - 1,
+                           "prefix: the last character of \(trigger) is swallowed")
+
+            let word = String(repeating: "b", count: length)
+            var boundary = matcher([Snippet(trigger: word, expansion: "X", style: .wordBoundary)])
+            _ = type(word, into: &boundary)
+            XCTAssertEqual(deleteCount(of: boundary.typed(" ")), length,
+                           "word boundary: the delimiter is swallowed, the trigger arrived")
+        }
     }
 
     func testAWordBoundaryTriggerDoesNotFireInsideALongerWord() {

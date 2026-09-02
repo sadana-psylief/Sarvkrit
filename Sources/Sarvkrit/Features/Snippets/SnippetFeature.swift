@@ -80,6 +80,10 @@ final class SnippetFeature: EventTapFeature, ObservableObject {
     /// is not a guarantee to leave unverified.
     private let frontmostBundleID: () -> String?
 
+    /// How an expansion is actually typed. Injected so tests can observe what *would* be typed
+    /// rather than typing it into the user's foreground app — which is what they did before.
+    private let typeReplacement: (Int, String) -> Void
+
     /// How long a pause before the buffer is thrown away.
     ///
     /// Not a performance tuning knob — it is a privacy bound. Someone who types a few characters,
@@ -90,11 +94,13 @@ final class SnippetFeature: EventTapFeature, ObservableObject {
     init(
         store: SnippetStore = SnippetStore(),
         defaults: UserDefaults = .standard,
-        frontmostBundleID: @escaping () -> String? = { FrontmostAppMonitor.shared.bundleID }
+        frontmostBundleID: @escaping () -> String? = { FrontmostAppMonitor.shared.bundleID },
+        typeReplacement: @escaping (Int, String) -> Void = SnippetTyper.replace
     ) {
         self.store = store
         self.defaults = defaults
         self.frontmostBundleID = frontmostBundleID
+        self.typeReplacement = typeReplacement
         matcher.setSnippets(store.snippets)
         // Same handshake RuleStore uses: a callback rather than a sink on `$snippets`, because
         // `@Published` emits during `willSet` and the matcher would be rebuilt from the table as it
@@ -201,7 +207,7 @@ final class SnippetFeature: EventTapFeature, ObservableObject {
             swallowedKeyDowns.insert(keyCode)
             // Off the tap callback: posting events from inside it re-enters the tap machinery.
             DispatchQueue.main.async {
-                SnippetTyper.replace(deleteCount: deleteCount, with: expansion)
+                self.typeReplacement(deleteCount, expansion)
             }
             return .swallow
         }

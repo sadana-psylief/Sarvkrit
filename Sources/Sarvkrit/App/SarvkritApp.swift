@@ -24,8 +24,9 @@ struct SarvkritApp: App {
             // change only on some unrelated redraw — and an indicator you can't rely on noticing is
             // worse than none.
             if let keepAwake = state.features.compactMap({ $0 as? KeepAwakeFeature }).first,
-               let micMute = state.features.compactMap({ $0 as? MuteMicrophoneFeature }).first {
-                MenuBarLabel(keepAwake: keepAwake, micMute: micMute)
+               let micMute = state.features.compactMap({ $0 as? MuteMicrophoneFeature }).first,
+               let privacy = state.features.compactMap({ $0 as? PrivacyGuardFeature }).first {
+                MenuBarLabel(keepAwake: keepAwake, micMute: micMute, privacy: privacy)
             } else {
                 Image(systemName: MenuBarIconState.idle.symbolName)
             }
