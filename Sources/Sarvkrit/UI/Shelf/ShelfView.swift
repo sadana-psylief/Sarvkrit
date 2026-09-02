@@ -49,11 +49,17 @@ struct ShelfView: View {
 
     private var header: some View {
         HStack(spacing: Theme.Space.sm) {
+            // The icon and title are decoration, and are explicitly not hit-testable: left
+            // interactive they would swallow the mouse-down before it reached the drag handle
+            // behind the row, so the two most obvious places to grab the window — its icon and its
+            // name — would be the two that didn't move it.
             Image(systemName: "tray.full")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.accentColor)
+                .allowsHitTesting(false)
             Text("Shelf")
                 .font(.system(size: 13, weight: .semibold))
+                .allowsHitTesting(false)
             Spacer()
             if !store.items.isEmpty {
                 Button("Clear") { store.clear() }
@@ -73,6 +79,11 @@ struct ShelfView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .frame(height: 34)
+        // The header is the panel's title bar, and now behaves like one. `WindowDragHandle` sits
+        // *behind* the row, so the Clear and close buttons keep taking their own clicks while the
+        // icon, the title and the gap between them drag the whole window. The panel is borderless,
+        // so without this there is no way to move it at all.
+        .background(WindowDragHandle())
     }
 
     @ViewBuilder
