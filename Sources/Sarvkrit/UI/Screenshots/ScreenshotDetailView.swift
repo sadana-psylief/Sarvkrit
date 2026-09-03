@@ -151,6 +151,8 @@ struct ScreenshotDetailView: View {
                 Text("History")
             }
 
+            CaptureShortcutsSection(feature: feature, shortcuts: feature.shortcuts)
+
             if !store.items.isEmpty {
                 Section {
                     CaptureHistoryStrip(store: store)

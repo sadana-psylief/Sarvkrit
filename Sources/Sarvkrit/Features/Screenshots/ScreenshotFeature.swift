@@ -38,6 +38,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
 
     let capturer: ScreenCapturing
     let store: CaptureHistoryStore
+    let shortcuts: ScreenshotShortcutStore
 
     private let defaults: UserDefaults
 
@@ -214,6 +215,8 @@ final class ScreenshotFeature: Feature, ObservableObject {
     var restoreLastOverlay: (() -> Void)?
     var hideOverlays: (() -> Void)?
     var showAllInOne: (() -> Void)?
+    var captureScrolling: (() -> Void)?
+    var recognizeText: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -222,6 +225,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
          defaults: UserDefaults = .standard) {
         self.capturer = capturer
         self.defaults = defaults
+        self.shortcuts = ScreenshotShortcutStore(defaults: defaults)
         let retention = (defaults.string(forKey: "screenshot.retention")
             .flatMap(CaptureRetention.Window.init(rawValue:))) ?? .month
         self.store = store ?? CaptureHistoryStore(retention: retention)
@@ -233,48 +237,57 @@ final class ScreenshotFeature: Feature, ObservableObject {
     }
 
     func activate() {
-        hotkeys = [
-            bind(id: GlobalHotkey.ID.captureArea, key: kVK_ANSI_A, name: "area") { [weak self] in
-                self?.captureArea?()
-            },
-            bind(id: GlobalHotkey.ID.captureWindow, key: kVK_ANSI_W, name: "window") { [weak self] in
-                self?.captureWindow?()
-            },
-            bind(id: GlobalHotkey.ID.captureAllInOne, key: kVK_ANSI_5, name: "all-in-one") { [weak self] in
-                self?.showAllInOne?()
-            },
-            bind(id: GlobalHotkey.ID.restoreLastOverlay, key: kVK_ANSI_Z, name: "restore overlay") { [weak self] in
-                self?.restoreLastOverlay?()
-            },
-            bind(id: GlobalHotkey.ID.hideOverlays, key: kVK_ANSI_H, name: "hide overlays") { [weak self] in
-                self?.hideOverlays?()
-            },
-            bind(id: GlobalHotkey.ID.captureFullscreen, key: kVK_ANSI_F, name: "fullscreen") { [weak self] in
-                self?.captureFullscreen?()
-            },
-        ]
+        rebindHotkeys()
     }
 
-    /// ⌃⇧ plus a letter.
+    /// Registers every capture shortcut from the store.
     ///
-    /// **Not ⌘⇧3/4/5.** Those belong to the system screenshot service, which claims them below
-    /// `RegisterEventHotKey` — registering one either reports `eventHotKeyExistsErr` or succeeds
-    /// and never fires, and a shortcut that silently does nothing is the worst of the options.
-    /// ⌃⌥ is already crowded: window management owns most of the letters, the Shelf has S, and
-    /// the clipboard has ⌃⌥1–5. ⌃⇧ is free.
-    private func bind(id: UInt32, key: Int, name: String,
-                      onFire: @escaping () -> Void) -> GlobalHotkey {
-        let hotkey = GlobalHotkey(id: id)
-        let status = hotkey.register(keyCode: UInt32(key),
-                                     modifiers: UInt32(controlKey | shiftKey)) {
-            MainActor.assumeIsolated { onFire() }
+    /// Called again after a rebind, because Carbon hotkeys are registered rather than matched —
+    /// there is no lookup table to update, only a registration to replace.
+    func rebindHotkeys() {
+        hotkeys.forEach { $0.unregister() }
+        hotkeys = []
+        failedRegistrations = []
+
+        for action in ScreenshotAction.allCases {
+            guard let handler = handler(for: action),
+                  let shortcut = shortcuts.shortcut(for: action) else { continue }
+            let hotkey = GlobalHotkey(id: action.hotkeyID)
+            let status = hotkey.register(
+                keyCode: UInt32(shortcut.keyCode),
+                // Carbon masks, not CGEventFlags. Handing over the wrong one compiles and
+                // registers a different combination — see `CarbonModifiers`.
+                modifiers: CarbonModifiers.from(shortcut.flags)
+            ) { MainActor.assumeIsolated { handler() } }
+
+            if status == noErr {
+                hotkeys.append(hotkey)
+            } else {
+                // Not fatal: another app holding a combination is ordinary. Recorded so the
+                // settings pane can say so, rather than offering a shortcut that does nothing.
+                failedRegistrations.insert(action)
+                log.error("couldn't register \(action.rawValue, privacy: .public): \(status, privacy: .public)")
+            }
         }
-        if status != noErr {
-            // Another app holding the combination is a normal thing that happens, and the settings
-            // pane reports it properly. Worth a log, not a crash.
-            log.error("couldn't register the \(name, privacy: .public) capture hotkey: \(status, privacy: .public)")
+        objectWillChange.send()
+    }
+
+    /// Actions whose registration was refused, so settings can report it honestly.
+    private(set) var failedRegistrations: Set<ScreenshotAction> = []
+
+    private func handler(for action: ScreenshotAction) -> (() -> Void)? {
+        switch action {
+        case .area: return { [weak self] in self?.captureArea?() }
+        case .window: return { [weak self] in self?.captureWindow?() }
+        case .fullscreen: return { [weak self] in self?.captureFullscreen?() }
+        case .allInOne: return { [weak self] in self?.showAllInOne?() }
+        case .restoreOverlay: return { [weak self] in self?.restoreLastOverlay?() }
+        case .hideOverlays: return { [weak self] in self?.hideOverlays?() }
+        case .scrolling: return { [weak self] in self?.captureScrolling?() }
+        case .textRecognition: return { [weak self] in self?.recognizeText?() }
+        // Owned by PinToScreenFeature, which registers it itself.
+        case .pinClipboard: return nil
         }
-        return hotkey
     }
 
     func deactivate() {

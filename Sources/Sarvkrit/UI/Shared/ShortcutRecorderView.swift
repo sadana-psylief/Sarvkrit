@@ -3,15 +3,19 @@ import SwiftUI
 
 /// A field that captures the next key combination pressed.
 ///
+/// Generic over `ShortcutOwner` so the window actions and the capture actions share one recorder
+/// and one conflict policy. The `WindowAction` entry point in `ShortcutConflict` is kept alongside
+/// the generic one rather than replaced, because fifteen assertions pin its exact wording.
+///
 /// Capture goes through `NSEvent.addLocalMonitorForEvents` rather than SwiftUI's `onKeyPress`,
 /// which never sees ⌘-modified keys — the same reason the clipboard picker uses a local monitor.
 /// Returning nil from the monitor eats the event, so the combination being recorded doesn't also
 /// act on whatever is behind the settings window.
-struct ShortcutRecorderView: View {
-    let action: WindowAction
+struct ShortcutRecorderView<Owner: ShortcutOwner>: View {
+    let action: Owner
     let current: WindowShortcut?
     /// Existing bindings, so the recorder can say what a combination would displace.
-    let existing: [WindowAction: WindowShortcut]
+    let existing: [Owner: WindowShortcut]
     let onRecord: (WindowShortcut?) -> Void
     /// Suspends the event tap while capturing, so a bound combination doesn't move a window as
     /// it is typed.
@@ -117,7 +121,8 @@ struct ShortcutRecorderView: View {
             keyCode: keyCode,
             modifiers: event.modifierFlags.sarvkritEventFlags
         )
-        let verdict = ShortcutConflict.verdict(for: shortcut, existing: existing, assigningTo: action)
+        let verdict = ShortcutConflict.verdict(for: shortcut, existing: existing,
+                                               assigningTo: action)
 
         guard verdict.isAllowed else {
             // Stay open so the user can simply try another combination.
