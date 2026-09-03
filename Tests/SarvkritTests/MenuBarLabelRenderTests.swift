@@ -38,6 +38,10 @@ final class MenuBarLabelRenderTests: XCTestCase {
     func testTheLabelLaysOutWithLiveReadings() throws {
         let features = FeatureRegistry.makeAll()
         let monitor = try XCTUnwrap(features.compactMap { $0 as? SystemMonitorFeature }.first)
+        // Activated on purpose: a monitor that is switched off contributes nothing to the label,
+        // by design, so there would be no live readings to lay out.
+        monitor.activate()
+        defer { monitor.deactivate() }
         monitor.apply(SystemSnapshot(cpu: CPUSample(usage: 42, coreCount: 10)))
         XCTAssertFalse(monitor.menuBarLine.isEmpty, "precondition: there is something to render")
 

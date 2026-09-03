@@ -194,10 +194,12 @@ final class SystemMonitorFeatureTests: XCTestCase {
         // Keep Awake's countdown keeps the slot to itself with no dangling separator.
         let feature = makeFeature()
         MainActor.assumeIsolated {
+            feature.activate()
             feature.apply(SystemSnapshot(cpu: CPUSample(usage: 42, coreCount: 10)))
             XCTAssertFalse(feature.menuBarLine.isEmpty, "precondition: something to show")
             feature.showsLiveDataInMenuBar = false
             XCTAssertEqual(feature.menuBarLine, "")
+            feature.deactivate()
         }
     }
 
@@ -241,6 +243,23 @@ final class SystemMonitorFeatureTests: XCTestCase {
         // would quietly vanish from the dropdown with every other test still passing.
         MainActor.assumeIsolated {
             XCTAssertNotNil(makeFeature().makeTrayView())
+        }
+    }
+
+    func testASwitchedOffMonitorContributesNothingToTheMenuBar() {
+        // The bug this pins shipped for one commit and was visible only in the real menu bar: with
+        // the feature switched off the label still read "CPU —", because the line was gated on the
+        // live-data preference alone. A feature that is off must say nothing at all — a placeholder
+        // implies a reading that is merely unavailable, and the app's promise is that nothing runs.
+        let feature = makeFeature()
+        XCTAssertEqual(feature.menuBarLine, "", "a monitor that was never switched on says nothing")
+
+        MainActor.assumeIsolated {
+            feature.activate()
+            feature.apply(SystemSnapshot(cpu: CPUSample(usage: 42, coreCount: 10)))
+            XCTAssertFalse(feature.menuBarLine.isEmpty, "precondition: it speaks while running")
+            feature.deactivate()
+            XCTAssertEqual(feature.menuBarLine, "", "switching it off must clear the menu bar too")
         }
     }
 }

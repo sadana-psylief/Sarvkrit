@@ -321,10 +321,16 @@ final class SystemMonitorFeature: Feature, ObservableObject {
 
     /// What appears beside the Sarvkrit icon, as the single string the menu bar can render.
     ///
-    /// Empty rather than nil when switched off, which `MenuBarIconState.trailingText` treats as
-    /// absent — so Keep Awake's countdown keeps the slot to itself with no dangling separator.
+    /// Empty rather than nil when there is nothing to say, which `MenuBarIconState.trailingText`
+    /// treats as absent — so Keep Awake's countdown keeps the slot to itself with no dangling
+    /// separator.
+    ///
+    /// Gated on `isRunning` as well as the preference. Without that the label read "CPU —" for a
+    /// feature the user had switched off: the snapshot is empty, so every metric formats as a
+    /// placeholder, and a placeholder claims a reading is merely unavailable rather than not being
+    /// taken at all. A switched-off feature says nothing.
     var menuBarLine: String {
-        guard showsLiveDataInMenuBar else { return "" }
+        guard isRunning, showsLiveDataInMenuBar else { return "" }
         return MenuBarReadout.line(for: reading.snapshot, metrics: menuBarMetrics)
     }
 
