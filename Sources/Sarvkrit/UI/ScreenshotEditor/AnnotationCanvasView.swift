@@ -67,14 +67,21 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         // Inset so the composition never touches the window edge — a background with a shadow
         // needs air around it or it reads as a rendering artefact rather than a deliberate frame.
         let available = bounds.insetBy(dx: 24, dy: 24).size
-        transform = CanvasTransform.fitting(imageSize: composition.canvasSize,
-                                            in: CGSize(width: max(available.width, 1),
-                                                       height: max(available.height, 1)))
+        let fitted = CanvasTransform.fitting(imageSize: composition.canvasSize,
+                                             in: CGSize(width: max(available.width, 1),
+                                                        height: max(available.height, 1)))
+        // A zoom the user chose wins over the fit, but the image stays centred either way — a
+        // zoomed image pinned to a corner is much harder to work on than one in the middle.
+        let scale = model.zoom ?? fitted.zoom
         transform = CanvasTransform(
             imageSize: composition.canvasSize,
-            zoom: transform.zoom,
-            offset: CGPoint(x: transform.offset.x + 24, y: transform.offset.y + 24))
+            zoom: scale,
+            offset: CGPoint(x: (bounds.width - composition.canvasSize.width * scale) / 2,
+                            y: (bounds.height - composition.canvasSize.height * scale) / 2))
     }
+
+    /// The zoom the canvas is currently drawn at, so the toolbar can show it.
+    var currentZoom: CGFloat { transform.zoom }
 
     /// View point → **image** coordinates, which is what every annotation is stored in.
     ///

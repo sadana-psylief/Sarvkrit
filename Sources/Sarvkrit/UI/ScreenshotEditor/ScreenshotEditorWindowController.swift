@@ -89,8 +89,9 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
         switch action {
         case .selectTool(let tool): model.tool = tool
         case .selectColour(let index):
-            guard (1...RGBAColour.palette.count).contains(index) else { return }
-            model.colour = RGBAColour.palette[index - 1]
+            guard (1...min(6, AnnotationPalette.colours.count)).contains(index) else { return }
+            model.colour = AnnotationPalette.colours[index - 1]
+            model.applyStyleToSelection()
         case .undo: model.undo()
         case .redo: model.redo()
         case .copy: copyToPasteboard()

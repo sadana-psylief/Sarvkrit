@@ -133,3 +133,67 @@ final class SelectionGestureTests: XCTestCase {
         XCTAssertFalse(g.isActive)
     }
 }
+
+/// Adjusting a selection after the drag, which is what makes one-shot accuracy unnecessary.
+final class SelectionAdjustmentTests: XCTestCase {
+    private let display = DisplaySnapshotGeometry(
+        displayID: 1, frame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+        scale: 2, pixelSize: CGSize(width: 2000, height: 1600))
+
+    private func settled(_ rect: CGRect) -> SelectionGesture {
+        var gesture = SelectionGesture(display: display)
+        gesture.began(at: CGPoint(x: rect.minX, y: rect.minY))
+        gesture.moved(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        _ = gesture.ended()
+        return gesture
+    }
+
+    func testADragLeavesTheSelectionSettledRatherThanFinished() {
+        // It used to confirm on mouse-up, so there was no moment in which to adjust it.
+        let gesture = settled(CGRect(x: 100, y: 100, width: 200, height: 150))
+        XCTAssertEqual(gesture.settledRect, CGRect(x: 100, y: 100, width: 200, height: 150))
+    }
+
+    func testAHandleResizesFromTheOppositeCorner() {
+        var gesture = settled(CGRect(x: 100, y: 100, width: 200, height: 150))
+        gesture.resize(handle: .bottomRight, to: CGPoint(x: 400, y: 400),
+                       constrainAspect: false)
+        let rect = try! XCTUnwrap(gesture.settledRect)
+        XCTAssertEqual(rect.minX, 100)
+        XCTAssertEqual(rect.maxX, 400)
+    }
+
+    func testResizingStaysInsideTheDisplay() {
+        var gesture = settled(CGRect(x: 800, y: 700, width: 100, height: 50))
+        gesture.resize(handle: .bottomRight, to: CGPoint(x: 5000, y: 5000),
+                       constrainAspect: false)
+        let rect = try! XCTUnwrap(gesture.settledRect)
+        XCTAssertLessThanOrEqual(rect.maxX, display.frame.maxX)
+        XCTAssertLessThanOrEqual(rect.maxY, display.frame.maxY)
+    }
+
+    func testAspectCanBeHeldWhileResizing() {
+        var gesture = settled(CGRect(x: 100, y: 100, width: 200, height: 100))
+        gesture.resize(handle: .bottomRight, to: CGPoint(x: 500, y: 130),
+                       constrainAspect: true)
+        let rect = try! XCTUnwrap(gesture.settledRect)
+        XCTAssertEqual(rect.width / rect.height, 2, accuracy: 0.05)
+    }
+
+    func testResizingDoesNothingBeforeTheDragIsOver() {
+        var gesture = SelectionGesture(display: display)
+        gesture.began(at: CGPoint(x: 100, y: 100))
+        gesture.moved(to: CGPoint(x: 200, y: 200))
+        gesture.resize(handle: .bottomRight, to: CGPoint(x: 900, y: 900),
+                       constrainAspect: false)
+        XCTAssertNil(gesture.settledRect, "still dragging — there is nothing settled to resize")
+    }
+
+    func testNudgingStillWorksAfterAResize() {
+        var gesture = settled(CGRect(x: 100, y: 100, width: 200, height: 150))
+        gesture.resize(handle: .bottomRight, to: CGPoint(x: 350, y: 300),
+                       constrainAspect: false)
+        gesture.nudge(by: CGSize(width: 10, height: 0))
+        XCTAssertEqual(gesture.settledRect?.minX, 110)
+    }
+}

@@ -56,9 +56,13 @@ enum CaptureHistoryGrouping {
 
     /// "2 minutes ago", for the caption under a tile.
     static func relativeTime(for date: Date, now: Date = Date()) -> String {
-        // Clock skew shouldn't caption a capture the user just took as "in 3 hours" — and
-        // clamping to `now` isn't enough on its own, because the formatter then says "in 0 sec".
-        guard date < now else { return "just now" }
+        // Anything within a few seconds reads as "just now".
+        //
+        // Two reasons, and the second is the one that actually showed up: clock skew shouldn't
+        // caption a fresh capture as "in 3 hours", and the formatter renders a sub-second gap as
+        // **"in 0 sec"** — which is what every tile said on a shelf opened straight after a
+        // capture. Guarding only on `date < now` doesn't help, because it is.
+        guard now.timeIntervalSince(date) >= 5 else { return "just now" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: now)

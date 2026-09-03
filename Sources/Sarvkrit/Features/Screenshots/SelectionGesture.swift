@@ -78,6 +78,31 @@ struct SelectionGesture: Equatable {
         phase = .cancelled
     }
 
+    /// Resizes a settled selection by one of its handles.
+    ///
+    /// **The reason a settled rect is adjustable at all:** getting a selection right in one drag
+    /// is rare, and without handles the only recourse is to start the whole capture again. Arrow
+    /// keys move it but cannot resize it.
+    mutating func resize(handle: SelectionHandles.Handle, to point: CGPoint,
+                         constrainAspect: Bool) {
+        guard case .settled(let rect) = phase else { return }
+        let resized = SelectionHandles.resize(rect, handle: handle, to: point,
+                                              constrainAspect: constrainAspect,
+                                              minimumSide: 8)
+        phase = .settled(CaptureGeometry.clamp(resized, to: display))
+    }
+
+    /// Restores a settled selection, for reopening the overlay on the last one.
+    mutating func settle(_ rect: CGRect) {
+        phase = .settled(CaptureGeometry.clamp(rect, to: display))
+    }
+
+    /// The rect once the drag is over, if there is one.
+    var settledRect: CGRect? {
+        if case .settled(let rect) = phase { return rect }
+        return nil
+    }
+
     /// Arrow-key adjustment after the mouse is up. Stays inside the display.
     mutating func nudge(by delta: CGSize) {
         guard case .settled(let rect) = phase else { return }

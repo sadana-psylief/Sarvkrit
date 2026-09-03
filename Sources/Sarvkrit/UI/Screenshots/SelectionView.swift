@@ -45,6 +45,8 @@ final class SelectionView: NSView {
 
     /// Pointer position in view coordinates, for the crosshair.
     private var pointer: CGPoint?
+    /// The handle currently being dragged on a settled selection.
+    private var activeHandle: SelectionHandles.Handle?
 
     private let mode: SelectionMode
     private var hoveredWindow: CapturableWindow?
@@ -111,7 +113,19 @@ final class SelectionView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard case .area = mode else { return }
-        gesture.began(at: globalPoint(convert(event.locationInWindow, from: nil)))
+        let local = convert(event.locationInWindow, from: nil)
+
+        // A press on a handle of an already-settled selection adjusts it rather than starting a
+        // new one — otherwise the only way to fix a selection that is slightly wrong is to press
+        // Escape and do the whole capture again.
+        if let settled = gesture.settledRect,
+           let handle = SelectionHandles.handle(at: local, bounds: viewRect(settled)) {
+            activeHandle = handle
+            needsDisplay = true
+            return
+        }
+
+        gesture.began(at: globalPoint(local))
         applyModifiers(event)
         needsDisplay = true
     }
@@ -120,12 +134,27 @@ final class SelectionView: NSView {
         guard case .area = mode else { return }
         let local = convert(event.locationInWindow, from: nil)
         pointer = local
+
+        if let activeHandle {
+            gesture.resize(handle: activeHandle, to: globalPoint(local),
+                           constrainAspect: event.modifierFlags.contains(.shift))
+            needsDisplay = true
+            return
+        }
+
         applyModifiers(event)
         gesture.moved(to: globalPoint(local))
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
+        if activeHandle != nil {
+            // Adjusting, not finishing: the capture is taken on Return or a click inside.
+            activeHandle = nil
+            needsDisplay = true
+            return
+        }
+
         if case .window = mode {
             if let hoveredWindow {
                 delegate?.selectionView(self, didConfirmWindow: hoveredWindow)
@@ -137,13 +166,27 @@ final class SelectionView: NSView {
             return
         }
         applyModifiers(event)
-        if let rect = gesture.ended() {
-            delegate?.selectionView(self, didConfirm: rect)
-        } else {
-            // A click with no drag dismisses. Anything else would leave the user stuck behind a
-            // full-screen overlay wondering which key closes it.
-            delegate?.selectionViewDidCancel(self)
+
+        if let settled = gesture.settledRect {
+            // Clicking inside a settled selection takes it; clicking outside starts over. Both
+            // are what the hand expects once handles exist.
+            let local = convert(event.locationInWindow, from: nil)
+            if viewRect(settled).contains(local) {
+                delegate?.selectionView(self, didConfirm: settled)
+            }
+            needsDisplay = true
+            return
         }
+
+        if gesture.ended() != nil {
+            // Settled rather than confirmed, so it can be adjusted by its handles. Return or a
+            // click inside takes the shot.
+            needsDisplay = true
+            return
+        }
+        // A click with no drag dismisses. Anything else would leave the user stuck behind a
+        // full-screen overlay wondering which key closes it.
+        delegate?.selectionViewDidCancel(self)
         needsDisplay = true
     }
 
@@ -179,7 +222,7 @@ final class SelectionView: NSView {
         case 36:    // Return
             if case .window = mode {
                 if let hoveredWindow { delegate?.selectionView(self, didConfirmWindow: hoveredWindow) }
-            } else if let rect = gesture.currentRect {
+            } else if let rect = gesture.settledRect ?? gesture.currentRect {
                 delegate?.selectionView(self, didConfirm: rect)
             }
         case 123, 124, 125, 126:    // arrows
@@ -230,6 +273,9 @@ final class SelectionView: NSView {
 
         if let selection {
             drawSelectionBorder(selection, in: context)
+            if !isWindowMode, gesture.settledRect != nil {
+                drawHandles(for: selection, in: context)
+            }
             if showsDimensions { drawReadout(for: selection, in: context) }
         }
 
@@ -380,6 +426,22 @@ final class SelectionView: NSView {
                           height: (selection.height * display.scale).rounded())
         }
         return gesture.pixelSize
+    }
+
+    /// Grab points on a settled selection.
+    ///
+    /// Only once the drag is over. Drawing them *during* the drag would put eight small squares
+    /// under the pointer at the exact moment the user is watching the edge they are dragging.
+    private func drawHandles(for selection: CGRect, in context: CGContext) {
+        context.saveGState()
+        for rect in SelectionHandles.rects(for: selection).values {
+            context.setFillColor(NSColor.white.cgColor)
+            context.setStrokeColor(NSColor.black.withAlphaComponent(0.35).cgColor)
+            context.setLineWidth(1)
+            context.fillEllipse(in: rect)
+            context.strokeEllipse(in: rect)
+        }
+        context.restoreGState()
     }
 
     /// Full-width guides through the pointer.

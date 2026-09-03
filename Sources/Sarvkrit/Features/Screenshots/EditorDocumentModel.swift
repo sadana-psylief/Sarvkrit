@@ -22,6 +22,9 @@ final class EditorDocumentModel: ObservableObject {
     /// Which arrow shape new arrows get. Four were built; without this control the user could
     /// only ever draw the first one.
     @Published var arrowHead: ArrowElement.Head = .filled
+    /// Nil means "fit to the window", which is the state the editor opens in and returns to.
+    /// A concrete value is a zoom the user chose and should not be silently overridden on resize.
+    @Published var zoom: CGFloat?
     /// Set while a text annotation has the field editor. Gates the single-key tool shortcuts.
     @Published var isEditingText = false
     @Published private(set) var isDirty = false
@@ -166,6 +169,18 @@ final class EditorDocumentModel: ObservableObject {
     }
 
     // MARK: - Output
+
+    static let zoomSteps: [CGFloat] = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4]
+
+    func zoomIn() {
+        let current = zoom ?? 1
+        zoom = Self.zoomSteps.first { $0 > current + 0.001 } ?? Self.zoomSteps.last
+    }
+
+    func zoomOut() {
+        let current = zoom ?? 1
+        zoom = Self.zoomSteps.last { $0 < current - 0.001 } ?? Self.zoomSteps.first
+    }
 
     /// The finished image, annotations only.
     func flatten() -> CGImage? {

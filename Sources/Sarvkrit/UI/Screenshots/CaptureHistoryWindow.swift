@@ -27,7 +27,9 @@ final class CaptureHistoryWindowController: NSObject {
         dismiss()
 
         guard let screen = ScreenPlacement.screenUnderPointer() else { return }
-        let height = min(max(screen.frame.height * 0.46, 360), 560)
+        // Tall enough for the filters, a 215pt thumbnail and its caption or actions, and no
+        // taller — a shelf sized as a fraction of the screen is mostly empty on a large display.
+        let height: CGFloat = 360
         let frame = NSRect(x: screen.frame.minX, y: screen.frame.minY,
                            width: screen.frame.width, height: height)
 
@@ -83,11 +85,14 @@ struct CaptureHistoryShelf: View {
     }
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 16) {
             filters
             if visible.isEmpty { empty } else { row }
         }
-        .padding(.vertical, 22)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
+        // The row takes the remaining height and centres itself in it, so a shelf sized to the
+        // screen doesn't leave a band of empty dark under the thumbnails.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(CaptureChrome.Colours.surface)
         .background(VisualEffectBackground())
@@ -119,25 +124,21 @@ struct CaptureHistoryShelf: View {
     }
 
     private var row: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 28) {
-                    ForEach(visible) { item in
-                        ShelfTile(store: store, item: item,
-                                  isSelected: selection == item.id,
-                                  onSelect: { selection = selection == item.id ? nil : item.id },
-                                  onOpen: { onOpen(item) },
-                                  onPin: { onPin(item) })
-                            .id(item.id)
-                    }
+        // No `scrollTo` on appear. The list is already newest-first, so the newest is at the
+        // leading edge anyway — and scrolling to it pinned it flush against the shelf's left
+        // edge, eating the padding and clipping the first tile.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .center, spacing: 28) {
+                ForEach(visible) { item in
+                    ShelfTile(store: store, item: item,
+                              isSelected: selection == item.id,
+                              onSelect: { selection = selection == item.id ? nil : item.id },
+                              onOpen: { onOpen(item) },
+                              onPin: { onPin(item) })
                 }
-                .padding(.horizontal, 40)
-                .padding(.bottom, 8)
             }
-            .onAppear {
-                // Land on the newest, which is what you almost always came for.
-                if let first = visible.first?.id { proxy.scrollTo(first, anchor: .leading) }
-            }
+            .padding(.horizontal, 40)
+            .frame(maxHeight: .infinity)
         }
     }
 

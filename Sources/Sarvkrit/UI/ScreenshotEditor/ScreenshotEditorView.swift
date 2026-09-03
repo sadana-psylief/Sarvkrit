@@ -10,11 +10,26 @@ struct ScreenshotEditorView: View {
     let onSaveEditable: () -> Void
     let onCopy: () -> Void
 
+    /// Tools in the groups they belong to, the way a drawing app arranges them.
+    ///
+    /// A single undifferentiated row of fourteen glyphs is a row you have to read every time. The
+    /// separators mean the eye can go straight to "a shape", "some text", "hide something".
+    private static let toolGroups: [[ToolKind]] = [
+        [.select, .crop],
+        [.arrow, .line, .rectangle, .ellipse],
+        [.text, .counter, .emoji],
+        [.pencil, .highlighter],
+        [.blur, .pixelate, .spotlight],
+    ]
+
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+                .fixedSize(horizontal: false, vertical: true)
             Divider()
+
             if model.document.unknownCount > 0 { unknownBanner }
+
             HStack(spacing: 0) {
                 AnnotationCanvasHost(model: model)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -24,7 +39,17 @@ struct ScreenshotEditorView: View {
                     BackgroundInspector(model: model, presets: presets)
                 }
             }
+            // The canvas takes every spare point and the bars hug their content. Without this the
+            // bottom bar claimed the leftover height and the canvas filled half the window with a
+            // pale slab underneath it.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(1)
+
+            Divider()
+            bottomBar
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     /// An older build must say what it is carrying rather than appear to have lost it.
@@ -41,74 +66,66 @@ struct ScreenshotEditorView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, Theme.Space.sm)
-        .background(.quaternary.opacity(0.4))
+        .background(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
     }
 
-    /// Tools in the groups they belong to, the way a drawing app arranges them.
-    ///
-    /// A single undifferentiated row of fourteen glyphs is a row you have to read every time. The
-    /// separators mean the eye can go straight to "a shape", "some text", "hide something".
-    private static let toolGroups: [[ToolKind]] = [
-        [.select, .crop],
-        [.arrow, .line, .rectangle, .ellipse],
-        [.text, .counter, .emoji],
-        [.pencil, .highlighter],
-        [.blur, .pixelate, .spotlight],
-    ]
+    // MARK: - Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
-            ForEach(Array(Self.toolGroups.enumerated()), id: \.offset) { _, group in
-                HStack(spacing: 2) {
-                    ForEach(group) { tool in toolButton(tool) }
-                }
-                .padding(2)
-                .background(Color.primary.opacity(0.07),
-                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-
-            Divider().frame(height: 18)
-
-            HStack(spacing: 5) {
-                ForEach(Array(RGBAColour.palette.enumerated()), id: \.offset) { index, colour in
-                    Button {
-                        model.colour = colour
-                        model.applyStyleToSelection()
-                    } label: {
-                        Circle()
-                            .fill(Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .red))
-                            .frame(width: 16, height: 16)
-                            .overlay(
-                                Circle().strokeBorder(
-                                    model.colour == colour
-                                        ? Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .red)
-                                        : .clear,
-                                    lineWidth: 2)
-                                    .padding(-3))
+        HStack(spacing: 10) {
+            // The tools scroll rather than clip. On a narrow window something has to give, and
+            // losing Undo or Done off the end is far worse than scrolling the palette.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(Array(Self.toolGroups.enumerated()), id: \.offset) { _, group in
+                        HStack(spacing: 2) {
+                            ForEach(group) { tool in toolButton(tool) }
+                        }
+                        .padding(2)
+                        .background(groupBackground)
                     }
-                    .buttonStyle(.plain)
-                    .clickableCursor()
-                    .help("Colour \(index + 1)")
+
+                    Divider().frame(height: 18)
+
+                    ColourWell(model: model)
+
+                    if model.tool == .arrow { arrowStylePicker }
+
+                    HStack(spacing: 6) {
+                        Image(systemName: "lineweight")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Slider(value: $model.strokeWidth, in: 2...36) { editing in
+                            if !editing { model.applyStyleToSelection() }
+                        }
+                        .frame(width: 80)
+                    }
+                    .help("Line thickness")
                 }
+                .padding(.vertical, 1)
             }
 
-            if model.tool == .arrow {
-                arrowStylePicker
-            }
+            // Priority on the trailing group: adding the arrow-style picker pushed Undo through
+            // Done straight off the end of a 1180pt window, so the actions you always need were
+            // the first thing to disappear.
+            trailingActions
+                .layoutPriority(2)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, 8)
+        // Explicit, because a hosting view is transparent by default and the bar came out black
+        // in a light window.
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
 
-            HStack(spacing: 6) {
-                Image(systemName: "lineweight")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Slider(value: $model.strokeWidth, in: 2...36) { editing in
-                    if !editing { model.applyStyleToSelection() }
-                }
-                .frame(width: 84)
-            }
-            .help("Line thickness")
+    private var groupBackground: some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
+    }
 
-            Spacer(minLength: 8)
-
+    private var trailingActions: some View {
+        HStack(spacing: 9) {
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!model.canUndo).help("Undo  (⌘Z)")
             Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
@@ -119,7 +136,8 @@ struct ScreenshotEditorView: View {
                     .frame(width: 26, height: 20)
                     .background(showsBackgroundInspector ? Color.accentColor : .clear,
                                 in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .foregroundStyle(showsBackgroundInspector ? Color.white : Color.primary)
+                    .foregroundStyle(showsBackgroundInspector ? Color.white
+                                                              : Color(nsColor: .labelColor))
             }
             .help("Background")
 
@@ -131,35 +149,6 @@ struct ScreenshotEditorView: View {
                 .controlSize(.small)
                 .help("Save  (⌘S)")
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, 8)
-    }
-
-    /// The four arrow shapes, drawn rather than named.
-    ///
-    /// Names would be guesswork — "filled" and "thin" mean nothing until you see them — so each
-    /// button draws the actual path the tool will produce, at the thickness currently set.
-    private var arrowStylePicker: some View {
-        HStack(spacing: 2) {
-            ForEach([ArrowElement.Head.filled, .open, .thin, .curved], id: \.self) { head in
-                Button {
-                    model.arrowHead = head
-                    model.applyStyleToSelection()
-                } label: {
-                    ArrowStyleSwatch(head: head, isActive: model.arrowHead == head)
-                        .frame(width: 34, height: 20)
-                        .background(model.arrowHead == head ? Color.accentColor : .clear,
-                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .clickableCursor()
-                .help("Arrow style")
-            }
-        }
-        .padding(2)
-        .background(Color.primary.opacity(0.07),
-                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private func toolButton(_ tool: ToolKind) -> some View {
@@ -170,13 +159,82 @@ struct ScreenshotEditorView: View {
                 .frame(width: 26, height: 20)
                 .background(isActive ? Color.accentColor : .clear,
                             in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .foregroundStyle(isActive ? Color.white : Color.primary)
+                .foregroundStyle(isActive ? Color.white : Color(nsColor: .labelColor))
         }
         .buttonStyle(.plain)
         .clickableCursor()
         .help(tool.key.map { "\(tool.title)  (\($0.uppercased()))" } ?? tool.title)
         .accessibilityLabel(tool.title)
         .accessibilityAddTraits(isActive ? [.isSelected] : [])
+    }
+
+    /// The four arrow shapes, drawn rather than named.
+    ///
+    /// Names would be guesswork — "filled" and "thin" mean nothing until you see them — so each
+    /// button draws the actual path the tool will produce.
+    private var arrowStylePicker: some View {
+        HStack(spacing: 2) {
+            ForEach([ArrowElement.Head.filled, .open, .thin, .curved], id: \.self) { head in
+                Button {
+                    model.arrowHead = head
+                    model.applyStyleToSelection()
+                } label: {
+                    ArrowStyleSwatch(head: head, isActive: model.arrowHead == head)
+                        .frame(width: 30, height: 20)
+                        .background(model.arrowHead == head ? Color.accentColor : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+                .help("Arrow style")
+            }
+        }
+        .padding(2)
+        .background(groupBackground)
+    }
+
+    // MARK: - Bottom bar
+
+    /// Zoom on the left, a drag-out handle in the middle.
+    ///
+    /// The handle matters more than it looks: it is the answer to "I have annotated this, now get
+    /// it into Slack" without saving a file first. Dragging the canvas itself would fight the
+    /// annotation tools for the same gesture, so the proxy is a separate, obvious target.
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            Button { model.zoomOut() } label: { Image(systemName: "minus.magnifyingglass") }
+                .help("Zoom out")
+            // The readout *is* the reset control. A separate "Fit" button beside a label that
+            // already said "Fit" was two of the same word doing one job.
+            Button { model.zoom = nil } label: {
+                Text(zoomLabel)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(model.zoom == nil ? Color.secondary
+                                                       : Color(nsColor: .labelColor))
+                    .frame(width: 52)
+            }
+            .disabled(model.zoom == nil)
+            .help("Fit the whole image in the window")
+            Button { model.zoomIn() } label: { Image(systemName: "plus.magnifyingglass") }
+                .help("Zoom in")
+
+            Spacer()
+            EditorDragOut(model: model)
+            Spacer()
+
+            Text(DimensionReadout.text(for: model.document.contentRect.size))
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, 7)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var zoomLabel: String {
+        guard let zoom = model.zoom else { return "Fit" }
+        return "\(Int((zoom * 100).rounded()))%"
     }
 }
 
@@ -235,7 +293,11 @@ struct ArrowStyleSwatch: NSViewRepresentable {
 
         override func draw(_ dirtyRect: NSRect) {
             guard let context = NSGraphicsContext.current?.cgContext else { return }
-            let colour = isActive ? NSColor.white : NSColor.labelColor
+            // Resolved against this view's effective appearance, or a dark-mode label colour gets
+            // used in a light window and the swatch disappears.
+            let colour = isActive
+                ? NSColor.white
+                : NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
             let start = CGPoint(x: bounds.minX + 5, y: bounds.midY)
             let end = CGPoint(x: bounds.maxX - 5, y: bounds.midY)
 
@@ -253,6 +315,66 @@ struct ArrowStyleSwatch: NSViewRepresentable {
                 context.addPath(path)
                 context.strokePath()
             }
+        }
+    }
+}
+
+/// The "drag me" handle in the editor's bottom bar.
+///
+/// Writes the flattened, annotated image to a temporary file and drags *that*, because Finder and
+/// most apps want a `public.file-url` — `ShelfDragSource` learned the same thing the hard way, and
+/// an in-memory image drop quietly does nothing.
+struct EditorDragOut: NSViewRepresentable {
+    @ObservedObject var model: EditorDocumentModel
+
+    func makeNSView(context: Context) -> DragOutView {
+        let view = DragOutView()
+        view.model = model
+        return view
+    }
+
+    func updateNSView(_ view: DragOutView, context: Context) { view.model = model }
+
+    final class DragOutView: NSView, NSDraggingSource {
+        weak var model: EditorDocumentModel?
+
+        override var intrinsicContentSize: NSSize { NSSize(width: 128, height: 22) }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let label = NSAttributedString(string: "⇠  Drag me  ⇢", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+            let size = label.size()
+            let box = bounds.insetBy(dx: 0, dy: (bounds.height - 22) / 2)
+            NSColor.labelColor.withAlphaComponent(0.07).setFill()
+            NSBezierPath(roundedRect: box, xRadius: 11, yRadius: 11).fill()
+            label.draw(at: CGPoint(x: box.midX - size.width / 2, y: box.midY - size.height / 2))
+        }
+
+        /// Swallowed so `mouseDragged` arrives — the same split `WindowDragHandle` documents.
+        override func mouseDown(with event: NSEvent) {}
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let model, let image = model.flattenWithBackground(),
+                  let data = try? CaptureDocumentFile.encodeFlat(image) else { return }
+
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("Screenshot-\(UUID().uuidString.prefix(8)).png")
+            guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+
+            let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+            item.setDraggingFrame(NSRect(origin: convert(event.locationInWindow, from: nil),
+                                         size: NSSize(width: 96, height: 96)),
+                                  contents: NSImage(cgImage: image,
+                                                    size: NSSize(width: image.width,
+                                                                 height: image.height)))
+            beginDraggingSession(with: [item], event: event, source: self)
+        }
+
+        func draggingSession(_ session: NSDraggingSession,
+                             sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            .copy
         }
     }
 }
