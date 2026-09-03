@@ -129,6 +129,16 @@ enum CaptureSession {
         return Result(image: stitched, sourceRect: rect, display: display)
     }
 
+    /// Pick a region and put its text on the pasteboard.
+    ///
+    /// Reuses the ordinary area overlay, so the aiming feels the same as any other capture; only
+    /// what happens afterwards differs.
+    static func recognizeText(using capturer: ScreenCapturing,
+                              options: CaptureOptions,
+                              chrome: CaptureOverlayController.Chrome) async throws -> Result? {
+        try await captureArea(using: capturer, options: options, chrome: chrome)
+    }
+
     /// The display under the pointer, whole.
     ///
     /// Not `NSScreen.main` and not the first display: the first is whichever has the menu bar,

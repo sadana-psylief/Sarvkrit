@@ -125,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        screenshots.recognizeText = { [weak screenshots] in
+            guard let screenshots else { return }
+            Task { @MainActor in await Self.capture(.textRecognition, with: screenshots) }
+        }
         screenshots.captureScrolling = { [weak screenshots] in
             guard let screenshots else { return }
             Task { @MainActor in await Self.capture(.scrolling, with: screenshots) }
@@ -213,6 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 result = try await CaptureSession.captureScrolling(using: feature.capturer,
                                                                    options: options,
                                                                    chrome: feature.overlayChrome)
+            case .textRecognition:
+                result = try await CaptureSession.recognizeText(using: feature.capturer,
+                                                                options: options,
+                                                                chrome: feature.overlayChrome)
             default:
                 result = try await CaptureSession.captureFullscreen(using: feature.capturer,
                                                                     options: options)
@@ -230,6 +238,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 mode: CaptureMode,
                                 with feature: ScreenshotFeature) {
         let plan = CaptureDestination.plan(for: mode, settings: feature.destinationSettings)
+
+        // Text recognition's output is text, not a picture — filing a PNG of it would leave junk
+        // in the capture folder after every lookup. `CaptureDestination` already routes it to the
+        // pasteboard alone; this is what it puts there.
+        if mode == .textRecognition {
+            deliverRecognisedText(from: result.image)
+            return
+        }
 
         var item: CaptureHistoryItem?
         if plan.writesFile {
@@ -260,6 +276,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let verb = plan.writesFile && plan.writesClipboard ? "saved and copied"
                  : plan.writesFile ? "saved" : "copied"
         ToastPresenter.shared.show("Screenshot \(verb)", symbolName: "camera.viewfinder")
+    }
+
+    @MainActor
+    private static func deliverRecognisedText(from image: CGImage) {
+        let recognised = TextRecognizer.recognize(image)
+        let text = recognised.text
+
+        if !text.isEmpty {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            let lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }.count
+            ToastPresenter.shared.show("Copied \(lines) line\(lines == 1 ? "" : "s")",
+                                       symbolName: "text.viewfinder")
+            return
+        }
+
+        if let code = recognised.barcodes.first {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(code.payload, forType: .string)
+            // The payload goes to the pasteboard and stops there. Opening a URL scanned off the
+            // screen automatically is a phishing vector — a person has to choose to follow it.
+            ToastPresenter.shared.show("QR code copied", symbolName: "qrcode")
+            return
+        }
+
+        ToastPresenter.shared.show("No text found", symbolName: "text.viewfinder")
     }
 
     @MainActor
