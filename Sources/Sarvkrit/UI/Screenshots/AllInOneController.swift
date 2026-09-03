@@ -12,8 +12,13 @@ final class AllInOneController: NSObject {
     var isPresenting: Bool { panel != nil }
 
     /// - Parameter completion: the chosen mode and timer, or nil if cancelled.
+    /// - Parameter overFrozenScreen: true when the capture overlay is already up beneath this,
+    ///   which is the All-In-One flow. The bar then has to outrank the shielding level the overlay
+    ///   sits at, and must **not** activate the app — the overlay below is already key, and taking
+    ///   that away would break Escape and the arrow keys on the selection underneath.
     func present(memory: CaptureModeMemory,
                  timerSeconds: Int,
+                 overFrozenScreen: Bool = false,
                  completion: @escaping ((CaptureModeMemory, Int)?) -> Void) {
         dismiss()
 
@@ -50,20 +55,34 @@ final class AllInOneController: NSObject {
                                 // a bar across the middle covers the thing you are aiming at.
                                 y: visible.minY + 96,
                                 width: size.width, height: size.height),
-            style: .init(level: .modalPanel, acceptsKey: true, clickThrough: false,
+            style: .init(level: overFrozenScreen
+                         ? NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)
+                         : .modalPanel,
+                         // Never key over the frozen overlay: that panel owns the keyboard for
+                         // Escape, Return and the arrows, and a bar stealing it would strand the
+                         // selection underneath.
+                         acceptsKey: !overFrozenScreen, clickThrough: false,
                          joinsAllSpaces: true,
                          // The bars draw their own shadow; a window shadow would trace the
                          // transparent rectangle around them.
                          hasShadow: false))
 
         panel.contentView = NSHostingView(rootView: content.padding(inset))
-        // Activating is deliberate and rare: the size fields are typed into, and
-        // `MainWindowController` records that an .accessory app's windows never reliably take key
-        // focus without it.
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        if overFrozenScreen {
+            // Ordered in without taking focus, so the overlay below keeps the keyboard.
+            panel.orderFrontRegardless()
+        } else {
+            // Activating is deliberate and rare: the size fields are typed into, and
+            // `MainWindowController` records that an .accessory app's windows never reliably take
+            // key focus without it.
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+        }
         self.panel = panel
 
+        // Not installed over the frozen overlay: Escape there belongs to the selection view, which
+        // cancels the whole capture. Two handlers would race for one key.
+        guard !overFrozenScreen else { return }
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == 53 else { return event }   // Escape
             finish(nil)

@@ -190,17 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     AllInOneController.shared.dismiss()
                     return
                 }
-                AllInOneController.shared.present(
-                    memory: screenshots.modeMemory,
-                    timerSeconds: screenshots.selfTimerSeconds
-                ) { choice in
-                    guard let (memory, seconds) = choice else { return }
-                    screenshots.modeMemory = memory
-                    screenshots.selfTimerSeconds = seconds
-                    Task { @MainActor in
-                        await Self.capture(memory.mode, with: screenshots,
-                                           timerSeconds: seconds, memory: memory)
-                    }
+                Task { @MainActor in
+                    await Self.allInOne(with: screenshots)
                 }
             }
         }
@@ -407,6 +398,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deliver(result, mode: .area, with: feature)
         } catch {
             captureLog.error("capture rect failed: \(String(describing: error), privacy: .public)")
+            reportFailure()
+        }
+    }
+
+    /// One shortcut, every mode — freezing once and choosing on top of the frozen screen.
+    private static func allInOne(with feature: ScreenshotFeature) async {
+        // Pressing it again while it is up puts it away rather than stacking a second one.
+        if CaptureOverlayController.shared.isPresenting || AllInOneController.shared.isPresenting {
+            AllInOneController.shared.dismiss()
+            CaptureOverlayController.shared.dismiss()
+            return
+        }
+        do {
+            let (result, mode) = try await CaptureSession.captureAllInOne(
+                memory: feature.modeMemory,
+                timerSeconds: feature.selfTimerSeconds,
+                using: feature.capturer,
+                options: feature.captureOptions,
+                chrome: feature.overlayChrome,
+                onChoice: { memory, seconds in
+                    feature.modeMemory = memory
+                    feature.selfTimerSeconds = seconds
+                })
+            // Cancelling is an ordinary outcome, not a failure — no toast.
+            guard let result else { return }
+            deliver(result, mode: mode, with: feature)
+        } catch {
+            captureLog.error("all-in-one failed: \(String(describing: error), privacy: .public)")
             reportFailure()
         }
     }

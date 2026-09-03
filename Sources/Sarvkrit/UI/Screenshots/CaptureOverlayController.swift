@@ -63,7 +63,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
         /// The same chrome, carrying a hint. Keeps the mode's own settings — a user who turned
         /// the magnifier off does not get it back because they chose scrolling capture.
-        func saying(_ hint: String) -> Chrome {
+        func saying(_ hint: String?) -> Chrome {
             var copy = self
             copy.hint = hint
             return copy
@@ -146,6 +146,26 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
         OverlayCursor.hide()
         installCancelObservers()
+    }
+
+    /// Changes the hint on a live overlay.
+    ///
+    /// Used by All-In-One, where the mode is chosen *after* the overlay is already up — the whole
+    /// point of freezing once and picking on top of it.
+    func setHint(_ hint: String?) {
+        for panel in panels {
+            (panel.contentView as? SelectionView)?.hint = hint
+        }
+    }
+
+    /// The frames this overlay is showing, so a caller that already froze the screen can resolve
+    /// a fullscreen capture from them instead of freezing a second time.
+    var presentedFrames: [DisplayFrame] { Array(frames.values) }
+
+    /// The frame under the pointer, which is the one a fullscreen capture means.
+    func frameUnderPointer() -> DisplayFrame? {
+        let pointer = NSEvent.mouseLocation
+        return frames.values.first { $0.geometry.frame.contains(pointer) } ?? frames.values.first
     }
 
     /// Tears the session down when the world changes underneath it.

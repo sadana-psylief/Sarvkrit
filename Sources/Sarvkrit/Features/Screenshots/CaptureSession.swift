@@ -172,6 +172,154 @@ enum CaptureSession {
         return Result(image: frame.image, sourceRect: frame.geometry.frame, display: frame.geometry)
     }
 
+    /// One shortcut, every mode: freeze once, then choose on top of the frozen screen.
+    ///
+    /// **The point is that the screen is already frozen and already ready to drag.** The bar used
+    /// to float over the live desktop, and choosing a mode dismissed it and started the capture
+    /// from scratch — two freezes, and a menu you were trying to photograph got a whole round
+    /// trip in which to close itself. Here the overlay goes up first with Area live, so the common
+    /// case is press the shortcut and drag; the bar is for when you want one of the others.
+    ///
+    /// **The picker never resolves the capture for the area-shaped modes.** Scrolling, text and
+    /// the self-timer all aim with the selection that is already on screen, so choosing one only
+    /// changes the label and what happens to the rect afterwards. Resolving early there would
+    /// abandon the drag the user was in the middle of.
+    ///
+    /// Window capture is the one mode that starts again, and has to: a window's shadow and its
+    /// transparent background do not exist in a frozen picture of the desktop. See `captureWindow`.
+    static func captureAllInOne(memory: CaptureModeMemory,
+                                timerSeconds: Int,
+                                using capturer: ScreenCapturing,
+                                options: CaptureOptions,
+                                chrome: CaptureOverlayController.Chrome,
+                                onChoice: @escaping (CaptureModeMemory, Int) -> Void)
+        async throws -> (result: Result?, mode: CaptureMode) {
+        let frames = try await capturer.snapshotAllDisplays(options: options)
+        guard !frames.isEmpty else { throw CaptureError.noDisplays }
+
+        // What the bar settled on. Starts at what it opens on, so a straight drag with no visit
+        // to the bar is an ordinary area capture.
+        var mode = memory.mode
+        var seconds = timerSeconds
+
+        let choice: Choice = await withCheckedContinuation { continuation in
+            var resumed = false
+            @MainActor func finish(_ choice: Choice) {
+                guard !resumed else { return }
+                resumed = true
+                AllInOneController.shared.dismiss()
+                continuation.resume(returning: choice)
+            }
+
+            CaptureOverlayController.shared.present(
+                frames: frames, chrome: chrome.saying(Self.hint(for: mode, seconds))
+            ) { image, display, rect in
+                guard let image, let rect, let display else { finish(.cancelled); return }
+                finish(.region(image: image, rect: rect, display: display))
+            }
+
+            AllInOneController.shared.present(memory: memory, timerSeconds: timerSeconds,
+                                              overFrozenScreen: true) { picked in
+                // Escape belongs to the overlay underneath, which cancels the whole capture.
+                guard let (picked, pickedSeconds) = picked else { return }
+                onChoice(picked, pickedSeconds)
+                mode = picked.mode
+                seconds = pickedSeconds
+                switch picked.mode {
+                case .fullscreen:
+                    guard let frame = CaptureOverlayController.shared.frameUnderPointer() else {
+                        finish(.cancelled); return
+                    }
+                    CaptureOverlayController.shared.dismiss()
+                    finish(.whole(frame))
+                case .window:
+                    CaptureOverlayController.shared.dismiss()
+                    finish(.needsWindowPicker)
+                default:
+                    // Keep the drag that is already available: only the label changes here.
+                    AllInOneController.shared.dismiss()
+                    CaptureOverlayController.shared.setHint(Self.hint(for: picked.mode,
+                                                                      pickedSeconds))
+                }
+            }
+        }
+
+        switch choice {
+        case .cancelled:
+            return (nil, mode)
+        case .whole(let frame):
+            return (Result(image: frame.image, sourceRect: frame.geometry.frame,
+                           display: frame.geometry), .fullscreen)
+        case .needsWindowPicker:
+            return (try await captureWindow(using: capturer, options: options), .window)
+        case .region(let image, let rect, let display):
+            let result = try await resolve(mode: mode, seconds: seconds,
+                                           image: image, rect: rect, display: display,
+                                           using: capturer, options: options)
+            return (result, mode)
+        }
+    }
+
+    /// Turns the rect the user drew into whatever the chosen mode actually produces.
+    private static func resolve(mode: CaptureMode, seconds: Int,
+                                image: CGImage, rect: CGRect,
+                                display: DisplaySnapshotGeometry,
+                                using capturer: ScreenCapturing,
+                                options: CaptureOptions) async throws -> Result? {
+        if seconds > 0 {
+            // Aimed on the frozen frame, captured live — a countdown over a picture taken before
+            // the countdown defeats the whole point of having one.
+            await withCheckedContinuation { continuation in
+                CountdownPresenter.shared.run(seconds: seconds) { _ in continuation.resume() }
+            }
+            return try await captureRectLive(rect, on: display, using: capturer, options: options)
+        }
+
+        switch mode {
+        case .scrolling:
+            let stitched: CGImage? = await withCheckedContinuation { continuation in
+                ScrollCaptureSession.shared.start(region: rect, display: display,
+                                                  capturer: capturer, options: options) {
+                    continuation.resume(returning: $0)
+                }
+            }
+            guard let stitched else { return nil }
+            return Result(image: stitched, sourceRect: rect, display: display)
+        default:
+            // Area and text recognition both want exactly the pixels that were drawn over.
+            return Result(image: image, sourceRect: rect, display: display)
+        }
+    }
+
+    /// Re-captures a rect from a fresh snapshot, for the modes that must not use frozen pixels.
+    private static func captureRectLive(_ rect: CGRect, on display: DisplaySnapshotGeometry,
+                                        using capturer: ScreenCapturing,
+                                        options: CaptureOptions) async throws -> Result? {
+        let frames = try await capturer.snapshotAllDisplays(options: options)
+        guard let frame = frames.first(where: { $0.geometry.displayID == display.displayID })
+        else { throw CaptureError.noDisplays }
+        let pixels = CaptureGeometry.pixelRect(forGlobalRect: rect, in: frame.geometry)
+        guard let cropped = frame.image.cropping(to: pixels.integral) else { return nil }
+        return Result(image: cropped, sourceRect: rect, display: frame.geometry)
+    }
+
+    private enum Choice {
+        case cancelled
+        case whole(DisplayFrame)
+        case needsWindowPicker
+        case region(image: CGImage, rect: CGRect, display: DisplaySnapshotGeometry)
+    }
+
+    /// What the overlay says it is for, when that is not obvious from the overlay itself.
+    static func hint(for mode: CaptureMode, _ seconds: Int) -> String? {
+        if seconds > 0 { return "Self-Timer — draw the area, then \(seconds)s to arrange" }
+        switch mode {
+        case .scrolling: return "Scrolling Capture — draw the area, then scroll it"
+        case .textRecognition: return "Copy Text — draw the area to read"
+        default: return nil
+        }
+    }
+
     /// Pick a region, then capture it repeatedly while the user scrolls, and stitch.
     static func captureScrolling(using capturer: ScreenCapturing,
                                  options: CaptureOptions,
