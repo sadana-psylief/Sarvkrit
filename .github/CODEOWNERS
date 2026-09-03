@@ -1,5 +1,9 @@
-# Every change requests a review from the repository owner automatically.
-# Review is requested, not required: with `main` limiting merges to the owner,
-# a required approval would only deadlock the owner's own pull requests —
-# GitHub does not allow approving your own.
+# Records who owns what. Review here is never *required*: with `main` limiting
+# merges to the owner, a required approval would only deadlock the owner's own
+# pull requests — GitHub does not allow approving your own.
+#
+# Note that GitHub does not act on this file on a personal repository: pull
+# requests from other accounts get no automatic review request from it, which
+# was measured, not assumed. It is kept because it still records ownership, and
+# it would start working if this repo ever moved into an organisation.
 *	@sadana-psylief

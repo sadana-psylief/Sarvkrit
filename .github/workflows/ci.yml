@@ -44,10 +44,16 @@ jobs:
             -configuration Release $DEST -derivedDataPath build build $SIGNING_OFF
 
   test:
-    # Not a required check, and expected to be flaky here. SarvkritTests is a unit-test
-    # bundle hosted *inside* Sarvkrit.app, and much of it (camera, microphone, Core Audio
-    # process taps, Accessibility) needs TCC grants a runner will not give. Left honest
-    # rather than forced green: nothing is gated on this job.
+    # Not a required check. The suite very nearly passes on a runner — 845 of 846 — and the
+    # one failure is CameraMonitorSmokeTests.testTheMachineReportsAtLeastOneCamera, which
+    # asserts the machine has a camera. A runner has none, and that test cannot tell "no
+    # camera" from "enumeration is broken", which is the bug it exists to catch. So it is
+    # only meaningful on real hardware: this job reports, and nothing is gated on it.
+    #
+    # Pull requests only. On `push: main` it would fail on that same test every time and
+    # leave a permanent red X against the default branch, which reads as "broken" to anyone
+    # arriving at the repo.
+    if: github.event_name == 'pull_request'
     name: test (advisory)
     runs-on: macos-latest
     steps:
