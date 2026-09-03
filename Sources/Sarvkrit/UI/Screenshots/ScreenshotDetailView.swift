@@ -62,6 +62,24 @@ struct ScreenshotDetailView: View {
             }
 
             Section {
+                Toggle("Keep the window's shadow", isOn: Binding(
+                    get: { feature.includesWindowShadow },
+                    set: { feature.includesWindowShadow = $0 }))
+                Toggle("Transparent background", isOn: Binding(
+                    get: { feature.transparentWindowBackground },
+                    set: { feature.transparentWindowBackground = $0 }))
+            } header: {
+                Text("Window captures")
+            } footer: {
+                Text("""
+                    A window capture is taken on its own rather than cut out of the screen, so the \
+                    corners can be genuinely transparent instead of showing whatever was behind it.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Picker("Keep captures for", selection: Binding(
                     get: { store.retention }, set: { store.retention = $0 })) {
                     ForEach(CaptureRetention.Window.allCases, id: \.self) { Text($0.title).tag($0) }

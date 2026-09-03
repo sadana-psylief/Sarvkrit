@@ -40,6 +40,35 @@ enum CaptureSession {
         }
     }
 
+    /// Freeze, let the user pick a window, then take a fresh capture of it.
+    ///
+    /// The second capture is not redundant. The frozen desktop has the window composited onto
+    /// whatever is behind it, so a crop of it can never have a transparent background and can
+    /// never drop the drop shadow. Those are both options here, so the result has to come from
+    /// `SCContentFilter(desktopIndependentWindow:)`.
+    static func captureWindow(using capturer: ScreenCapturing,
+                              options: CaptureOptions) async throws -> Result? {
+        let frames = try await capturer.snapshotAllDisplays(options: options)
+        guard !frames.isEmpty else { throw CaptureError.noDisplays }
+
+        let iconLayer = Int(CGWindowLevelForKey(.desktopIconWindow))
+        let windows = WindowPicker.capturable(
+            from: try await capturer.shareableWindows(),
+            excludingBundleIDs: options.excludedBundleIDs,
+            desktopIconLayer: iconLayer)
+
+        let picked: CapturableWindow? = await withCheckedContinuation { continuation in
+            CaptureOverlayController.shared.presentWindowPicker(
+                frames: frames, windows: windows) { continuation.resume(returning: $0) }
+        }
+        guard let picked else { return nil }
+
+        let capture = try await capturer.captureWindow(picked, options: options)
+        return Result(image: capture.image,
+                      sourceRect: picked.frame,
+                      display: frames.first { $0.geometry.frame.intersects(picked.frame) }?.geometry)
+    }
+
     /// The display under the pointer, whole.
     ///
     /// Not `NSScreen.main` and not the first display: the first is whichever has the menu bar,

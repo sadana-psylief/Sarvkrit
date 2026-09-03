@@ -19,11 +19,33 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
     private var panels: [FloatingPanel] = []
     private var frames: [CGDirectDisplayID: DisplayFrame] = [:]
+    /// The picked window, when the overlay was presented in window mode. Handed back so the
+    /// caller can take a *fresh* capture of it — see `selectionView(_:didConfirmWindow:)`.
+    private var windowCompletion: ((CapturableWindow?) -> Void)?
     private var completion: ((CGImage?, DisplaySnapshotGeometry?, CGRect?) -> Void)?
     private var observers: [NSObjectProtocol] = []
     private var cursorHidden = false
 
     var isPresenting: Bool { !panels.isEmpty }
+
+    private var selectionMode: SelectionMode = .area
+
+    /// Shows the overlay to pick a window, and hands the window back rather than an image.
+    ///
+    /// **Window mode freezes only to choose.** Cropping the window's rectangle out of the frozen
+    /// desktop cannot give you shadow-off, and certainly cannot give you a transparent
+    /// background — the desktop is *in* those pixels. So the frozen frame is used for hit-testing
+    /// and highlighting, then thrown away, and the result comes from a fresh
+    /// `SCContentFilter(desktopIndependentWindow:)` capture. Freeze is one input path and two
+    /// output paths, and this is the second one.
+    func presentWindowPicker(frames capturedFrames: [DisplayFrame],
+                             windows: [CapturableWindow],
+                             completion: @escaping (CapturableWindow?) -> Void) {
+        windowCompletion = completion
+        present(frames: capturedFrames,
+                chrome: Chrome(showsCrosshair: false, showsMagnifier: false, showsDimensions: true),
+                mode: .window(windows)) { _, _, _ in }
+    }
 
     /// Shows the overlay over frozen bitmaps and calls back with the crop, or nil if cancelled.
     /// How the overlay is drawn. Carried in rather than read from a feature so the controller
@@ -36,11 +58,13 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
     func present(frames capturedFrames: [DisplayFrame],
                  chrome: Chrome = Chrome(),
+                 mode: SelectionMode = .area,
                  completion: @escaping (CGImage?, DisplaySnapshotGeometry?, CGRect?) -> Void) {
         dismiss()
         guard !capturedFrames.isEmpty else { completion(nil, nil, nil); return }
 
         self.completion = completion
+        self.selectionMode = mode
         self.frames = Dictionary(uniqueKeysWithValues:
             capturedFrames.map { ($0.geometry.displayID, $0) })
 
@@ -62,7 +86,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
                     joinsAllSpaces: true,
                     hasShadow: false))
 
-            let view = SelectionView(display: frame.geometry, frozenImage: frame.image)
+            let view = SelectionView(display: frame.geometry, frozenImage: frame.image, mode: mode)
             view.delegate = self
             view.showsCrosshair = chrome.showsCrosshair
             view.showsMagnifier = chrome.showsMagnifier
@@ -117,6 +141,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
         panels.forEach { $0.orderOut(nil) }
         panels = []
         frames = [:]
+        selectionMode = .area
         if cursorHidden {
             NSCursor.unhide()
             cursorHidden = false
@@ -142,7 +167,22 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
         finish(with: cropped, display: frame.geometry, rect: snapped)
     }
 
+    func selectionView(_ view: SelectionView, didConfirmWindow window: CapturableWindow) {
+        let completion = windowCompletion
+        windowCompletion = nil
+        self.completion = nil
+        dismiss()
+        completion?(window)
+    }
+
     func selectionViewDidCancel(_ view: SelectionView) {
+        if let completion = windowCompletion {
+            windowCompletion = nil
+            self.completion = nil
+            dismiss()
+            completion(nil)
+            return
+        }
         finish(with: nil, display: nil, rect: nil)
     }
 

@@ -99,6 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let screenshots else { return }
             Task { @MainActor in await Self.capture(.area, with: screenshots) }
         }
+        screenshots.captureWindow = { [weak screenshots] in
+            guard let screenshots else { return }
+            Task { @MainActor in await Self.capture(.window, with: screenshots) }
+        }
     }
 
     @MainActor
@@ -118,6 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 result = try await CaptureSession.captureArea(using: feature.capturer,
                                                               options: options,
                                                               chrome: feature.overlayChrome)
+            case .window:
+                result = try await CaptureSession.captureWindow(using: feature.capturer,
+                                                                options: options)
             default:
                 result = try await CaptureSession.captureFullscreen(using: feature.capturer,
                                                                     options: options)

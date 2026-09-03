@@ -4,7 +4,15 @@ import CoreGraphics
 @MainActor
 protocol SelectionViewDelegate: AnyObject {
     func selectionView(_ view: SelectionView, didConfirm rect: CGRect)
+    func selectionView(_ view: SelectionView, didConfirmWindow window: CapturableWindow)
     func selectionViewDidCancel(_ view: SelectionView)
+}
+
+/// What the overlay is asking the user to pick.
+enum SelectionMode: Equatable {
+    case area
+    /// Hover to highlight, click to take. No dragging.
+    case window([CapturableWindow])
 }
 
 /// The frozen screen, the dimming, and the selection being drawn on top of it.
@@ -36,9 +44,13 @@ final class SelectionView: NSView {
     /// Pointer position in view coordinates, for the crosshair.
     private var pointer: CGPoint?
 
-    init(display: DisplaySnapshotGeometry, frozenImage: CGImage?) {
+    private let mode: SelectionMode
+    private var hoveredWindow: CapturableWindow?
+
+    init(display: DisplaySnapshotGeometry, frozenImage: CGImage?, mode: SelectionMode = .area) {
         self.display = display
         self.frozenImage = frozenImage
+        self.mode = mode
         self.gesture = SelectionGesture(display: display)
         super.init(frame: NSRect(origin: .zero, size: display.frame.size))
         wantsLayer = true
@@ -70,12 +82,14 @@ final class SelectionView: NSView {
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
+        guard case .area = mode else { return }
         gesture.began(at: globalPoint(convert(event.locationInWindow, from: nil)))
         applyModifiers(event)
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard case .area = mode else { return }
         let local = convert(event.locationInWindow, from: nil)
         pointer = local
         applyModifiers(event)
@@ -84,6 +98,16 @@ final class SelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if case .window = mode {
+            if let hoveredWindow {
+                delegate?.selectionView(self, didConfirmWindow: hoveredWindow)
+            } else {
+                // Clicking where there is no window dismisses, rather than leaving the user stuck
+                // behind a full-screen overlay with nothing highlighted.
+                delegate?.selectionViewDidCancel(self)
+            }
+            return
+        }
         applyModifiers(event)
         if let rect = gesture.ended() {
             delegate?.selectionView(self, didConfirm: rect)
@@ -96,7 +120,11 @@ final class SelectionView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        pointer = convert(event.locationInWindow, from: nil)
+        let local = convert(event.locationInWindow, from: nil)
+        pointer = local
+        if case .window(let windows) = mode {
+            hoveredWindow = WindowPicker.window(at: globalPoint(local), in: windows)
+        }
         needsDisplay = true
     }
 
@@ -121,7 +149,9 @@ final class SelectionView: NSView {
             gesture.cancel()
             delegate?.selectionViewDidCancel(self)
         case 36:    // Return
-            if let rect = gesture.currentRect {
+            if case .window = mode {
+                if let hoveredWindow { delegate?.selectionView(self, didConfirmWindow: hoveredWindow) }
+            } else if let rect = gesture.currentRect {
                 delegate?.selectionView(self, didConfirm: rect)
             }
         case 123, 124, 125, 126:    // arrows
@@ -144,7 +174,12 @@ final class SelectionView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let selection = gesture.currentRect.map(viewRect)
+        let selection: CGRect?
+        if case .window = mode {
+            selection = hoveredWindow.map { viewRect($0.frame) }
+        } else {
+            selection = gesture.currentRect.map(viewRect)
+        }
 
         // Dim everything outside the selection. Drawn as the whole bounds minus the selection
         // using the even-odd rule, so there is one fill rather than four rectangles that leave
@@ -164,14 +199,17 @@ final class SelectionView: NSView {
 
         if let selection {
             context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-            context.setLineWidth(1)
+            // A window highlight is a target, not a rect being drawn, so it gets a heavier stroke.
+            context.setLineWidth(isWindowMode ? 2 : 1)
             // Inset by half a line width so the 1pt stroke lands on the pixel boundary instead of
             // straddling it and rendering as a soft 2px line.
             context.stroke(selection.insetBy(dx: 0.5, dy: 0.5))
             if showsDimensions { drawReadout(for: selection, in: context) }
         }
 
-        if let pointer, selection == nil || gesture.isActive {
+        // No crosshair or loupe in window mode: there is nothing to line up to the pixel, and a
+        // loupe over a highlighted window is just clutter.
+        if !isWindowMode, let pointer, selection == nil || gesture.isActive {
             if showsCrosshair { drawCrosshair(at: pointer, in: context) }
             if showsMagnifier { drawMagnifier(at: pointer, in: context) }
         }
@@ -226,6 +264,21 @@ final class SelectionView: NSView {
         context.restoreGState()
     }
 
+    private var isWindowMode: Bool {
+        if case .window = mode { return true }
+        return false
+    }
+
+    /// In window mode the readout describes the window under the pointer, which has its own size
+    /// rather than one the gesture knows about.
+    private func readoutPixelSize(for selection: CGRect) -> CGSize? {
+        if isWindowMode {
+            return CGSize(width: (selection.width * display.scale).rounded(),
+                          height: (selection.height * display.scale).rounded())
+        }
+        return gesture.pixelSize
+    }
+
     private func drawCrosshair(at point: CGPoint, in context: CGContext) {
         context.saveGState()
         context.setStrokeColor(NSColor.white.withAlphaComponent(0.7).cgColor)
@@ -239,8 +292,8 @@ final class SelectionView: NSView {
     }
 
     private func drawReadout(for selection: CGRect, in context: CGContext) {
-        guard let size = gesture.pixelSize else { return }
-        let text = "\(Int(size.width)) × \(Int(size.height))"
+        guard let size = readoutPixelSize(for: selection) else { return }
+        let text = DimensionReadout.text(for: size)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white,

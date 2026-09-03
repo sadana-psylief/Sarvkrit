@@ -114,9 +114,29 @@ final class ScreenshotFeature: Feature, ObservableObject {
               showsDimensions: showsDimensions)
     }
 
+    var includesWindowShadow: Bool {
+        get { defaults.object(forKey: "screenshot.includesWindowShadow") as? Bool ?? true }
+        set {
+            guard newValue != includesWindowShadow else { return }
+            defaults.set(newValue, forKey: "screenshot.includesWindowShadow")
+            objectWillChange.send()
+        }
+    }
+
+    var transparentWindowBackground: Bool {
+        get { defaults.object(forKey: "screenshot.transparentWindowBackground") as? Bool ?? false }
+        set {
+            guard newValue != transparentWindowBackground else { return }
+            defaults.set(newValue, forKey: "screenshot.transparentWindowBackground")
+            objectWillChange.send()
+        }
+    }
+
     var captureOptions: CaptureOptions {
         var options = CaptureOptions()
         options.hidesDesktopIcons = hidesDesktopIcons
+        options.includesShadow = includesWindowShadow
+        options.transparentBackground = transparentWindowBackground
         // Never for the frozen snapshot itself — the overlay draws its own crosshair, and a frozen
         // cursor sitting under the live one reads as a rendering fault. This is applied when the
         // final image is taken, not when the screen is frozen.
@@ -135,6 +155,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
     /// how a not-yet-built half of the feature is absent rather than crashing.
     var captureFullscreen: (() -> Void)?
     var captureArea: (() -> Void)?
+    var captureWindow: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -157,6 +178,9 @@ final class ScreenshotFeature: Feature, ObservableObject {
         hotkeys = [
             bind(id: GlobalHotkey.ID.captureArea, key: kVK_ANSI_A, name: "area") { [weak self] in
                 self?.captureArea?()
+            },
+            bind(id: GlobalHotkey.ID.captureWindow, key: kVK_ANSI_W, name: "window") { [weak self] in
+                self?.captureWindow?()
             },
             bind(id: GlobalHotkey.ID.captureFullscreen, key: kVK_ANSI_F, name: "fullscreen") { [weak self] in
                 self?.captureFullscreen?()
