@@ -1,10 +1,12 @@
 import CoreGraphics
 import Foundation
 
-/// Where the post-capture thumbnails sit, and when they go away.
+/// Which corner the post-capture thumbnails live in.
 ///
-/// Pure, because the interesting cases are all arithmetic you would otherwise verify by taking
-/// screenshots and watching a corner of the screen for eight seconds.
+/// The placement arithmetic that used to live here was replaced by `QuickAccessController`'s
+/// stacking pass, which accumulates real panel heights instead of multiplying an index by a fixed
+/// pitch — captures are different shapes, so a fixed pitch left gaps and overlaps. Only the corner
+/// itself is shared, because it is a persisted user setting.
 enum QuickAccessPlacement {
 
     /// Raw values are persisted.
@@ -22,57 +24,6 @@ enum QuickAccessPlacement {
         }
     }
 
-    /// Bottom-left origin for a panel of `size` in the chosen corner of `visibleFrame`.
-    ///
-    /// `visibleFrame` rather than `frame`, so the overlay clears the menu bar and the Dock — it is
-    /// a thing you are meant to click, unlike the capture overlay which covers them deliberately.
-    static func origin(forSize size: CGSize,
-                       corner: Corner,
-                       in visibleFrame: CGRect,
-                       inset: CGFloat = 16) -> CGPoint {
-        // A panel bigger than the screen is clamped rather than pushed off it. Rare, but the
-        // alternative is an overlay you cannot see or dismiss.
-        let width = min(size.width, visibleFrame.width)
-        let height = min(size.height, visibleFrame.height)
-        let x: CGFloat
-        let y: CGFloat
-        switch corner {
-        case .topLeft, .bottomLeft:   x = visibleFrame.minX + inset
-        case .topRight, .bottomRight: x = visibleFrame.maxX - width - inset
-        }
-        switch corner {
-        case .topLeft, .topRight:         y = visibleFrame.maxY - height - inset
-        case .bottomLeft, .bottomRight:   y = visibleFrame.minY + inset
-        }
-        return CGPoint(x: min(max(x, visibleFrame.minX), max(visibleFrame.minX, visibleFrame.maxX - width)),
-                       y: min(max(y, visibleFrame.minY), max(visibleFrame.minY, visibleFrame.maxY - height)))
-    }
-
-    /// How far the *n*th thumbnail is offset from the first, so a burst of captures stacks
-    /// visibly instead of landing exactly on top of each other.
-    ///
-    /// Stacking runs *into* the screen from the chosen corner, and stops before it would leave the
-    /// visible frame — beyond that the newest simply replaces the oldest, which is better than a
-    /// pile that walks off the edge.
-    static func stackOffset(forIndex index: Int,
-                            size: CGSize,
-                            corner: Corner,
-                            in visibleFrame: CGRect,
-                            spacing: CGFloat = 8,
-                            inset: CGFloat = 16) -> CGSize? {
-        guard index >= 0 else { return nil }
-        let step = size.height + spacing
-        let available = visibleFrame.height - inset * 2 - size.height
-        guard CGFloat(index) * step <= available else { return nil }
-
-        switch corner {
-        case .topLeft, .topRight:
-            // Stacking downward from the top corner.
-            return CGSize(width: 0, height: -CGFloat(index) * step)
-        case .bottomLeft, .bottomRight:
-            return CGSize(width: 0, height: CGFloat(index) * step)
-        }
-    }
 }
 
 /// When an overlay closes on its own.

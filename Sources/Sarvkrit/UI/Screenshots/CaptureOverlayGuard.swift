@@ -65,6 +65,7 @@ final class CaptureOverlayGuard {
             || AllInOneController.shared.isPresenting
             || ScrollCaptureSession.shared.isRunning
             || PinnedShotController.shared.count > 0
+            || CaptureHistoryWindowController.shared.isPresenting
     }
 
     /// Takes everything down. Safe to call at any time, including when nothing is up.
@@ -79,6 +80,7 @@ final class CaptureOverlayGuard {
         CountdownPresenter.shared.cancel()
         ScrollCaptureSession.shared.cancel()
         QuickAccessController.shared.closeAll()
+        CaptureHistoryWindowController.shared.dismiss()
         NSCursor.unhide()
     }
 }

@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         screenshots.showHistory = {
-            MainActor.assumeIsolated { CaptureHistoryWindowController.shared.show() }
+            MainActor.assumeIsolated { CaptureHistoryWindowController.shared.toggle() }
         }
         screenshots.recognizeText = { [weak screenshots] in
             guard let screenshots else { return }

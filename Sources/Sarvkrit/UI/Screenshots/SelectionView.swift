@@ -38,8 +38,10 @@ final class SelectionView: NSView {
     /// gives a loupe that stutters, which is worse than not having one. The settings row says so.
     var showsMagnifier = true
 
-    private static let magnifierTiles = 15
-    private static let magnifierTileSize: CGFloat = 8
+    /// An odd count so there is a middle pixel to point at, and about 5x so a single pixel is
+    /// still identifiable without the loupe covering what you are aiming at.
+    private static let magnifierTiles = 25
+    private static let magnifierTileSize: CGFloat = 5.2
 
     /// Pointer position in view coordinates, for the crosshair.
     private var pointer: CGPoint?
@@ -207,20 +209,24 @@ final class SelectionView: NSView {
             selection = gesture.currentRect.map(viewRect)
         }
 
-        // Dim everything outside the selection. One even-odd fill rather than four rectangles,
-        // which would leave hairline seams where they meet.
-        context.saveGState()
-        context.setFillColor(NSColor.black.withAlphaComponent(0.5).cgColor)
+        // Dim everything outside the selection — but **only once there is one**.
+        //
+        // Darkening the whole screen the moment the overlay opens makes the thing you are trying
+        // to aim at harder to see, which is backwards: the dim exists to show what you have
+        // chosen, not to announce that a tool is open. The frozen screen at full brightness is
+        // what you are picking from.
         if let selection {
+            // One even-odd fill rather than four rectangles, which would leave hairline seams
+            // where they meet.
+            context.saveGState()
+            context.setFillColor(NSColor.black.withAlphaComponent(0.5).cgColor)
             let path = CGMutablePath()
             path.addRect(bounds)
             path.addRect(selection)
             context.addPath(path)
             context.fillPath(using: .evenOdd)
-        } else {
-            context.fill(bounds)
+            context.restoreGState()
         }
-        context.restoreGState()
 
         if let selection {
             drawSelectionBorder(selection, in: context)
@@ -230,7 +236,7 @@ final class SelectionView: NSView {
         // No crosshair or loupe in window mode: there is nothing to line up to the pixel, and a
         // loupe over a highlighted window is only clutter.
         if !isWindowMode, let pointer, selection == nil || gesture.isActive {
-            if showsCrosshair { drawCrosshair(at: pointer, in: context) }
+            if showsCrosshair { drawCrosshair(at: pointer, in: context, avoiding: selection) }
             if showsMagnifier { drawMagnifier(at: pointer, in: context) }
         }
     }
@@ -256,6 +262,15 @@ final class SelectionView: NSView {
         context.restoreGState()
     }
 
+    /// The loupe, sampled straight out of the frozen bitmap.
+    ///
+    /// This is the payoff for freezing: a `cropping(to:)` on an image already held, drawn with
+    /// interpolation off so individual pixels stay square instead of being smeared by the
+    /// resampler.
+    ///
+    /// The centre row and column are **tinted rather than outlined**, with the centre pixel left
+    /// clear. An accent ring around the middle cell — which is what this drew first — hides the
+    /// one pixel you are trying to look at, which defeats the whole instrument.
     private func drawMagnifier(at point: CGPoint, in context: CGContext) {
         guard let frozenImage else { return }
         let global = globalPoint(point)
@@ -264,15 +279,17 @@ final class SelectionView: NSView {
               let patch = frozenImage.cropping(to: source) else { return }
 
         let side = CGFloat(Self.magnifierTiles) * Self.magnifierTileSize
-        // Below-right of the pointer, flipping to the other side near an edge so the loupe never
-        // hangs off the screen — which is exactly where you need it.
-        var origin = CGPoint(x: point.x + 16, y: point.y - side - 16)
-        if origin.x + side > bounds.maxX { origin.x = point.x - side - 16 }
-        if origin.y < bounds.minY { origin.y = point.y + 16 }
+        // Below-right of the pointer, flipping near an edge so the loupe never hangs off the
+        // screen — which is exactly where you need it.
+        var origin = CGPoint(x: point.x + 22, y: point.y - side - 22)
+        if origin.x + side > bounds.maxX { origin.x = point.x - side - 22 }
+        if origin.y < bounds.minY { origin.y = point.y + 22 }
         let box = CGRect(origin: origin, size: CGSize(width: side, height: side))
+        let radius = side * 0.11
 
         context.saveGState()
-        let clip = CGPath(roundedRect: box, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        let clip = CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius,
+                          transform: nil)
         context.addPath(clip)
         context.clip()
         // The patch is in top-left pixel order and this view is bottom-left, so it goes in flipped.
@@ -282,22 +299,72 @@ final class SelectionView: NSView {
         context.draw(patch, in: box)
         context.restoreGState()
 
-        context.saveGState()
-        // Crosshair on the centre pixel, positioned from the sampler so it stays on the pointer's
-        // own pixel even when the sample window slid away from a screen edge.
         let offset = MagnifierSampler.centreOffset(around: global, sourceRect: source, in: display)
-        let cell = CGRect(
-            x: box.minX + offset.x * Self.magnifierTileSize,
-            y: box.maxY - (offset.y + 1) * Self.magnifierTileSize,
-            width: Self.magnifierTileSize, height: Self.magnifierTileSize)
-        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-        context.setLineWidth(1)
-        context.stroke(cell.insetBy(dx: 0.5, dy: 0.5))
+        let tile = Self.magnifierTileSize
+        let cell = CGRect(x: box.minX + offset.x * tile,
+                          y: box.maxY - (offset.y + 1) * tile,
+                          width: tile, height: tile)
 
-        context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
+        context.saveGState()
+        context.addPath(clip)
+        context.clip()
+        // A full-width row and column at 45% black, then the centre cell painted back out. The
+        // result is a crosshair that points at the pixel without covering it.
+        context.setFillColor(NSColor.black.withAlphaComponent(0.45).cgColor)
+        context.fill(CGRect(x: box.minX, y: cell.minY, width: side, height: tile))
+        context.fill(CGRect(x: cell.minX, y: box.minY, width: tile, height: side))
+        context.restoreGState()
+
+        context.saveGState()
+        context.addPath(clip)
+        context.clip()
+        context.translateBy(x: 0, y: box.maxY + box.minY)
+        context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .none
+        // Redraw just the middle pixel, so it shows its true colour through the tinted cross.
+        if let centre = patch.cropping(to: CGRect(x: offset.x, y: offset.y, width: 1, height: 1)) {
+            context.draw(centre, in: CGRect(x: cell.minX,
+                                            y: box.maxY + box.minY - cell.maxY,
+                                            width: tile, height: tile))
+        }
+        context.restoreGState()
+
+        context.saveGState()
+        context.setStrokeColor(NSColor(white: 0.24, alpha: 1).cgColor)
+        context.setLineWidth(2)
         context.addPath(clip)
         context.strokePath()
         context.restoreGState()
+
+        drawPointerReadout(at: point, global: global, in: context)
+    }
+
+    /// The pointer's coordinates, in two lines beside the cursor.
+    ///
+    /// Light text with a dark outline rather than a filled pill: over a frozen screen a pill is
+    /// another rectangle competing with the selection, while outlined text stays readable on
+    /// anything without adding a shape.
+    private func drawPointerReadout(at point: CGPoint, global: CGPoint,
+                                    in context: CGContext) {
+        let pixel = CGPoint(x: (global.x - display.frame.minX) * display.scale,
+                            y: (display.frame.maxY - global.y) * display.scale)
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = "\u{2009}"   // thin space, so 1200 reads as 1 200
+
+        let lines = [formatter.string(from: NSNumber(value: Int(pixel.x))) ?? "",
+                     formatter.string(from: NSNumber(value: Int(pixel.y))) ?? ""]
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white,
+            .strokeColor: NSColor.black.withAlphaComponent(0.75),
+            .strokeWidth: -3.5,
+        ]
+        for (index, line) in lines.enumerated() {
+            let string = NSAttributedString(string: line, attributes: attributes)
+            string.draw(at: CGPoint(x: point.x + 12,
+                                    y: point.y - 14 - CGFloat(index) * 13))
+        }
     }
 
     private var isWindowMode: Bool {
@@ -319,8 +386,18 @@ final class SelectionView: NSView {
     ///
     /// Dark and thin. Bright white lines across a frozen screen read as part of the picture; a
     /// 40% black hairline reads as an instrument laid over it.
-    private func drawCrosshair(at point: CGPoint, in context: CGContext) {
+    private func drawCrosshair(at point: CGPoint, in context: CGContext,
+                               avoiding selection: CGRect?) {
         context.saveGState()
+        // Clipped out of the selection: guides are for finding an edge, and drawing them straight
+        // across the region you have already chosen just adds two lines over your content.
+        if let selection {
+            let path = CGMutablePath()
+            path.addRect(bounds)
+            path.addRect(selection)
+            context.addPath(path)
+            context.clip(using: .evenOdd)
+        }
         context.setStrokeColor(NSColor.black.withAlphaComponent(0.4).cgColor)
         context.setLineWidth(1)
         context.move(to: CGPoint(x: 0, y: point.y + 0.5))
