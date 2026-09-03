@@ -409,6 +409,7 @@ final class SelectionOverlayInteractionTests: XCTestCase {
         let (view, recorder) = try makeView(mode: .window([target]))
 
         view.mouseMoved(with: try event(.mouseMoved, at: CGPoint(x: 150, y: 100)))
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 150, y: 100)))
         view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 150, y: 100)))
 
         XCTAssertEqual(recorder.confirmedWindow?.id, 7)
@@ -420,7 +421,64 @@ final class SelectionOverlayInteractionTests: XCTestCase {
                                       owningAppName: "Example", layer: 0, isOnScreen: true)
         let (view, recorder) = try makeView(mode: .window([target]))
         view.mouseMoved(with: try event(.mouseMoved, at: CGPoint(x: 350, y: 260)))
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 350, y: 260)))
         view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 350, y: 260)))
         XCTAssertTrue(recorder.cancelled)
+    }
+
+    func testDraggingTheInsideMovesTheSelectionInsteadOfTakingIt() throws {
+        let (view, recorder) = try makeView()
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 100, y: 100)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: 200, y: 180)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 200, y: 180)))
+
+        // Press the middle and carry it 40pt right, 20pt up.
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 150, y: 140)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: 190, y: 160)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 190, y: 160)))
+
+        XCTAssertNil(recorder.confirmed, "moving is not confirming")
+
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 190, y: 160)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 190, y: 160)))
+        let rect = try XCTUnwrap(recorder.confirmed)
+        XCTAssertEqual(rect.minX, 140, accuracy: 1, "carried 40pt right")
+        XCTAssertEqual(rect.minY, 120, accuracy: 1, "carried 20pt up")
+        XCTAssertEqual(rect.width, 100, accuracy: 1, "moving must not resize it")
+        XCTAssertEqual(rect.height, 80, accuracy: 1)
+    }
+
+    func testASmallWobbleOnTheClickStillTakesTheShot() throws {
+        // A hand is not steady. One or two points of travel is a click, not a reposition.
+        let (view, recorder) = try makeView()
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 100, y: 100)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: 200, y: 180)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 200, y: 180)))
+
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 150, y: 140)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: 151, y: 141)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 151, y: 141)))
+
+        let rect = try XCTUnwrap(recorder.confirmed)
+        XCTAssertEqual(rect.minX, 100, accuracy: 1, "the wobble must not have moved it")
+    }
+
+    func testASelectionDraggedOffTheEdgeComesBackWithThePointer() throws {
+        // The reason `move` is absolute: clamped deltas accumulate, and the rect would stay
+        // pinned to the edge while the pointer walked back.
+        let (view, recorder) = try makeView()
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 100, y: 100)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: 200, y: 180)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 200, y: 180)))
+
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 150, y: 140)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: -400, y: 140)))
+        view.mouseDragged(with: try event(.leftMouseDragged, at: CGPoint(x: 150, y: 140)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 150, y: 140)))
+
+        view.mouseDown(with: try event(.leftMouseDown, at: CGPoint(x: 150, y: 140)))
+        view.mouseUp(with: try event(.leftMouseUp, at: CGPoint(x: 150, y: 140)))
+        let rect = try XCTUnwrap(recorder.confirmed)
+        XCTAssertEqual(rect.minX, 100, accuracy: 1, "back where it started, not stuck at x = 0")
     }
 }

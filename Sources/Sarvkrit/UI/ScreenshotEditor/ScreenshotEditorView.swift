@@ -90,6 +90,12 @@ struct ScreenshotEditorView: View {
                     ColourWell(model: model)
 
                     if model.tool == .arrow { arrowStylePicker }
+                    if model.tool == .text { textStylePicker }
+                    if model.tool == .emoji {
+                        EmojiPicker(model: model)
+                            .padding(2)
+                            .background(groupBackground)
+                    }
 
                     HStack(spacing: 6) {
                         Image(systemName: "lineweight")
@@ -191,6 +197,39 @@ struct ScreenshotEditorView: View {
         }
         .padding(2)
         .background(groupBackground)
+    }
+
+    /// The seven text styles, shown *as themselves*.
+    ///
+    /// A menu of the words "Standard / Rounded / Monospaced / Outlined…" would be useless — the
+    /// whole difference between them is what they look like, so each row renders in its own style.
+    /// A menu rather than a row of swatches because seven legible previews do not fit in a
+    /// toolbar next to everything else.
+    private var textStylePicker: some View {
+        Menu {
+            ForEach(TextPreset.allCases) { preset in
+                Button {
+                    model.textPreset = preset
+                    model.applyStyleToSelection()
+                } label: {
+                    // The tick has to be drawn, not implied: a Menu row with a custom label gets
+                    // no selection mark of its own.
+                    Label {
+                        TextStyleSwatch(preset: preset, accent: model.colour)
+                    } icon: {
+                        Image(systemName: model.textPreset == preset ? "checkmark" : "")
+                    }
+                }
+            }
+        } label: {
+            TextStyleSwatch(preset: model.textPreset, accent: model.colour)
+                .frame(minWidth: 92)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .padding(2)
+        .background(groupBackground)
+        .help("Text style")
     }
 
     // MARK: - Bottom bar

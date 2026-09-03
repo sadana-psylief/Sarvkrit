@@ -190,7 +190,15 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             return
         }
         if model.tool == .emoji {
-            NSApp.orderFrontCharacterPalette(nil)
+            // Sized like the counter beside it, and in image pixels — a 4× capture needs a 4×
+            // emoji or it lands as a speck. See the note on scale in `AnnotationDocument`.
+            let side = 64 * max(model.document.scale, 1)
+            let rect = CGRect(x: point.x - side / 2, y: point.y - side / 2,
+                              width: side, height: side)
+            model.edit { $0.add(.emoji(EmojiElement(rect: rect, emoji: model.emoji))) }
+            model.selection = model.document.elements.last?.id
+            delegate?.canvasDidEdit(self)
+            needsDisplay = true
             return
         }
 
@@ -355,7 +363,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                                   string: "",
                                   fontSize: 30 * scale,
                                   colour: model.colour)
-        element.fontName = NSFont.systemFont(ofSize: element.fontSize, weight: .semibold).fontName
+        model.textPreset.apply(to: &element, accent: model.colour)
 
         model.edit { $0.add(.text(element)) }
         guard let added = model.document.elements.last else { return }
@@ -382,8 +390,11 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         field.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.14)
         field.focusRingType = .none
         field.delegate = self
-        field.font = NSFont(name: element.fontName, size: element.fontSize * transform.zoom)
-            ?? NSFont.systemFont(ofSize: element.fontSize * transform.zoom, weight: .semibold)
+        // The field is what the user types into, so it has to look like the result — same face,
+        // same size, same colour. Resolving through the typeface rather than the name is what
+        // makes the rounded and monospaced presets look right while being typed.
+        field.font = element.typeface.font(ofSize: element.fontSize * transform.zoom,
+                                           customName: element.fontName)
         field.textColor = NSColor(cgColor: element.colour.cgColor) ?? .red
         field.placeholderString = "Type…"
 

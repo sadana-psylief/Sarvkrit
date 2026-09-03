@@ -101,6 +101,12 @@ final class QuickAccessController: NSObject {
                 store.remove(id: item.id)
                 self?.close(itemID: item.id, remember: false)
             },
+            onSwipeAway: { [weak self] in
+                // Remembered, unlike the close button, which deletes. A flick is a fast gesture
+                // and fast gestures happen by accident, so this one has to be undoable — it is
+                // exactly what "restore last closed" is for.
+                self?.close(itemID: item.id, remember: true)
+            },
             onHoverChange: { [weak self] hovering in
                 self?.setHovering(hovering, for: item.id)
             }))
@@ -112,7 +118,7 @@ final class QuickAccessController: NSObject {
         scheduleAutoClose(for: entry)
     }
 
-    /// Brings back the capture that was closed last.    /// Brings back the capture that was closed last.
+    /// Brings back the capture that was closed last.
     func restoreLastClosed() {
         guard let id = lastClosed, let item = store?.items.first(where: { $0.id == id })
         else { return }

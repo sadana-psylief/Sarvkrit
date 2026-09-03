@@ -22,6 +22,12 @@ final class EditorDocumentModel: ObservableObject {
     /// Which arrow shape new arrows get. Four were built; without this control the user could
     /// only ever draw the first one.
     @Published var arrowHead: ArrowElement.Head = .filled
+    /// Which of the seven styles new text gets. Same reasoning as `arrowHead`: the styles exist,
+    /// and without a control the user could only ever type the first one.
+    @Published var textPreset: TextPreset = .standard
+    /// Which emoji the next click places. See `EmojiCatalogue` for why the tool cannot just open
+    /// the system palette.
+    @Published var emoji: String = EmojiCatalogue.default
     /// Nil means "fit to the window", which is the state the editor opens in and returns to.
     /// A concrete value is a zoom the user chose and should not be silently overridden on resize.
     @Published var zoom: CGFloat?
@@ -110,6 +116,19 @@ final class EditorDocumentModel: ObservableObject {
     ///
     /// Without this the toolbar only affects the *next* mark, so changing your mind about a colour
     /// means deleting and redrawing — which is the difference between a toolbar and a preference.
+    /// Retargets the selected emoji, so picking a different one restyles it rather than only
+    /// affecting the next placement — which is how every other control in the toolbar behaves.
+    func applyEmojiToSelection() {
+        guard let selection else { return }
+        guard let index = document.elements.firstIndex(where: { $0.id == selection }),
+              case .emoji = document.elements[index].kind else { return }
+        edit { document in
+            guard case .emoji(var value) = document.elements[index].kind else { return }
+            value.emoji = self.emoji
+            document.elements[index].kind = .emoji(value)
+        }
+    }
+
     func applyStyleToSelection() {
         guard let selection else { return }
         edit { document in
@@ -136,7 +155,10 @@ final class EditorDocumentModel: ObservableObject {
                 value.stroke.colour = colour; value.stroke.width = width
                 document.elements[index].kind = .pencil(value)
             case .text(var value):
-                value.colour = colour
+                // Restyling has to go through the preset, not set the colour alone: on a boxed
+                // style the picked colour is the box, and writing it into `colour` would put red
+                // text on a red pill.
+                self.textPreset.apply(to: &value, accent: colour)
                 document.elements[index].kind = .text(value)
             case .highlighter(var value):
                 value.colour = colour

@@ -47,6 +47,12 @@ final class SelectionView: NSView {
     private var pointer: CGPoint?
     /// The handle currently being dragged on a settled selection.
     private var activeHandle: SelectionHandles.Handle?
+    /// Where a press inside a settled selection started, and where that selection was — enough to
+    /// drag it somewhere else. Absolute, so the rect tracks the pointer rather than drifting.
+    private var movePress: (start: CGPoint, origin: CGPoint)?
+    /// Whether that press has travelled far enough to be a move rather than the click that takes
+    /// the shot. Without it, the hand's small wobble on a click would nudge the selection.
+    private var isMovingSelection = false
 
     private let mode: SelectionMode
     private var hoveredWindow: CapturableWindow?
@@ -128,7 +134,10 @@ final class SelectionView: NSView {
             // called `began` and threw the settled rect away, so clicking your own selection
             // silently cancelled it — which a synthesised drag caught and a hundred unit tests
             // on the gesture could not, because the bug was in the view's dispatch.
-            if viewRect(settled).contains(local) { return }
+            if viewRect(settled).contains(local) {
+                movePress = (start: local, origin: settled.origin)
+                return
+            }
             // A press outside starts again, which is what the hand expects.
         }
 
@@ -149,6 +158,22 @@ final class SelectionView: NSView {
             return
         }
 
+        // Dragging the inside of a settled selection moves it. Before this, `moved` was a no-op
+        // on a settled gesture, so the attempt did nothing and the mouse-up took the shot at the
+        // old position — the selection appearing to refuse to be moved, and then firing anyway.
+        if let movePress {
+            let delta = CGSize(width: local.x - movePress.start.x,
+                               height: local.y - movePress.start.y)
+            guard isMovingSelection
+                || max(abs(delta.width), abs(delta.height)) >= SelectionGesture.minimumDragDistance
+            else { return }
+            isMovingSelection = true
+            gesture.move(originTo: CGPoint(x: movePress.origin.x + delta.width,
+                                           y: movePress.origin.y + delta.height))
+            needsDisplay = true
+            return
+        }
+
         applyModifiers(event)
         gesture.moved(to: globalPoint(local))
         needsDisplay = true
@@ -160,6 +185,18 @@ final class SelectionView: NSView {
             activeHandle = nil
             needsDisplay = true
             return
+        }
+
+        if movePress != nil {
+            let wasMoving = isMovingSelection
+            movePress = nil
+            isMovingSelection = false
+            // Having moved it, the release is the end of the move — not also the click that takes
+            // the shot. A press that never travelled falls through and confirms, as it should.
+            if wasMoving {
+                needsDisplay = true
+                return
+            }
         }
 
         if case .window = mode {

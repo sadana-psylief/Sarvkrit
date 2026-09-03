@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -78,6 +79,57 @@ struct TextElement: Codable, Equatable {
     var colour: RGBAColour = .red
     var background: RGBAColour?
     var padding: CGFloat = 6
+    /// Which family to resolve `fontSize` against. See `TextPreset`, and the note there on why a
+    /// system font is resolved through this rather than through `fontName`.
+    var typeface: Typeface = .standard
+    /// Rounds the background box. A capsule is simply a radius past half the padded height.
+    var cornerRadius: CGFloat = 0
+    /// A hairline around the background box, for the bordered preset.
+    var borderColour: RGBAColour?
+    /// A halo drawn behind the glyphs, for text that has to stay legible over a photograph
+    /// without wearing a box.
+    var haloColour: RGBAColour?
+
+    enum Typeface: String, Codable, CaseIterable {
+        case standard
+        case rounded
+        case monospaced
+        /// A face the user picked by name, which is the only case `fontName` decides.
+        case custom
+    }
+
+    /// Written by hand so that **a field added in a later release cannot make an older document
+    /// fail to open.** The synthesised decoder throws on a missing key even where the property has
+    /// a default, so every one of these is optional-with-fallback — the same reason
+    /// `ClipboardItem` carries its own decoder.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        origin = try c.decode(CGPoint.self, forKey: .origin)
+        maxWidth = try c.decodeIfPresent(CGFloat.self, forKey: .maxWidth)
+        string = try c.decodeIfPresent(String.self, forKey: .string) ?? ""
+        presetID = try c.decodeIfPresent(String.self, forKey: .presetID)
+        fontName = try c.decodeIfPresent(String.self, forKey: .fontName) ?? "Helvetica-Bold"
+        fontSize = try c.decodeIfPresent(CGFloat.self, forKey: .fontSize) ?? 36
+        colour = try c.decodeIfPresent(RGBAColour.self, forKey: .colour) ?? .red
+        background = try c.decodeIfPresent(RGBAColour.self, forKey: .background)
+        padding = try c.decodeIfPresent(CGFloat.self, forKey: .padding) ?? 6
+        typeface = try c.decodeIfPresent(Typeface.self, forKey: .typeface) ?? .standard
+        cornerRadius = try c.decodeIfPresent(CGFloat.self, forKey: .cornerRadius) ?? 0
+        borderColour = try c.decodeIfPresent(RGBAColour.self, forKey: .borderColour)
+        haloColour = try c.decodeIfPresent(RGBAColour.self, forKey: .haloColour)
+    }
+
+    init(origin: CGPoint, maxWidth: CGFloat? = nil, string: String = "",
+         fontSize: CGFloat = 36, colour: RGBAColour = .red) {
+        self.origin = origin
+        self.maxWidth = maxWidth
+        self.string = string
+        self.fontSize = fontSize
+        self.colour = colour
+    }
+
+    /// The font this element actually draws with.
+    var resolvedFont: NSFont { typeface.font(ofSize: fontSize, customName: fontName) }
 }
 
 struct HighlightElement: Codable, Equatable {

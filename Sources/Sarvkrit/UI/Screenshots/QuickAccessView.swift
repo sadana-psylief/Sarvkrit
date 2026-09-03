@@ -19,6 +19,9 @@ struct QuickAccessView: View {
     let onSave: () -> Void
     let onReveal: () -> Void
     let onClose: () -> Void
+    /// Flicking the thumbnail off the side of the screen. Separate from `onClose` because it is
+    /// the same "put it away" but reached without aiming at a 16pt button.
+    var onSwipeAway: (() -> Void)?
     let onHoverChange: (Bool) -> Void
 
     @State private var isHovering = false
@@ -52,7 +55,7 @@ struct QuickAccessView: View {
         )
         .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
         // The whole thumbnail is the drag handle, which is what people reach for.
-        .overlay(CaptureDragSource(url: fileURL, preview: image))
+        .overlay(CaptureDragSource(url: fileURL, preview: image, onSwipeAway: onSwipeAway))
         .scaleEffect(hasAppeared ? 1 : 0.92)
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {

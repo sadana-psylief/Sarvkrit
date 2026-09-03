@@ -104,8 +104,12 @@ enum AnnotationGeometry {
         let lines = text.string.isEmpty ? 1 : text.string.components(separatedBy: "\n").count
         let longest = text.string.components(separatedBy: "\n")
             .map(\.count).max() ?? 1
-        // 0.55em is a reasonable mean advance for the sans-serif faces the presets use.
-        let width = text.maxWidth ?? (CGFloat(max(longest, 1)) * text.fontSize * 0.55)
+        // Mean advance per face. Monospaced is wider than the proportional faces by enough that
+        // one constant would leave a code snippet's selection box ending mid-word. Kept here as a
+        // number rather than measured, so this file stays free of AppKit like the rest of the
+        // geometry layer.
+        let advance: CGFloat = text.typeface == .monospaced ? 0.62 : 0.55
+        let width = text.maxWidth ?? (CGFloat(max(longest, 1)) * text.fontSize * advance)
         let height = CGFloat(lines) * text.fontSize * 1.2
         return CGRect(x: text.origin.x - text.padding, y: text.origin.y - text.padding,
                       width: width + text.padding * 2, height: height + text.padding * 2)

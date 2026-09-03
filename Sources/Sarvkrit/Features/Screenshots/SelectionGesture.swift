@@ -106,14 +106,26 @@ struct SelectionGesture: Equatable {
     /// Arrow-key adjustment after the mouse is up. Stays inside the display.
     mutating func nudge(by delta: CGSize) {
         guard case .settled(let rect) = phase else { return }
-        let moved = rect.offsetBy(dx: delta.width, dy: delta.height)
-        // Clamping the *offset* rather than intersecting keeps the size: intersecting at an edge
-        // would shrink the selection instead of stopping it, which feels like a bug.
-        let clamped = CGRect(
-            x: min(max(moved.minX, display.frame.minX), display.frame.maxX - rect.width),
-            y: min(max(moved.minY, display.frame.minY), display.frame.maxY - rect.height),
-            width: rect.width, height: rect.height)
-        phase = .settled(clamped)
+        phase = .settled(placing(rect, atOrigin: CGPoint(x: rect.minX + delta.width,
+                                                         y: rect.minY + delta.height)))
+    }
+
+    /// Drags a settled selection to a new position by its inside.
+    ///
+    /// **Absolute, not incremental.** Dragging past the edge of the display and back has to bring
+    /// the selection back with the pointer; accumulating clamped deltas instead leaves it pinned
+    /// to the edge while the pointer walks away from it.
+    mutating func move(originTo origin: CGPoint) {
+        guard case .settled(let rect) = phase else { return }
+        phase = .settled(placing(rect, atOrigin: origin))
+    }
+
+    /// Clamping the *origin* rather than intersecting keeps the size: intersecting at an edge
+    /// would shrink the selection instead of stopping it, which feels like a bug.
+    private func placing(_ rect: CGRect, atOrigin origin: CGPoint) -> CGRect {
+        CGRect(x: min(max(origin.x, display.frame.minX), display.frame.maxX - rect.width),
+               y: min(max(origin.y, display.frame.minY), display.frame.maxY - rect.height),
+               width: rect.width, height: rect.height)
     }
 
     /// Replaces the selection with an exact pixel size, centred where it already is.

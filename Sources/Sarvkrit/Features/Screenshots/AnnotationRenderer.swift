@@ -210,20 +210,31 @@ enum AnnotationRenderer {
     }
 
     private static func drawText(_ text: TextElement, in context: CGContext) {
-        let font = NSFont(name: text.fontName, size: text.fontSize)
-            ?? NSFont.systemFont(ofSize: text.fontSize, weight: .bold)
-        let attributes: [NSAttributedString.Key: Any] = [
+        let font = text.resolvedFont
+        var attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: NSColor(cgColor: text.colour.cgColor) ?? .red,
         ]
-        let string = NSAttributedString(string: text.string, attributes: attributes)
-        let size = string.size()
+        let size = NSAttributedString(string: text.string, attributes: attributes).size()
 
         if let background = text.background {
+            let box = CGRect(x: text.origin.x - text.padding, y: text.origin.y - text.padding,
+                             width: size.width + text.padding * 2,
+                             height: size.height + text.padding * 2)
+            // Capped at half the short side, so a capsule is a capsule and never an invalid path.
+            let radius = min(text.cornerRadius, min(box.width, box.height) / 2)
+            let path = CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius,
+                              transform: nil)
             context.setFillColor(background.cgColor)
-            context.fill(CGRect(x: text.origin.x - text.padding, y: text.origin.y - text.padding,
-                                width: size.width + text.padding * 2,
-                                height: size.height + text.padding * 2))
+            context.addPath(path)
+            context.fillPath()
+
+            if let border = text.borderColour {
+                context.setStrokeColor(border.cgColor)
+                context.setLineWidth(max(1, text.fontSize * 0.03))
+                context.addPath(path)
+                context.strokePath()
+            }
         }
 
         // The context is flipped into document space, so text drawn through AppKit would come out
@@ -233,7 +244,24 @@ enum AnnotationRenderer {
         context.scaleBy(x: 1, y: -1)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
-        string.draw(at: CGPoint(x: text.origin.x, y: text.origin.y))
+
+        // The halo is a stroked copy underneath, not a shadow: a shadow is directional and reads as
+        // a drop shadow, where the point here is to separate the glyphs from *whatever* is behind
+        // them on every side. A positive `.strokeWidth` strokes without filling, so drawing the
+        // filled text over it leaves the halo showing only outside the letterforms.
+        if let halo = text.haloColour {
+            var outline = attributes
+            outline[.strokeColor] = NSColor(cgColor: halo.cgColor) ?? .white
+            outline[.strokeWidth] = text.fontSize * 0.22
+            outline[.foregroundColor] = NSColor.clear
+            NSAttributedString(string: text.string, attributes: outline)
+                .draw(at: CGPoint(x: text.origin.x, y: text.origin.y))
+        }
+
+        attributes[.strokeWidth] = 0
+        NSAttributedString(string: text.string, attributes: attributes)
+            .draw(at: CGPoint(x: text.origin.x, y: text.origin.y))
+
         NSGraphicsContext.restoreGraphicsState()
         context.restoreGState()
     }
