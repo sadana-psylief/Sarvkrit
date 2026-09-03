@@ -327,8 +327,9 @@ is no build setting to flip.
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. **[CONTRIBUTING.md](CONTRIBUTING.md)** has the full process.
 
+- `main` takes no direct pushes. Every change goes through a pull request, which the owner merges.
 - `make test` must pass. There are 334 tests; new behaviour should come with some.
 - Prefer pure, testable logic over code that can only be checked by running the app.
 - Contributions are accepted under the same licence as the project.
