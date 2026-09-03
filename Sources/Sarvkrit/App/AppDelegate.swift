@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireShelf()
         wireCutPasteToasts()
         wireScreenshots()
+        wirePinToScreen()
         reconcileKeepAwake()
 
         guard !AppState.shared.hasCompletedOnboarding else { return }
@@ -110,6 +111,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { QuickAccessController.shared.hideAll() }
         }
 
+        // Pinning from the overlay, if the Pin feature exists. Wired through a closure so the
+        // Screenshots feature knows nothing about pinned windows.
+        QuickAccessController.shared.pinToScreen = { [weak screenshots] item in
+            guard let screenshots,
+                  let image = NSImage(contentsOf: screenshots.store.url(for: item)) else { return }
+            MainActor.assumeIsolated {
+                PinnedShotController.shared.pin(image: image, sourceRect: item.sourceRect)
+            }
+        }
+
         QuickAccessController.shared.store = screenshots.store
         QuickAccessController.shared.corner = screenshots.quickAccessCorner
         QuickAccessController.shared.autoCloseAfter = screenshots.quickAccessAutoClose
@@ -196,6 +207,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stale ? "Quit and reopen Sarvkrit to finish enabling screenshots"
                   : "Couldn't take a screenshot",
             symbolName: "exclamationmark.triangle")
+    }
+
+    /// ⌃⇧P unlocks everything if anything is locked, and otherwise pins the clipboard image.
+    ///
+    /// Unlocking takes priority because a locked pin accepts no clicks, so this shortcut is the
+    /// only way out of Lock Mode — letting the pinning behaviour shadow it would strand the user.
+    private func wirePinToScreen() {
+        guard let pin = AppState.shared.features
+            .compactMap({ $0 as? PinToScreenFeature }).first else { return }
+
+        pin.pinFromClipboardOrUnlock = {
+            MainActor.assumeIsolated {
+                let controller = PinnedShotController.shared
+                if controller.count > 0 {
+                    controller.unlockAll()
+                }
+                guard let image = NSPasteboard.general.readObjects(
+                    forClasses: [NSImage.self], options: nil)?.first as? NSImage else {
+                    if controller.count == 0 {
+                        ToastPresenter.shared.show("No image on the clipboard to pin",
+                                                   symbolName: "pin.slash")
+                    }
+                    return
+                }
+                controller.pin(image: image, sourceRect: nil)
+            }
+        }
     }
 
     /// Cut & Paste raises its confirmation through a closure, so the feature never imports SwiftUI.
