@@ -219,6 +219,16 @@ final class AppState: ObservableObject {
         unmetRequirements.sorted { $0.sortOrder < $1.sortOrder }
     }
 
+    /// The missing permission that is holding one feature back, if any.
+    ///
+    /// Used for the row caption and the detail pane's explanation, both of which named
+    /// Accessibility unconditionally before there was a second grant to get wrong.
+    func blockingRequirement(for feature: Feature) -> Requirement? {
+        feature.requirements
+            .filter { $0.isQueryable && !permissions.isGranted($0) }
+            .min { $0.sortOrder < $1.sortOrder }
+    }
+
     /// Which permissions the enabled features are missing.
     ///
     /// Only ever contains requirements the system lets us query — see

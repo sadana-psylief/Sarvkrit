@@ -26,7 +26,11 @@ struct PermissionBanner: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Open Settings", action: onOpenSettings)
+                // "Allow…" rather than "Open Settings" when macOS can be asked: the request is
+                // what puts Sarvkrit in the settings list in the first place, so sending the user
+                // straight to the pane would show them a list the app is not in.
+                Button(requirement.isRequestable ? "Allow \(requirement.title)…" : "Open Settings",
+                       action: onOpenSettings)
                     .buttonStyle(.link)
                     .font(.caption)
             }

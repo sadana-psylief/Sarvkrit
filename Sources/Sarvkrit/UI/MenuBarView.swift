@@ -24,7 +24,7 @@ struct MenuBarView: View {
             // different permissions at once, and a single banner would have to pick one to lie about.
             ForEach(app.unmetRequirementsInOrder, id: \.self) { requirement in
                 PermissionBanner(requirement: requirement) {
-                    app.permissions.openSystemSettings(for: requirement)
+                    app.permissions.request(requirement)
                 }
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -80,7 +80,8 @@ struct MenuBarView: View {
                     FeatureRow(
                         feature: feature,
                         isOn: app.binding(for: feature),
-                        isBlocked: app.isBlocked(feature)
+                        isBlocked: app.isBlocked(feature),
+                        blockedReason: app.blockingRequirement(for: feature).map { "Needs \($0.title)" }
                     )
                     // Some features are operated from the tray rather than merely switched on
                     // there — picking an output device, say. Only while enabled: controls for a

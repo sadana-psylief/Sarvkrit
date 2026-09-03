@@ -9,6 +9,37 @@ import Foundation
 /// follows the corner radius instead of tracing the bitmap's square edges.
 enum BackgroundCompositor {
 
+    /// Everything behind and around the screenshot: the fill, and the shadow that sits under it.
+    ///
+    /// Split out of `render` so the live canvas can draw the same surround without flattening the
+    /// image first — which is what makes the background visible while you are choosing it, rather
+    /// than only once you save.
+    static func drawSurround(style: BackgroundStyle,
+                             canvas: CGRect,
+                             imageRect: CGRect,
+                             in context: CGContext) {
+        drawFill(style.fill, in: canvas, context: context)
+
+        guard let shadow = style.shadow else { return }
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -shadow.offsetY),
+                          blur: shadow.radius,
+                          color: CGColor(red: shadow.colour.r, green: shadow.colour.g,
+                                         blue: shadow.colour.b, alpha: shadow.opacity))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.addPath(CGPath(roundedRect: imageRect,
+                               cornerWidth: style.cornerRadius,
+                               cornerHeight: style.cornerRadius, transform: nil))
+        context.fillPath()
+        context.restoreGState()
+    }
+
+    /// The rounded-corner clip the screenshot is drawn through.
+    static func clipPath(imageRect: CGRect, style: BackgroundStyle) -> CGPath {
+        CGPath(roundedRect: imageRect, cornerWidth: style.cornerRadius,
+               cornerHeight: style.cornerRadius, transform: nil)
+    }
+
     static func render(_ image: CGImage, style: BackgroundStyle) -> CGImage? {
         let imageSize = CGSize(width: image.width, height: image.height)
         let (canvas, imageRect) = BackgroundLayout.compute(imageSize: imageSize, style: style)
@@ -24,34 +55,22 @@ enum BackgroundCompositor {
         context.translateBy(x: 0, y: canvas.height)
         context.scaleBy(x: 1, y: -1)
 
-        drawFill(style.fill, in: CGRect(origin: .zero, size: canvas), context: context)
-
-        let clip = CGPath(roundedRect: imageRect,
-                          cornerWidth: style.cornerRadius, cornerHeight: style.cornerRadius,
-                          transform: nil)
-
-        if let shadow = style.shadow {
-            context.saveGState()
-            context.setShadow(offset: CGSize(width: 0, height: -shadow.offsetY),
-                              blur: shadow.radius,
-                              color: CGColor(red: shadow.colour.r, green: shadow.colour.g,
-                                             blue: shadow.colour.b, alpha: shadow.opacity))
-            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-            context.addPath(clip)
-            context.fillPath()
-            context.restoreGState()
-        }
+        drawSurround(style: style, canvas: CGRect(origin: .zero, size: canvas),
+                     imageRect: imageRect, in: context)
+        let clip = clipPath(imageRect: imageRect, style: style)
 
         context.saveGState()
         context.addPath(clip)
         context.clip()
-        context.draw(image, in: imageRect)
+        // Same flip as the annotation renderer: this context was turned top-left above, so the
+        // screenshot has to be drawn flipped or it composites upside down inside its own frame.
+        context.drawFlipped(image, in: imageRect)
         context.restoreGState()
 
         return context.makeImage()
     }
 
-    private static func drawFill(_ fill: BackgroundStyle.Fill, in rect: CGRect,
+    static func drawFill(_ fill: BackgroundStyle.Fill, in rect: CGRect,
                                  context: CGContext) {
         switch fill {
         case .none:

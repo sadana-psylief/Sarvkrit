@@ -95,6 +95,11 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             panel.setFrame(screenFrame, display: false)
             // `.ignoresCycle` so ⌘` doesn't cycle into a full-screen overlay panel.
             panel.collectionBehavior.insert(.ignoresCycle)
+            // **Without this the crosshair and the magnifier never appear.** `mouseMoved` is not
+            // delivered unless the window asks for it, and it defaults to off — so the view never
+            // learned where the pointer was and drew neither, which looked like the features had
+            // simply not been built.
+            panel.acceptsMouseMovedEvents = true
             panel.orderFrontRegardless()
             panels.append(panel)
 
@@ -108,6 +113,12 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
         if panels.first(where: { $0.isKeyWindow }) == nil, let first = panels.first {
             first.makeKeyAndOrderFront(nil)
             first.makeFirstResponder(first.contentView)
+        }
+
+        // Seed the pointer so the crosshair and loupe are on screen the instant the overlay opens,
+        // rather than only after the first mouse movement.
+        for panel in panels {
+            (panel.contentView as? SelectionView)?.seedPointer(NSEvent.mouseLocation)
         }
 
         NSCursor.hide()

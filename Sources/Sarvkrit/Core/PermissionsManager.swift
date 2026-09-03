@@ -96,6 +96,22 @@ final class PermissionsManager: ObservableObject {
         return granted
     }
 
+    /// Asks macOS for whichever grant this is, then opens its settings pane.
+    ///
+    /// Both, always, and in that order. The request is what registers the app in the settings list
+    /// — without it the user arrives at a pane that does not mention Sarvkrit. And the system only
+    /// shows its own dialog once per app per install, so on every later run the pane is the real
+    /// path. `OnboardingView` has done exactly this for Accessibility since the beginning; this
+    /// generalises it so a second grant cannot be left unreachable.
+    func request(_ requirement: Requirement) {
+        switch requirement {
+        case .accessibility: requestAccess()
+        case .screenRecording: requestScreenRecordingAccess()
+        case .audioCapture: break
+        }
+        openSystemSettings(for: requirement)
+    }
+
     func openSystemSettings() {
         openSystemSettings(for: .accessibility)
     }

@@ -48,15 +48,43 @@ final class AnnotationCanvasView: NSView {
 
     override func layout() {
         super.layout()
-        transform = CanvasTransform.fitting(imageSize: model.document.imageSize,
-                                            in: bounds.size)
+        recomputeTransform()
         needsDisplay = true
     }
 
-    func refresh() { needsDisplay = true }
+    func refresh() {
+        // The background changes the size of the whole composition, so the fit has to be redone
+        // whenever the document does — not only when the window resizes.
+        recomputeTransform()
+        needsDisplay = true
+    }
 
+    /// Where the screenshot sits inside its background. `.zero`-origin when there isn't one.
+    private var imageRect: CGRect = .zero
+
+    private func recomputeTransform() {
+        let composition = AnnotationRenderer.composition(for: model.document)
+        imageRect = composition.imageRect
+        // Inset so the composition never touches the window edge — a background with a shadow
+        // needs air around it or it reads as a rendering artefact rather than a deliberate frame.
+        let available = bounds.insetBy(dx: 24, dy: 24).size
+        transform = CanvasTransform.fitting(imageSize: composition.canvasSize,
+                                            in: CGSize(width: max(available.width, 1),
+                                                       height: max(available.height, 1)))
+        transform = CanvasTransform(
+            imageSize: composition.canvasSize,
+            zoom: transform.zoom,
+            offset: CGPoint(x: transform.offset.x + 24, y: transform.offset.y + 24))
+    }
+
+    /// View point → **image** coordinates, which is what every annotation is stored in.
+    ///
+    /// Two steps, because with a background the canvas is larger than the image: view → canvas,
+    /// then canvas → image by subtracting where the image sits inside it. Missing the second step
+    /// would put every annotation off by the padding.
     private func imagePoint(_ event: NSEvent) -> CGPoint {
-        transform.toImage(convert(event.locationInWindow, from: nil))
+        let canvasPoint = transform.toImage(convert(event.locationInWindow, from: nil))
+        return CGPoint(x: canvasPoint.x - imageRect.minX, y: canvasPoint.y - imageRect.minY)
     }
 
     private var tolerance: CGFloat { transform.imageTolerance(forViewTolerance: 6) }
@@ -66,15 +94,33 @@ final class AnnotationCanvasView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
 
+        let composition = AnnotationRenderer.composition(for: model.document)
+
         context.saveGState()
         context.translateBy(x: transform.offset.x, y: transform.offset.y)
         context.scaleBy(x: transform.zoom, y: transform.zoom)
 
+        // The background is drawn here rather than only at export, which is the whole point:
+        // choosing one has to show you what you are choosing.
+        AnnotationRenderer.drawBackground(model.document,
+                                          canvasSize: composition.canvasSize,
+                                          imageRect: composition.imageRect,
+                                          in: context)
+
         var shown = model.document
         // The in-progress mark is drawn but never stored, so an abandoned drag leaves nothing.
         if let draft { shown.elements.append(AnnotationElement(z: .max, kind: draft)) }
+
+        context.saveGState()
+        if let style = model.document.background {
+            context.addPath(BackgroundCompositor.clipPath(imageRect: composition.imageRect,
+                                                          style: style))
+            context.clip()
+        }
+        context.translateBy(x: composition.imageRect.minX, y: composition.imageRect.minY)
         AnnotationRenderer.draw(shown, base: model.base, in: context,
                                 filterCache: model.filterCache, quality: .interactive)
+        context.restoreGState()
         context.restoreGState()
 
         if let selection = model.selection,
@@ -85,7 +131,8 @@ final class AnnotationCanvasView: NSView {
 
     /// Handles are drawn in **view** space so they stay a constant physical size at any zoom.
     private func drawHandles(for element: AnnotationElement, in context: CGContext) {
-        let bounds = transform.toView(AnnotationGeometry.bounds(of: element))
+        let inImage = AnnotationGeometry.bounds(of: element)
+        let bounds = transform.toView(inImage.offsetBy(dx: imageRect.minX, dy: imageRect.minY))
         guard !bounds.isNull, bounds.width > 0 else { return }
 
         context.saveGState()
@@ -141,7 +188,9 @@ final class AnnotationCanvasView: NSView {
     private func beginSelectOrDrag(at point: CGPoint, viewPoint: CGPoint) {
         if let selection = model.selection,
            let element = model.document.elements.first(where: { $0.id == selection }) {
-            let viewBounds = transform.toView(AnnotationGeometry.bounds(of: element))
+            let viewBounds = transform.toView(
+                AnnotationGeometry.bounds(of: element)
+                    .offsetBy(dx: imageRect.minX, dy: imageRect.minY))
             if let handle = SelectionHandles.handle(at: viewPoint, bounds: viewBounds) {
                 activeHandle = handle
                 model.beginGesture()

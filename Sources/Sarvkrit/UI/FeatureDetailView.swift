@@ -53,7 +53,9 @@ private struct GenericFeatureDetailView: View {
                     .disabled(app.isBlocked(feature))
             } footer: {
                 if app.isBlocked(feature) {
-                    Text("Grant Accessibility access below to turn this on.")
+                    Text(app.blockingRequirement(for: feature).map {
+                        "Grant \($0.title) below to turn this on."
+                    } ?? "Grant the permission below to turn this on.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -91,8 +93,9 @@ private struct GenericFeatureDetailView: View {
                             }
                         }
                         if !granted {
-                            Button("Open System Settings") {
-                                app.permissions.openSystemSettings(for: requirement)
+                            Button(requirement.isRequestable
+                                   ? "Allow \(requirement.title)…" : "Open System Settings") {
+                                app.permissions.request(requirement)
                             }
                         }
                     }

@@ -67,6 +67,32 @@ final class SelectionView: NSView {
     /// Or the first click merely focuses the panel and the drag it belongs to is lost.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// Belt and braces alongside the window's `acceptsMouseMovedEvents`: a tracking area also
+    /// tells us when the pointer leaves, so the crosshair doesn't stay frozen at the last place it
+    /// was seen when the pointer crosses onto another display.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self))
+    }
+
+    /// Places the pointer before any event has arrived, so the overlay opens already showing the
+    /// crosshair rather than looking inert until the hand moves.
+    func seedPointer(_ globalPoint: CGPoint) {
+        guard display.frame.contains(globalPoint) else { return }
+        pointer = CGPoint(x: globalPoint.x - display.frame.minX,
+                          y: globalPoint.y - display.frame.minY)
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        pointer = nil
+        needsDisplay = true
+    }
+
     // MARK: - Coordinates
 
     /// View points → global AppKit points. The view fills its display exactly, so this is a

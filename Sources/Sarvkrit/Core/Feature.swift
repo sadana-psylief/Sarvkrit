@@ -105,6 +105,21 @@ enum Requirement: Hashable, CaseIterable {
         }
     }
 
+    /// Whether macOS offers a way to *ask* for this, as opposed to only a settings pane to send
+    /// the user to.
+    ///
+    /// **This is what makes the grant reachable at all for Screen Recording.** An app does not
+    /// appear in that settings list until it has asked once — so "Open Settings" alone sends the
+    /// user to a list Sarvkrit is not in, with nothing to switch on. Asking first is what puts it
+    /// there. Audio capture has no request API, which is the whole reason it is handled by
+    /// noticing silence instead.
+    var isRequestable: Bool {
+        switch self {
+        case .accessibility, .screenRecording: return true
+        case .audioCapture: return false
+        }
+    }
+
     /// Declaration order, so a `Set<Requirement>` can be rendered in a stable order.
     ///
     /// `AppState.unmetRequirements` is a `Set`, and a `Set`'s iteration order is not stable between

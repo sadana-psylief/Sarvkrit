@@ -25,11 +25,39 @@ enum AnnotationRenderer {
                      filterCache: PixelFilterCache? = nil,
                      quality: Quality = .interactive) {
         let bounds = CGRect(origin: .zero, size: document.imageSize)
-        context.draw(base, in: bounds)
+        // Flipped: the context is in top-left document space, and `draw(_:in:)` would otherwise
+        // place the picture bottom-up. See `CGContext.drawFlipped`.
+        context.drawFlipped(base, in: bounds)
 
         for element in document.drawable {
             draw(element, base: base, in: context, filterCache: filterCache, quality: quality)
         }
+    }
+
+    /// Where the screenshot sits inside its background, and how big the whole composition is.
+    ///
+    /// One function so the canvas and the export cannot disagree about it — the editor showing a
+    /// different layout from the file it produces is worse than showing no background at all.
+    static func composition(for document: AnnotationDocument)
+        -> (canvasSize: CGSize, imageRect: CGRect) {
+        let content = document.contentRect
+        guard let background = document.background else {
+            return (content.size, CGRect(origin: .zero, size: content.size))
+        }
+        let layout = BackgroundLayout.compute(imageSize: content.size, style: background)
+        return (canvasSize: layout.canvas, imageRect: layout.imageRect)
+    }
+
+    /// Draws the background, if there is one, into a top-left context of `canvasSize`.
+    static func drawBackground(_ document: AnnotationDocument,
+                               canvasSize: CGSize,
+                               imageRect: CGRect,
+                               in context: CGContext) {
+        guard let style = document.background else { return }
+        BackgroundCompositor.drawSurround(style: style,
+                                          canvas: CGRect(origin: .zero, size: canvasSize),
+                                          imageRect: imageRect,
+                                          in: context)
     }
 
     /// Flattens to a new image, honouring the crop.
@@ -136,43 +164,15 @@ enum AnnotationRenderer {
     }
 
     private static func drawArrow(_ arrow: ArrowElement, in context: CGContext) {
-        context.setStrokeColor(arrow.stroke.colour.cgColor)
+        // One filled outline rather than a stroked line plus a triangle — see `ArrowGeometry` for
+        // why that difference is the whole look of the tool.
+        let path = ArrowGeometry.path(from: arrow.start, to: arrow.end,
+                                      curvature: arrow.curvature,
+                                      head: arrow.head,
+                                      strokeWidth: arrow.stroke.width)
         context.setFillColor(arrow.stroke.colour.cgColor)
-        context.setLineWidth(arrow.stroke.width)
-        context.setLineCap(.round)
-
-        let shaft = AnnotationGeometry.quadratic(from: arrow.start, to: arrow.end,
-                                                 curvature: arrow.curvature, steps: 24)
-        context.move(to: shaft[0])
-        for point in shaft.dropFirst() { context.addLine(to: point) }
-        context.strokePath()
-
-        // The head points along the last segment, so a curved arrow's tip follows the bow rather
-        // than the straight line between its endpoints.
-        let tail = shaft.count > 1 ? shaft[shaft.count - 2] : arrow.start
-        let angle = atan2(arrow.end.y - tail.y, arrow.end.x - tail.x)
-        let length = arrow.stroke.width * 4
-        let spread = CGFloat.pi / 7
-
-        let left = CGPoint(x: arrow.end.x - cos(angle - spread) * length,
-                           y: arrow.end.y - sin(angle - spread) * length)
-        let right = CGPoint(x: arrow.end.x - cos(angle + spread) * length,
-                            y: arrow.end.y - sin(angle + spread) * length)
-
-        switch arrow.head {
-        case .filled, .curved:
-            context.move(to: arrow.end)
-            context.addLine(to: left)
-            context.addLine(to: right)
-            context.closePath()
-            context.fillPath()
-        case .open, .thin:
-            context.setLineWidth(arrow.stroke.width * (arrow.head == .thin ? 0.6 : 1))
-            context.move(to: left)
-            context.addLine(to: arrow.end)
-            context.addLine(to: right)
-            context.strokePath()
-        }
+        context.addPath(path)
+        context.fillPath()
     }
 
     private static func drawPencil(_ pencil: PencilElement, in context: CGContext) {
