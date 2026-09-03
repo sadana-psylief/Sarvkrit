@@ -206,4 +206,38 @@ final class MenuBarIconStateTests: XCTestCase {
         XCTAssertEqual(MenuBarIconState.statusLine(state: .cameraOn, remaining: nil), "Camera on")
         XCTAssertEqual(MenuBarIconState.statusLine(state: .cameraOn, remaining: 300), "Camera on")
     }
+
+    // MARK: - Sharing the one text slot
+
+    // A MenuBarExtra label renders exactly one Image and one Text. Keep Awake's countdown and the
+    // System Monitor's live readings both want that single slot, so they are composed into one
+    // string here rather than laid out as two views — which would silently render only the first.
+
+    func testBothReadingsShareTheSlotWithTheCountdownFirst() {
+        // The countdown belongs to the icon that is currently showing a cup or a bolt, so it reads
+        // first; the monitor's numbers follow.
+        XCTAssertEqual(
+            MenuBarIconState.trailingText(countdown: "5m", liveData: "CPU 16%"),
+            "5m \u{00B7} CPU 16%"
+        )
+    }
+
+    func testEitherReadingAloneStandsAlone() {
+        XCTAssertEqual(MenuBarIconState.trailingText(countdown: "5m", liveData: nil), "5m")
+        XCTAssertEqual(MenuBarIconState.trailingText(countdown: nil, liveData: "CPU 16%"), "CPU 16%")
+    }
+
+    func testNothingToShowIsNil() {
+        // Nil, not an empty string: the label omits the Text entirely rather than reserving a gap
+        // beside the icon.
+        XCTAssertNil(MenuBarIconState.trailingText(countdown: nil, liveData: nil))
+    }
+
+    func testAnEmptyReadingCountsAsAbsentRatherThanLeavingASeparator() {
+        // `menuBarLine` is an empty string whenever live data is switched off or no metrics are
+        // chosen. Checking only for nil would render "5m \u{00B7} " with a dangling separator.
+        XCTAssertEqual(MenuBarIconState.trailingText(countdown: "5m", liveData: ""), "5m")
+        XCTAssertEqual(MenuBarIconState.trailingText(countdown: "", liveData: "CPU 16%"), "CPU 16%")
+        XCTAssertNil(MenuBarIconState.trailingText(countdown: "", liveData: ""))
+    }
 }

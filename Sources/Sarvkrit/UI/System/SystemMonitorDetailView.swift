@@ -146,6 +146,10 @@ struct SystemMonitorDetailView: View {
 
     private var menuBarSection: some View {
         Section {
+            Toggle("Show live data in the menu bar", isOn: Binding(
+                get: { feature.showsLiveDataInMenuBar },
+                set: { feature.showsLiveDataInMenuBar = $0 }
+            ))
             ForEach(MetricKind.allCases) { kind in
                 if feature.enabledMetrics.contains(kind) {
                     Toggle(isOn: menuBarBinding(for: kind)) {
@@ -163,9 +167,10 @@ struct SystemMonitorDetailView: View {
             Text("Menu Bar")
         } footer: {
             Text("""
-                With none of these chosen the menu bar shows just the icon. Changing how often the \
-                monitor refreshes clears the graphs, since a graph can only show one cadence at a \
-                time.
+                The readings appear beside the Sarvkrit icon. With live data off — or with none of \
+                these chosen — the icon is left alone, and every reading is still there in the \
+                Sarvkrit menu under System. Changing how often the monitor refreshes clears the \
+                graphs, since a graph can only show one cadence at a time.
                 """)
                 .font(.caption)
                 .foregroundStyle(.secondary)

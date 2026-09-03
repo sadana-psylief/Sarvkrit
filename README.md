@@ -184,11 +184,14 @@ your Mac; if that happens, Sarvkrit tells you on next launch and offers to put i
 #### System Monitor
 
 Shows what your Mac is actually doing — **CPU**, **GPU**, **Power**, **Battery**, **Memory**,
-**Disk** and **Network** — as a compact readout in the menu bar and a full pane in the window.
+**Disk** and **Network** — in the Sarvkrit menu, with a full pane in the window.
 
 - **Each reading switches on and off on its own.** Nothing is sampled for one you've turned off.
-- **Choose which numbers appear in the menu bar.** Pick none and you get just the icon; click it to
-  see everything at once.
+- **Every reading lives under the Sarvkrit icon.** Click it and open **System** to see all seven at
+  once. System Monitor adds no menu bar icon of its own.
+- **Show live data in the menu bar** — optional, on by default. Chosen readings appear as text
+  beside the Sarvkrit icon; switch it off and the icon is left alone while the readings stay in the
+  menu. CPU alone to begin with, since that text shares the app's own icon.
 - **Refresh every 1, 2 or 5 seconds** — two by default. Changing it clears the graphs, since a
   graph can only show one cadence at a time.
 - **Two minutes of history** is kept to draw the graphs. It lives in memory only, is never written

@@ -106,6 +106,7 @@ final class SystemMonitorFeature: Feature, ObservableObject {
     private static let metricsKey = "systemMonitor.enabledMetrics"
     private static let menuBarKey = "systemMonitor.menuBarMetrics"
     private static let intervalKey = "systemMonitor.interval"
+    private static let liveDataKey = "systemMonitor.liveDataInMenuBar"
 
     /// Serial, and labelled from the bundle ID like every other worker in this app.
     private static let workQueue = DispatchQueue(label: "\(AppIdentity.bundleID).system-monitor")
@@ -140,10 +141,14 @@ final class SystemMonitorFeature: Feature, ObservableObject {
     }
 
     /// Which readings appear in the menu bar, in the order they appear. Empty means the icon alone.
+    ///
+    /// One by default. The readout shares the app's own icon rather than owning a status item, and
+    /// "5m \u{00B7} CPU 16% \u{00B7} MEM 66%" — the Keep Awake countdown plus two metrics — is a lot of menu bar
+    /// to claim beside an icon the user did not ask to grow.
     var menuBarMetrics: [MetricKind] {
         get {
             guard let stored = defaults.array(forKey: Self.menuBarKey) as? [String] else {
-                return [.cpu, .memory]
+                return [.cpu]
             }
             return stored.compactMap(MetricKind.init(rawValue:))
         }
@@ -151,6 +156,20 @@ final class SystemMonitorFeature: Feature, ObservableObject {
             guard newValue != menuBarMetrics else { return }
             objectWillChange.send()
             defaults.set(newValue.map(\.rawValue), forKey: Self.menuBarKey)
+        }
+    }
+
+    /// Whether the readings appear beside the Sarvkrit icon.
+    ///
+    /// On by default: switching the monitor on at all is already the signal that someone wants to
+    /// see it. Switching this off is purely about the menu bar — sampling continues and every
+    /// reading stays available in the Sarvkrit menu.
+    var showsLiveDataInMenuBar: Bool {
+        get { defaults.object(forKey: Self.liveDataKey) as? Bool ?? true }
+        set {
+            guard newValue != showsLiveDataInMenuBar else { return }
+            objectWillChange.send()
+            defaults.set(newValue, forKey: Self.liveDataKey)
         }
     }
 
@@ -206,6 +225,16 @@ final class SystemMonitorFeature: Feature, ObservableObject {
     @MainActor
     func makeDetailView() -> AnyView? {
         AnyView(SystemMonitorDetailView(feature: self))
+    }
+
+    /// Every reading, under the feature's own row in the Sarvkrit menu.
+    ///
+    /// This is where the readings live. The monitor deliberately adds no status item of its own —
+    /// Sarvkrit is one menu bar icon — so the dropdown is the place the full set is shown, and the
+    /// menu bar text beside the icon is only ever a summary.
+    @MainActor
+    func makeTrayView() -> AnyView? {
+        AnyView(SystemMonitorTrayView(feature: self))
     }
 
     // MARK: - Sampling
@@ -290,9 +319,13 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         reading = updated
     }
 
-    /// What the menu bar item should currently show, as the single string it can render.
+    /// What appears beside the Sarvkrit icon, as the single string the menu bar can render.
+    ///
+    /// Empty rather than nil when switched off, which `MenuBarIconState.trailingText` treats as
+    /// absent — so Keep Awake's countdown keeps the slot to itself with no dangling separator.
     var menuBarLine: String {
-        MenuBarReadout.line(for: reading.snapshot, metrics: menuBarMetrics)
+        guard showsLiveDataInMenuBar else { return "" }
+        return MenuBarReadout.line(for: reading.snapshot, metrics: menuBarMetrics)
     }
 
     // MARK: - Timer

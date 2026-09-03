@@ -82,4 +82,21 @@ enum MenuBarIconState: Equatable {
         guard let countdown = countdownText(remaining: remaining) else { return prefix }
         return "\(prefix) · \(countdown) left"
     }
+
+    /// Everything shown beside the icon, as the single string the menu bar can actually render.
+    ///
+    /// A `MenuBarExtra` label renders exactly one `Image` and one `Text` and drops anything
+    /// further without warning, so Keep Awake's countdown and the System Monitor's live readings
+    /// cannot be two views competing for the space — they are composed here instead. Laid out as
+    /// two `Text`s, only the first would ever appear.
+    ///
+    /// The countdown reads first: it belongs to the icon that is currently showing a cup or a bolt.
+    ///
+    /// Empty strings count as absent, not as content. `menuBarLine` is empty whenever live data is
+    /// switched off or no metrics are chosen, and testing only for nil would leave "5m · " with a
+    /// dangling separator.
+    static func trailingText(countdown: String?, liveData: String?) -> String? {
+        let parts = [countdown, liveData].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+    }
 }

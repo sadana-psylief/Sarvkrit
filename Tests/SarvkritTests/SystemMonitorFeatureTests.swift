@@ -180,4 +180,67 @@ final class SystemMonitorFeatureTests: XCTestCase {
             XCTAssertNotNil(sampled.power)
         }
     }
+
+    // MARK: - Live data in the menu bar
+
+    func testLiveDataInTheMenuBarIsOnByDefault() {
+        // Switching the monitor on at all is already the signal that someone wants to see it; the
+        // per-metric picker is what trims how much of it shows.
+        XCTAssertTrue(makeFeature().showsLiveDataInMenuBar)
+    }
+
+    func testTheMenuBarLineIsEmptyWhenLiveDataIsOff() {
+        // Empty rather than nil, and `MenuBarIconState.trailingText` treats it as absent — so
+        // Keep Awake's countdown keeps the slot to itself with no dangling separator.
+        let feature = makeFeature()
+        MainActor.assumeIsolated {
+            feature.apply(SystemSnapshot(cpu: CPUSample(usage: 42, coreCount: 10)))
+            XCTAssertFalse(feature.menuBarLine.isEmpty, "precondition: something to show")
+            feature.showsLiveDataInMenuBar = false
+            XCTAssertEqual(feature.menuBarLine, "")
+        }
+    }
+
+    func testSwitchingLiveDataOffDoesNotStopSampling() {
+        // The readings are still shown in the Sarvkrit menu; only the menu bar text goes away.
+        let feature = makeFeature()
+        MainActor.assumeIsolated {
+            feature.activate()
+            feature.showsLiveDataInMenuBar = false
+            XCTAssertTrue(feature.isRunning)
+            feature.apply(SystemSnapshot(cpu: CPUSample(usage: 42, coreCount: 10)))
+            XCTAssertNotNil(feature.reading.snapshot.cpu, "sampling must continue")
+            feature.deactivate()
+        }
+    }
+
+    func testTheLiveDataSettingSurvivesARestart() {
+        let defaults = UserDefaults(suiteName: "monitor.\(UUID())")!
+        SystemMonitorFeature(defaults: defaults).showsLiveDataInMenuBar = false
+        XCTAssertFalse(SystemMonitorFeature(defaults: defaults).showsLiveDataInMenuBar)
+    }
+
+    func testWritingTheSameLiveDataValueNotifiesNobody() {
+        let feature = makeFeature()
+        let current = feature.showsLiveDataInMenuBar
+        XCTAssertEqual(
+            countNotifications(from: feature) { feature.showsLiveDataInMenuBar = current }, 0)
+    }
+
+    func testOnlyOneMetricShowsInTheMenuBarByDefault() {
+        // The readout shares the app's own icon rather than owning a status item, so the default is
+        // one number. "5m \u{00B7} CPU 16% \u{00B7} MEM 66%" beside an icon nobody asked to grow is a lot of
+        // menu bar to take by default.
+        XCTAssertEqual(makeFeature().menuBarMetrics, [.cpu])
+    }
+
+    // MARK: - The readings appear in the Sarvkrit menu
+
+    func testTheFeatureSuppliesTrayContent() {
+        // `MenuBarView` renders this under the feature's row. Returning nil is how the readings
+        // would quietly vanish from the dropdown with every other test still passing.
+        MainActor.assumeIsolated {
+            XCTAssertNotNil(makeFeature().makeTrayView())
+        }
+    }
 }

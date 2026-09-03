@@ -1,68 +1,59 @@
 import SwiftUI
 
-/// The panel behind the monitor's menu bar item: every enabled reading at once.
+/// Every reading, shown under the feature's row in the Sarvkrit menu.
 ///
-/// Fixed height on purpose. A `MenuBarExtra` window is positioned once by the system and anchored
-/// under its icon, so content that changes height while open drags the panel's top edge away from
-/// the menu bar — and these rows appear and disappear as readings become available.
+/// This is where the full set lives. The monitor adds no status item of its own — Sarvkrit is one
+/// menu bar icon — so the text beside that icon is only ever a summary, and this is the place you
+/// come to see everything.
+///
+/// A sibling row type inside the caller's `SettingsModule`, like `VolumeMixerTrayView`: it supplies
+/// no padding, width or background of its own, and keeps `Theme.Metrics.rowInset` so the module's
+/// hairlines stay aligned with the toggle rows above it.
 struct SystemMonitorTrayView: View {
     @ObservedObject var feature: SystemMonitorFeature
 
-    private var metrics: [MetricKind] {
-        MetricKind.allCases.filter { feature.enabledMetrics.contains($0) }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            HStack {
-                Text("System Monitor")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Button {
-                    MainWindowController.shared.show()
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .clickableCursor()
-                .accessibilityLabel("Open System Monitor settings")
+        VStack(spacing: 0) {
+            ModuleSeparator()
+            // Every metric, always — including the ones switched off.
+            //
+            // A MenuBarExtra panel is positioned by the system once, anchored under the icon, so
+            // content that changes height while it is open drags the panel's top edge away from the
+            // menu bar. Rendering only the enabled metrics would do exactly that each time one was
+            // toggled. Seven fixed rows make the height constant, and "—" against a switched-off
+            // metric says honestly that it isn't being read rather than implying it read nothing.
+            ForEach(MetricKind.allCases) { kind in
+                row(for: kind)
             }
-            .padding(.horizontal, Theme.Space.xs)
-
-            SettingsModule {
-                ForEach(Array(metrics.enumerated()), id: \.element.id) { index, kind in
-                    if index > 0 { ModuleSeparator() }
-                    row(for: kind)
-                }
-            }
-
-            Spacer(minLength: 0)
         }
-        .padding(Theme.Space.md)
-        .frame(width: Theme.Size.dropdownWidth, height: Self.panelHeight)
     }
-
-    /// Sized for all seven readings, so the panel does not resize as metrics are switched on and
-    /// off — see the note above about anchored panels.
-    private static let panelHeight: CGFloat = 300
 
     private func row(for kind: MetricKind) -> some View {
-        HStack(spacing: Theme.Space.md) {
+        let isWatched = feature.enabledMetrics.contains(kind)
+        return HStack(spacing: Theme.Space.md) {
             Image(systemName: kind.symbolName)
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isWatched ? .secondary : .tertiary)
                 .frame(width: Theme.Metrics.iconColumn, alignment: .center)
             Text(kind.title)
                 .font(.system(size: 12))
+                .foregroundStyle(isWatched ? .primary : .tertiary)
             Spacer()
-            Text(MenuBarReadout.segments(for: feature.reading.snapshot, metrics: [kind]).first?.text
-                 ?? MetricFormatting.placeholder)
+            Text(value(for: kind, isWatched: isWatched))
                 .font(.system(size: 12, weight: .medium))
+                // The house style for a number that changes: monospaced digits, so a row doesn't
+                // twitch as its value moves.
                 .monospacedDigit()
+                .foregroundStyle(isWatched ? .primary : .tertiary)
         }
         .padding(.horizontal, Theme.Metrics.rowInset)
         .frame(height: Theme.Metrics.menuRowHeight)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func value(for kind: MetricKind, isWatched: Bool) -> String {
+        guard isWatched else { return MetricFormatting.placeholder }
+        return MenuBarReadout.segments(for: feature.reading.snapshot, metrics: [kind])
+            .first?.text ?? MetricFormatting.placeholder
     }
 }

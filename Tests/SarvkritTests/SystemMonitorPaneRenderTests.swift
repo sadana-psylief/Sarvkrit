@@ -63,4 +63,37 @@ final class SystemMonitorPaneRenderTests: XCTestCase {
         XCTAssertGreaterThan(hosted(feature).fittingSize.height, 0)
         feature.deactivate()
     }
+
+    // MARK: - The tray rows
+
+    private func hostedTray(_ feature: SystemMonitorFeature) -> NSView {
+        let view = NSHostingView(rootView: SystemMonitorTrayView(feature: feature))
+        view.frame = CGRect(x: 0, y: 0, width: Theme.Size.dropdownWidth, height: 400)
+        view.layoutSubtreeIfNeeded()
+        return view
+    }
+
+    func testTheTrayRowsAreTheSameHeightWhicheverMetricsAreWatched() {
+        // A MenuBarExtra panel is anchored under its icon once and never repositioned, so content
+        // that changes height while open drags its top edge off the menu bar. That is only
+        // observable by noticing the drift, which nobody does reliably — so it is pinned here.
+        let all = SystemMonitorFeature(defaults: UserDefaults(suiteName: "tray.\(UUID())")!)
+        let one = SystemMonitorFeature(defaults: UserDefaults(suiteName: "tray.\(UUID())")!)
+        one.enabledMetrics = [.cpu]
+
+        let allHeight = hostedTray(all).fittingSize.height
+        XCTAssertGreaterThan(allHeight, 0)
+        XCTAssertEqual(
+            hostedTray(one).fittingSize.height, allHeight,
+            "the panel must not change height as metrics are switched on and off"
+        )
+    }
+
+    func testASwitchedOffMetricStillHasARowShowingAPlaceholder() {
+        let feature = SystemMonitorFeature(defaults: UserDefaults(suiteName: "tray.\(UUID())")!)
+        feature.enabledMetrics = [.cpu]
+        // Nothing to assert about pixels; this is the layout path for the mixed enabled/disabled
+        // case, which is the one that would crash if `value(for:)` assumed a sample existed.
+        XCTAssertGreaterThan(hostedTray(feature).fittingSize.height, 0)
+    }
 }
