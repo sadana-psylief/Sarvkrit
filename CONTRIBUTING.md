@@ -29,7 +29,7 @@ have deadlocked the owner's own PRs.
 
 ## Before you open a pull request
 
-- **`make test` must pass.** There are 334 tests; new behaviour should come with some. Quit any
+- **`make test` must pass.** There are 846 tests; new behaviour should come with some. Quit any
   running copy of Sarvkrit first — the `test` target does this for you, and the comment above it in
   the `Makefile` explains why it has to.
 - **Prefer pure, testable logic** over code that can only be checked by running the app.
@@ -45,11 +45,15 @@ have deadlocked the owner's own PRs.
 
 ## About the advisory `test` job
 
-CI builds reliably but cannot run the whole suite. `SarvkritTests` is a unit-test bundle hosted
-*inside* `Sarvkrit.app`, and a good part of it touches things macOS gates behind a TCC grant a
-GitHub runner will never give: the camera, the microphone, Core Audio process taps, Accessibility.
-So the `test` job runs and reports, but nothing is gated on it, and it is expected to be red at
-times. That is why `make test` passing **locally** is on you.
+CI runs the whole suite on pull requests and gets 845 of 846 — including the parts that reach real
+hardware, which was the surprise. The one test that cannot pass on a runner is
+`CameraMonitorSmokeTests.testTheMachineReportsAtLeastOneCamera`: it asserts that the machine has a
+camera, a runner has none, and the test cannot tell that apart from the enumeration being broken —
+which is the bug it exists to catch. It is only meaningful on real hardware.
+
+So the `test` job reports but gates nothing, and it is expected to be red. Read it for *which*
+tests failed rather than for its overall colour. `make test` passing on your own Mac is still on
+you, and that run is the one that counts.
 
 ## Licence
 
