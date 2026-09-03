@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireClipboardPicker()
         wireShelf()
         wireCutPasteToasts()
+        wireScreenshots()
         reconcileKeepAwake()
 
         guard !AppState.shared.hasCompletedOnboarding else { return }
@@ -75,6 +76,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ClipboardPickerController.shared.configure(feature: clipboard)
         clipboard.showPicker = {
             MainActor.assumeIsolated { ClipboardPickerController.shared.show() }
+        }
+    }
+
+    /// Fullscreen capture, wired the same way — the feature knows nothing about toasts or windows.
+    ///
+    /// The capture itself is async because ScreenCaptureKit is; the hotkey fires on the main
+    /// thread and hands off to a Task rather than blocking it, since a capture of a large display
+    /// takes long enough to be felt as a stutter if it ran inline.
+    private func wireScreenshots() {
+        guard let screenshots = AppState.shared.features
+            .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+
+        screenshots.captureFullscreen = {
+            Task { @MainActor in
+                await Self.captureFullscreen(using: screenshots.capturer)
+            }
+        }
+    }
+
+    @MainActor
+    private static func captureFullscreen(using capturer: ScreenCapturing) async {
+        do {
+            let frames = try await capturer.snapshotAllDisplays(options: CaptureOptions())
+            // The display the pointer is on, not the first one — on a multi-display Mac the first
+            // is whichever has the menu bar, which is rarely the one being looked at.
+            let pointer = NSEvent.mouseLocation
+            let frame = frames.first { $0.geometry.frame.contains(pointer) } ?? frames.first
+            guard let frame else { throw CaptureError.noDisplays }
+
+            CaptureWriter.copyToPasteboard(frame.image)
+            ToastPresenter.shared.show("Screenshot copied", symbolName: "camera.viewfinder")
+        } catch {
+            // A denied grant arrives here as `noDisplays`, not as a permission error — there is no
+            // permission error to catch. If the preflight disagrees, the grant landed after launch
+            // and only a relaunch can pick it up.
+            let stale = ScreenRecordingRelaunch.looksLikeStaleGrant(
+                preflightGranted: AppState.shared.permissions.canCaptureScreen,
+                capturedDisplayCount: 0)
+            ToastPresenter.shared.show(
+                stale ? "Restart Sarvkrit to finish enabling screenshots" : "Couldn't take a screenshot",
+                symbolName: "exclamationmark.triangle")
         }
     }
 

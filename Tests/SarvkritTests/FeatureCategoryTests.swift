@@ -35,6 +35,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["window-management"], .windows)
         XCTAssertEqual(byID["file-rules"], .files)
         XCTAssertEqual(byID["shelf"], .files)
+        XCTAssertEqual(byID["screenshot"], .capture)
         XCTAssertEqual(byID["audio-switcher"], .sound)
         XCTAssertEqual(byID["mute-microphone"], .sound)
         XCTAssertEqual(byID["music-blocker"], .sound)

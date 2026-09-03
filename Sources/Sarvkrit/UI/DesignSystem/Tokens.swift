@@ -47,9 +47,12 @@ enum Theme {
         ///
         /// 320 held six tabs at 42.7pt, narrow enough that "Clipboard" shrank to fit — which is why
         /// it went to 360 (49.3pt each). A seventh tab for Sound would have put it back to 41.1pt,
-        /// *worse* than the state that prompted the first widening, so it goes to 420: seven tabs at
+        /// *worse* than the state that prompted the first widening, so it went to 420: seven tabs at
         /// 49.7pt, holding the size that was already known to work.
-        static let dropdownWidth: CGFloat = 420
+        ///
+        /// An eighth tab for Capture at 420 gives 42.5pt — back under the 42.7pt that started all
+        /// this — so it goes to 480: eight tabs at 50.0pt, still the size that works.
+        static let dropdownWidth: CGFloat = 480
         static let iconTile: CGFloat = 28
         static let windowMin = CGSize(width: 680, height: 440)
         static let windowDefault = CGSize(width: 720, height: 480)

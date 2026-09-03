@@ -18,6 +18,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
     case keyboard
     case clipboard
     case windows
+    case capture
     case files
     case sound
     case system
@@ -29,6 +30,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
         case .keyboard: return "Keyboard"
         case .clipboard: return "Clipboard"
         case .windows: return "Windows"
+        case .capture: return "Capture"
         case .files: return "Files"
         case .sound: return "Sound"
         case .system: return "System"
@@ -40,6 +42,7 @@ enum FeatureCategory: String, CaseIterable, Identifiable {
         case .keyboard: return "keyboard"
         case .clipboard: return "doc.on.clipboard"
         case .windows: return "macwindow"
+        case .capture: return "camera.viewfinder"
         case .files: return "folder"
         case .sound: return "speaker.wave.2"
         case .system: return "gearshape.2"
