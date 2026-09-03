@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -22,6 +23,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !AppState.shared.hasCompletedOnboarding else { return }
         MainWindowController.shared.show()
     }
+
+    /// The `sarvkrit://` URL scheme.
+    ///
+    /// On the delegate rather than as SwiftUI's `.onOpenURL`, which needs a window scene to
+    /// attach to — this app has no window most of the time, and a scheme that only works while
+    /// Settings happens to be open is worse than none.
+    ///
+    /// `open sarvkrit://…` against a running copy arrives here as an Apple Event, so
+    /// `LSMultipleInstancesProhibited` is not in the way.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard let command = CaptureURLCommand.parse(url) else {
+                Self.urlLog.error("ignored \(url.absoluteString, privacy: .public)")
+                continue
+            }
+            Self.urlLog.info("\(command.name, privacy: .public) via URL")
+            switch command {
+            case .cancel:
+                CaptureOverlayGuard.shared.dismissEverything()
+            case .action(let action):
+                guard let screenshots = AppState.shared.features
+                    .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+                screenshots.perform(action)
+            }
+        }
+    }
+
+    private static let urlLog = Logger(subsystem: AppIdentity.logSubsystem, category: "URLScheme")
+    private static let captureLog = Logger(subsystem: AppIdentity.logSubsystem, category: "Capture")
 
     /// Launching Sarvkrit while it's already running has to do *something* visible —
     /// especially when the menu bar icon is hidden, since re-launching is then the only way
@@ -244,6 +274,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let result else { return }
             deliver(result, mode: mode, with: feature)
         } catch {
+            // Logged as well as shown. A toast tells the user something went wrong; only this says
+            // *what*, and "the screenshot shortcut does nothing" is unanswerable without it.
+            captureLog.error("capture \(String(describing: mode), privacy: .public) failed: \(String(describing: error), privacy: .public)")
             reportFailure()
         }
     }

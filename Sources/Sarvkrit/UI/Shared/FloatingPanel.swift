@@ -40,8 +40,14 @@ class FloatingPanel: NSPanel {
         if style.isResizable { mask.insert(.resizable) }
         super.init(contentRect: contentRect, styleMask: mask, backing: .buffered, defer: false)
 
-        level = style.level
+        // **Order matters, and getting it wrong is silent.** `isFloatingPanel = true` assigns
+        // `.floating` (level 3) as a side effect, so setting the level first means the level is
+        // thrown away. The capture overlay asks for the shielding level precisely so it covers the
+        // menu bar; at 3 the menu bar stays live above a frozen screen — which is what was
+        // happening, and it took listing the real window's `kCGWindowLayer` to see it, because a
+        // frozen overlay showing the screen it just photographed looks correct either way.
         isFloatingPanel = true
+        level = style.level
         hidesOnDeactivate = false
         isOpaque = false
         backgroundColor = .clear

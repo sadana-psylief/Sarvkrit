@@ -61,6 +61,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
                  mode: SelectionMode = .area,
                  completion: @escaping (CGImage?, DisplaySnapshotGeometry?, CGRect?) -> Void) {
         dismiss()
+        log.info("present \(capturedFrames.count, privacy: .public) frame(s)")
         guard !capturedFrames.isEmpty else { completion(nil, nil, nil); return }
 
         self.completion = completion

@@ -301,6 +301,9 @@ final class ScreenshotFeature: Feature, ObservableObject {
 
             if status == noErr {
                 hotkeys.append(hotkey)
+                // The successes are logged too, not only the refusals: "did this combination
+                // actually get claimed on this Mac" is otherwise unanswerable without a debugger.
+                log.info("registered \(action.rawValue, privacy: .public) keyCode \(shortcut.keyCode, privacy: .public)")
             } else {
                 // Not fatal: another app holding a combination is ordinary. Recorded so the
                 // settings pane can say so, rather than offering a shortcut that does nothing.
@@ -313,6 +316,16 @@ final class ScreenshotFeature: Feature, ObservableObject {
 
     /// Actions whose registration was refused, so settings can report it honestly.
     private(set) var failedRegistrations: Set<ScreenshotAction> = []
+
+    /// Runs an action, whatever asked for it.
+    ///
+    /// The hotkeys and the `sarvkrit://` URL scheme both come through here, so a mode cannot end
+    /// up reachable by one and not the other — which is exactly what happens when a URL handler
+    /// grows its own copy of the switch.
+    func perform(_ action: ScreenshotAction) {
+        log.info("perform \(action.rawValue, privacy: .public)")
+        handler(for: action)?()
+    }
 
     private func handler(for action: ScreenshotAction) -> (() -> Void)? {
         switch action {

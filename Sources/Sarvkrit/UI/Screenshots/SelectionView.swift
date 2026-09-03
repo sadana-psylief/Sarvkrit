@@ -23,8 +23,12 @@ enum SelectionMode: Equatable {
 /// `CGImage` directly rather than through an `Image`. It is the same "drop to AppKit and say why"
 /// move `ShelfDragSource` and `ShortcutRecorderView` already make.
 ///
-/// The frozen bitmap is the view's backing layer contents, so scrolling it around costs nothing —
-/// only the selection chrome is ever redrawn.
+/// **One method draws everything: the frozen bitmap first, then the chrome over it.** The bitmap
+/// was the backing layer's `contents` at one point, which reads like a free blit and silently
+/// discards every pixel `draw(_:)` produces — a layer-backed view's drawing *is* its layer
+/// contents. The overlay came up showing a flawless frozen screen and no crosshair, loupe, dim,
+/// border or readout, and every offscreen test stayed green because those call `draw(_:)`
+/// directly. Keeping one path means what the tests render is what the screen shows.
 final class SelectionView: NSView {
     weak var delegate: SelectionViewDelegate?
 
@@ -64,10 +68,6 @@ final class SelectionView: NSView {
         self.gesture = SelectionGesture(display: display)
         super.init(frame: NSRect(origin: .zero, size: display.frame.size))
         wantsLayer = true
-        // The bitmap as layer contents: a straight blit the compositor handles, rather than an
-        // NSImageView that would resample it on every layout pass.
-        layer?.contents = frozenImage
-        layer?.contentsGravity = .resize
     }
 
     @available(*, unavailable)
@@ -288,7 +288,21 @@ final class SelectionView: NSView {
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
+
         guard let context = NSGraphicsContext.current?.cgContext else { return }
+
+        // **The frozen bitmap is drawn here, not assigned to `layer.contents`.**
+        // It used to be the layer's contents, which looks like a free blit and is in fact fatal:
+        // a layer-backed view's `draw(_:)` output *is* its layer contents, so the image replaced
+        // every pixel this method draws. The overlay came up showing a perfect frozen screen and
+        // no crosshair, no loupe, no dim, no selection border and no readout — the whole selection
+        // UI, invisible, while rendering correctly in every offscreen test because those call
+        // `draw(_:)` directly. Nothing about the running app looked broken enough to point here.
+        if let frozenImage {
+            // The view is not flipped, so a plain draw lands the image the right way up. The
+            // flipped case is `CGContext.drawFlipped`, and using it here would invert the screen.
+            context.draw(frozenImage, in: bounds)
+        }
         let selection: CGRect?
         if case .window = mode {
             selection = hoveredWindow.map { viewRect($0.frame) }
