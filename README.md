@@ -1,6 +1,6 @@
 # Sarvkrit
 
-A macOS menu bar app for the small things macOS does differently than you'd expect.
+The things macOS does differently than you'd expect — fixed. A menu bar app.
 
 Sixteen features, each an independent toggle you can turn on or off at any time. Nothing runs unless
 you switch it on, and turning something off stops it immediately.

@@ -15,7 +15,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     Text("Welcome to Sarvkrit")
                         .font(.title2.weight(.semibold))
-                    Text("Small fixes for the things macOS does differently than you'd expect. Turn each one on or off whenever you like.")
+                    Text("The things macOS does differently than you'd expect — fixed. Turn each one on or off whenever you like.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
