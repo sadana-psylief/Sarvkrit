@@ -71,6 +71,17 @@ final class EditorChromeSnapshotTests: XCTestCase {
         }
     }
 
+    /// The automation list, which is only useful if the URLs in it are readable.
+    func testTheAutomationSectionRenders() throws {
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let rep = try snapshot(Form { CaptureAutomationSection() }.formStyle(.grouped),
+                                   size: CGSize(width: 620, height: 520),
+                                   appearance: appearance)
+            XCTAssertGreaterThan(rep.pixelsWide, 0)
+            try write(rep, named: "automation-\(appearance.rawValue)")
+        }
+    }
+
     private func write(_ rep: NSBitmapImageRep, named name: String) throws {
         guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"]
         else { return }

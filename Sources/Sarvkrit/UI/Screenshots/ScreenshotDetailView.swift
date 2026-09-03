@@ -206,6 +206,7 @@ struct ScreenshotDetailView: View {
             }
 
             CaptureShortcutsSection(feature: feature, shortcuts: feature.shortcuts)
+            CaptureAutomationSection()
 
             Section {
                 Button("Browse Captures…") {
