@@ -61,11 +61,20 @@ enum Requirement: Hashable, CaseIterable {
     /// needing this can't be gated up front the way the tap features are; it has to notice
     /// afterwards that it heard nothing. See `VolumeMixerFeature`.
     case audioCapture
+    /// Reading what is on the display. Queryable like Accessibility, but with one difference that
+    /// shapes the whole UI around it: **macOS does not hand a new grant to a running process.**
+    /// Accessibility flips live and `AppState.sync()` retries activation, so granting it works
+    /// without a relaunch. Screen Recording does not — `CGRequestScreenCaptureAccess()` returns
+    /// false, adds the app to the list, and this process keeps getting denied results until it is
+    /// restarted. Denial isn't an error either: ScreenCaptureKit simply reports no displays. See
+    /// `ScreenRecordingRelaunch`.
+    case screenRecording
 
     var title: String {
         switch self {
         case .accessibility: return "Accessibility access"
         case .audioCapture: return "System audio recording"
+        case .screenRecording: return "Screen Recording access"
         }
     }
 
@@ -77,13 +86,27 @@ enum Requirement: Hashable, CaseIterable {
         case .audioCapture:
             return "Setting an app's volume means routing its audio through Sarvkrit, which macOS "
                  + "treats as recording it."
+        case .screenRecording:
+            return "Taking a screenshot means reading what's on your display, which macOS classes "
+                 + "as recording the screen."
         }
     }
 
     /// Whether the app can tell for itself if this has been granted.
     ///
     /// False for audio: there is no query, so the only evidence is silence where sound should be.
-    var isQueryable: Bool { self == .accessibility }
+    var isQueryable: Bool {
+        switch self {
+        case .accessibility, .screenRecording: return true
+        case .audioCapture: return false
+        }
+    }
+
+    /// Declaration order, so a `Set<Requirement>` can be rendered in a stable order.
+    ///
+    /// `AppState.unmetRequirements` is a `Set`, and a `Set`'s iteration order is not stable between
+    /// launches — without this, two missing grants would swap places in the dropdown at random.
+    var sortOrder: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 
     var settingsURL: URL {
         switch self {
@@ -93,6 +116,9 @@ enum Requirement: Hashable, CaseIterable {
         case .audioCapture:
             return URL(string:
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")!
+        case .screenRecording:
+            return URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
         }
     }
 }

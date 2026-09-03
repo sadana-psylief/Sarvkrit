@@ -69,6 +69,12 @@ struct MainWindowView: View {
 
     /// Onboarding isn't a modal gate — it's just the first thing selected when there's
     /// nothing granted yet, so the user can navigate away and come back.
+    ///
+    /// **Accessibility only, deliberately.** The obvious change once a second queryable grant
+    /// exists is to add `|| !permissions.canCaptureScreen` here — don't. Accessibility gates most
+    /// of the app, so its absence really is the first thing to deal with; Screen Recording gates
+    /// one category, and letting it hijack the window into onboarding would ambush someone who
+    /// opened Settings to change a clipboard option. The per-feature banner already covers it.
     private var showOnboarding: Bool {
         !app.hasCompletedOnboarding || !app.permissions.isTrusted
     }

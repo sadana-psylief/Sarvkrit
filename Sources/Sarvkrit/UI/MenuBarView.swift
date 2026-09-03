@@ -20,9 +20,13 @@ struct MenuBarView: View {
             // Above the tabs on purpose: this reports an app-level condition, and burying it inside
             // one tab would mean the user can't see why a feature isn't working unless they happen
             // to be looking at the right one.
-            if app.needsAccessibility {
-                PermissionBanner { app.permissions.openSystemSettings() }
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            // One banner per missing grant, in a stable order: two features can be blocked by two
+            // different permissions at once, and a single banner would have to pick one to lie about.
+            ForEach(app.unmetRequirementsInOrder, id: \.self) { requirement in
+                PermissionBanner(requirement: requirement) {
+                    app.permissions.openSystemSettings(for: requirement)
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             TrayTabBar(tabs: app.trayTabs, selection: $selection)
@@ -56,7 +60,7 @@ struct MenuBarView: View {
         // centres the smaller content inside it. `MenuBarWindowAnchor` now does that resize, on
         // every height change including each frame of an animated one.
         .standardMotion(value: selection)
-        .standardMotion(value: app.needsAccessibility)
+        .standardMotion(value: app.unmetRequirementsInOrder)
         .onAppear {
             selection = TrayTab.resolve(storedID: app.selectedTrayTabID, available: app.trayTabs)
         }
