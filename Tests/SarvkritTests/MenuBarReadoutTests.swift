@@ -55,11 +55,36 @@ final class MenuBarReadoutTests: XCTestCase {
             MenuBarReadout.segments(for: busy, metrics: [.network]).first?.text, "3.1 MB/s")
     }
 
-    func testEverySegmentCarriesADistinctSymbol() {
-        // The symbol is what makes an unlabelled number identifiable at a glance; two metrics
-        // sharing one would make the readout ambiguous.
+    func testEverySegmentCarriesADistinctLabel() {
+        // The label is what makes a bare number identifiable at a glance. It is text rather than
+        // an SF Symbol for a platform reason recorded in MenuBarReadout: a MenuBarExtra label
+        // renders exactly one Image and one Text, so per-segment icons cannot appear there at all.
         let segments = MenuBarReadout.segments(for: busy, metrics: MetricKind.allCases)
-        XCTAssertEqual(Set(segments.map(\.symbolName)).count, segments.count)
+        XCTAssertEqual(Set(segments.map(\.label)).count, segments.count)
+    }
+
+    // MARK: - The rendered line
+
+    func testTheLineLabelsEveryReading() {
+        // Pinned as a whole string because this is literally what appears in the menu bar, and
+        // "66% · 12%" with no labels leaves the user guessing which number is which.
+        XCTAssertEqual(MenuBarReadout.line(for: busy, metrics: [.cpu, .memory]), "CPU 42% · MEM 57%")
+    }
+
+    func testTheLineFollowsTheChosenOrder() {
+        XCTAssertEqual(MenuBarReadout.line(for: busy, metrics: [.memory, .cpu]), "MEM 57% · CPU 42%")
+    }
+
+    func testTheLineIsEmptyWhenNoMetricsAreChosen() {
+        // The label then renders the icon alone, with no stray separator.
+        XCTAssertEqual(MenuBarReadout.line(for: busy, metrics: []), "")
+    }
+
+    func testTheLineKeepsPlaceholdersSoTheWidthDoesNotJump() {
+        XCTAssertEqual(
+            MenuBarReadout.line(for: SystemSnapshot(), metrics: [.cpu, .network]),
+            "CPU — · NET —"
+        )
     }
 
     // MARK: - Missing readings

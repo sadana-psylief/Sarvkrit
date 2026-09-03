@@ -290,9 +290,9 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         reading = updated
     }
 
-    /// What the menu bar item should currently show.
-    var menuBarSegments: [MenuBarReadout.Segment] {
-        MenuBarReadout.segments(for: reading.snapshot, metrics: menuBarMetrics)
+    /// What the menu bar item should currently show, as the single string it can render.
+    var menuBarLine: String {
+        MenuBarReadout.line(for: reading.snapshot, metrics: menuBarMetrics)
     }
 
     // MARK: - Timer

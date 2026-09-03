@@ -1,4 +1,3 @@
-import Charts
 import SwiftUI
 
 /// The System Monitor pane.
@@ -76,29 +75,11 @@ struct SystemMonitorDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func sparkline(for kind: MetricKind) -> some View {
-        let window = feature.reading.history[kind] ?? MetricHistory()
-        Chart {
-            ForEach(Array(window.samples.enumerated()), id: \.offset) { index, sample in
-                // `if let` rather than a zero: a gap in the data must read as a break in the line,
-                // not as a dip to idle.
-                if let sample {
-                    AreaMark(x: .value("Sample", index), y: .value("Value", sample))
-                        .foregroundStyle(Color.accentColor.opacity(0.22))
-                    LineMark(x: .value("Sample", index), y: .value("Value", sample))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-        }
-        .chartXAxis(.hidden)
-        .chartYAxis(.hidden)
-        // Fixed to the window's capacity so the line grows in from the left as history fills,
-        // rather than stretching two samples across the whole width.
-        .chartXScale(domain: 0...Double(max(1, window.capacity - 1)))
-        .chartYScale(domain: 0...ceiling(for: kind))
-        .frame(width: 110, height: 24)
-        .accessibilityHidden(true)
+    private func sparkline(for kind: MetricKind) -> MetricSparkline {
+        MetricSparkline(
+            window: feature.reading.history[kind] ?? MetricHistory(),
+            ceiling: ceiling(for: kind)
+        )
     }
 
     private func value(for kind: MetricKind) -> String {

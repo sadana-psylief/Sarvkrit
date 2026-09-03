@@ -12,12 +12,26 @@ import Foundation
 /// **A missing reading keeps its place.** Every rate is briefly unavailable after a wake, by
 /// design; dropping the segment would reflow the whole menu bar each time, shoving every item to
 /// its right. A placeholder holds the slot instead.
+///
+/// **Readings are labelled with text, not icons.** A `MenuBarExtra` label renders exactly one
+/// `Image` and one `Text`, and silently drops anything further — an `HStack` of per-segment
+/// symbols renders only its first child, and inline images inside a concatenated `Text` do not
+/// render at all. Both were tried against the real menu bar. So `line(for:metrics:)` returns a
+/// single string, and it is that string the tests pin: it is literally what the user reads.
 enum MenuBarReadout {
     struct Segment: Equatable, Identifiable {
-        let symbolName: String
+        /// Short code — "CPU", "MEM" — because the menu bar cannot show a per-segment icon.
+        let label: String
         let text: String
 
-        var id: String { symbolName }
+        var id: String { label }
+    }
+
+    /// The whole readout as one string, which is what the menu bar item can actually render.
+    static func line(for snapshot: SystemSnapshot, metrics: [MetricKind]) -> String {
+        segments(for: snapshot, metrics: metrics)
+            .map { "\($0.label) \($0.text)" }
+            .joined(separator: " \u{00B7} ")
     }
 
     static func segments(for snapshot: SystemSnapshot, metrics: [MetricKind]) -> [Segment] {
@@ -25,7 +39,7 @@ enum MenuBarReadout {
         return metrics.compactMap { kind in
             // A duplicate in the persisted list would put the same number in the menu bar twice.
             guard seen.insert(kind).inserted else { return nil }
-            return Segment(symbolName: kind.symbolName, text: text(for: kind, in: snapshot))
+            return Segment(label: kind.menuBarLabel, text: text(for: kind, in: snapshot))
         }
     }
 

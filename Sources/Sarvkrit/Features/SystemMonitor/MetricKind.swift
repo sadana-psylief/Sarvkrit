@@ -28,6 +28,24 @@ enum MetricKind: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// The short code used in the menu bar.
+    ///
+    /// Text, not an SF Symbol, and not by preference: a `MenuBarExtra` label renders exactly one
+    /// `Image` and one `Text` and silently drops everything else — inline images inside a
+    /// concatenated `Text` included — so a per-segment icon cannot appear there at all. Three
+    /// letters is what makes a bare "66% · 12%" say which number is which.
+    var menuBarLabel: String {
+        switch self {
+        case .cpu: return "CPU"
+        case .gpu: return "GPU"
+        case .power: return "PWR"
+        case .battery: return "BAT"
+        case .memory: return "MEM"
+        case .disk: return "DSK"
+        case .network: return "NET"
+        }
+    }
+
     /// Template SF Symbols throughout: a coloured glyph would opt out of inverting on light and
     /// dark menu bars and of dimming when the menu bar is inactive.
     var symbolName: String {
