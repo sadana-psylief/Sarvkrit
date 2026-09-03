@@ -64,3 +64,104 @@ final class CaptureURLCommandTests: XCTestCase {
         XCTAssertEqual(Set(names).count, names.count, "two commands share a name: \(names)")
     }
 }
+
+/// `capture-area` with coordinates: take this rect now, no overlay.
+final class CaptureURLRectTests: XCTestCase {
+
+    private func parse(_ string: String) -> CaptureURLCommand? {
+        URL(string: string).flatMap(CaptureURLCommand.parse)
+    }
+
+    func testAllFourCoordinatesMeanCaptureItNow() {
+        let command = parse("sarvkrit://capture-area?x=100&y=200&width=300&height=400")
+        XCTAssertEqual(command, .captureRect(CGRect(x: 100, y: 200, width: 300, height: 400),
+                                             displayID: nil))
+    }
+
+    func testAPartialRectOpensTheOverlayInstead() {
+        // Three of four is a script with a bug in it. Guessing the fourth would silently capture
+        // the wrong thing; falling back to the overlay lets the person see what is happening.
+        XCTAssertEqual(parse("sarvkrit://capture-area?x=100&y=200&width=300"), .action(.area))
+        XCTAssertEqual(parse("sarvkrit://capture-area?width=300&height=400"), .action(.area))
+        XCTAssertEqual(parse("sarvkrit://capture-area"), .action(.area))
+    }
+
+    func testAnEmptyRectIsRefused() {
+        XCTAssertEqual(parse("sarvkrit://capture-area?x=0&y=0&width=0&height=400"), .action(.area))
+        XCTAssertEqual(parse("sarvkrit://capture-area?x=0&y=0&width=-5&height=400"), .action(.area))
+    }
+
+    func testADisplayCanBeNamed() {
+        XCTAssertEqual(parse("sarvkrit://capture-area?x=1&y=2&width=3&height=4&display=7"),
+                       .captureRect(CGRect(x: 1, y: 2, width: 3, height: 4), displayID: 7))
+    }
+
+    func testCoordinatesOnlyApplyToCaptureArea() {
+        // A window capture with an x and a y is meaningless, and honouring it would turn one mode
+        // into another without saying so.
+        XCTAssertEqual(parse("sarvkrit://capture-window?x=1&y=2&width=3&height=4"),
+                       .action(.window))
+    }
+
+    func testTheRectFormStillNamesItselfCaptureArea() {
+        XCTAssertEqual(CaptureURLCommand.captureRect(.zero, displayID: nil).name, "capture-area")
+    }
+}
+
+/// The crop a script's rect produces is the crop a drag produces.
+final class CaptureRectSessionTests: XCTestCase {
+
+    private func display(scale: CGFloat, origin: CGPoint = .zero) -> DisplaySnapshotGeometry {
+        DisplaySnapshotGeometry(
+            displayID: 1,
+            frame: CGRect(origin: origin, size: CGSize(width: 400, height: 300)),
+            scale: scale,
+            pixelSize: CGSize(width: 400 * scale, height: 300 * scale))
+    }
+
+    private func capturer(_ geometry: DisplaySnapshotGeometry) -> StubScreenCaptureService {
+        StubScreenCaptureService(displays: [geometry])
+    }
+
+    func testARectComesBackAtTheDisplaysOwnScale() async throws {
+        let geometry = display(scale: 2)
+        let result = try await CaptureSession.captureRect(
+            CGRect(x: 50, y: 40, width: 120, height: 90),
+            using: capturer(geometry), options: CaptureOptions())
+        let image = try XCTUnwrap(result?.image)
+        XCTAssertEqual(image.width, 240)
+        XCTAssertEqual(image.height, 180)
+    }
+
+    func testARectIsClampedToTheDisplayRatherThanFailing() async throws {
+        let geometry = display(scale: 2)
+        let result = try await CaptureSession.captureRect(
+            CGRect(x: 350, y: 250, width: 200, height: 200),
+            using: capturer(geometry), options: CaptureOptions())
+        let image = try XCTUnwrap(result?.image)
+        XCTAssertEqual(image.width, 100, "clamped to the 50pt that is actually there")
+        XCTAssertEqual(image.height, 100)
+    }
+
+    func testARectEntirelyOffTheDisplayCapturesNothing() async throws {
+        let geometry = display(scale: 2)
+        let result = try await CaptureSession.captureRect(
+            CGRect(x: 900, y: 900, width: 100, height: 100),
+            using: capturer(geometry), options: CaptureOptions())
+        XCTAssertNil(result, "better nothing than a screenshot of somewhere else")
+    }
+
+    func testItAgreesWithWhatADragOfTheSameRectWouldProduce() async throws {
+        // The point of sharing `CaptureGeometry.pixelRect`: two aiming methods, one crop.
+        let geometry = display(scale: 2, origin: CGPoint(x: -400, y: 0))
+        let rect = CGRect(x: -300, y: 60, width: 160, height: 120)
+        let result = try await CaptureSession.captureRect(
+            rect, using: capturer(geometry), options: CaptureOptions())
+        let image = try XCTUnwrap(result?.image)
+
+        let expected = CaptureGeometry.pixelRect(forGlobalRect: rect, in: geometry).integral
+        XCTAssertEqual(CGFloat(image.width), expected.width)
+        XCTAssertEqual(CGFloat(image.height), expected.height)
+        XCTAssertEqual(result?.sourceRect, rect)
+    }
+}

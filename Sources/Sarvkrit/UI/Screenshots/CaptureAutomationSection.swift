@@ -53,6 +53,7 @@ struct CaptureAutomationSection: View {
     private func title(for command: CaptureURLCommand) -> String {
         switch command {
         case .cancel: return "Dismiss Everything"
+        case .captureRect: return "Capture Area"
         case .action(let action): return action.title
         }
     }

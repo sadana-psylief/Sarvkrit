@@ -46,6 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let screenshots = AppState.shared.features
                     .compactMap({ $0 as? ScreenshotFeature }).first else { return }
                 screenshots.perform(action)
+            case .captureRect(let rect, let displayID):
+                guard let screenshots = AppState.shared.features
+                    .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+                Task { @MainActor in
+                    await Self.captureRect(rect, displayID: displayID, with: screenshots)
+                }
             }
         }
     }
@@ -353,6 +359,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
+    /// A rect handed over by a script: capture it and deliver it like any other capture.
+    private static func captureRect(_ rect: CGRect, displayID: CGDirectDisplayID?,
+                                    with feature: ScreenshotFeature) async {
+        do {
+            guard let result = try await CaptureSession.captureRect(
+                rect, displayID: displayID, using: feature.capturer,
+                options: feature.captureOptions) else { return }
+            // `.area`, because that is what it is — the same destination rules, the same history
+            // entry, the same overlay afterwards. Only the aiming was different.
+            deliver(result, mode: .area, with: feature)
+        } catch {
+            captureLog.error("capture rect failed: \(String(describing: error), privacy: .public)")
+            reportFailure()
+        }
+    }
+
     private static func reportFailure() {
         // A denied grant arrives as `noDisplays`, not as a permission error — there is no
         // permission error to catch. If the preflight disagrees, the grant landed after launch and

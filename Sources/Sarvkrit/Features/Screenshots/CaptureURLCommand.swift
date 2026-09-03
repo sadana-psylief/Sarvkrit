@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// The `sarvkrit://` URL scheme: every capture mode, reachable from a script.
@@ -15,6 +16,9 @@ import Foundation
 /// defaulting to something — a typo in a script must do nothing, not silently take a screenshot.
 enum CaptureURLCommand: Equatable {
     case action(ScreenshotAction)
+    /// `capture-area` with all four coordinates: take this rect now, no overlay. Global AppKit
+    /// points, bottom-left origin — the same space every other rect in this feature uses.
+    case captureRect(CGRect, displayID: CGDirectDisplayID?)
     /// Puts every overlay, panel, countdown and pinned window away. See `CaptureOverlayGuard`.
     case cancel
 
@@ -24,6 +28,7 @@ enum CaptureURLCommand: Equatable {
     var name: String {
         switch self {
         case .cancel: return "cancel"
+        case .captureRect: return "capture-area"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -42,8 +47,32 @@ enum CaptureURLCommand: Equatable {
     ]
 
     /// Every command, for documentation and for the test that proves none is unreachable.
+    ///
+    /// `captureRect` is not listed: it is `capture-area` with parameters, not a separate command,
+    /// and a settings row offering a URL with somebody else's coordinates in it would be noise.
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) } + [.cancel]
+    }
+
+    private static func rect(from url: URL) -> CGRect? {
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        else { return nil }
+        func number(_ name: String) -> CGFloat? {
+            guard let raw = items.first(where: { $0.name.lowercased() == name })?.value,
+                  let value = Double(raw) else { return nil }
+            return CGFloat(value)
+        }
+        guard let x = number("x"), let y = number("y"),
+              let width = number("width"), let height = number("height"),
+              width > 0, height > 0
+        else { return nil }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private static func displayID(from url: URL) -> CGDirectDisplayID? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first { $0.name.lowercased() == "display" }?
+            .value.flatMap { UInt32($0) }
     }
 
     static func parse(_ url: URL) -> CaptureURLCommand? {
@@ -57,7 +86,14 @@ enum CaptureURLCommand: Equatable {
         guard !name.isEmpty else { return nil }
 
         if name == "cancel" { return .cancel }
-        if let match = names.first(where: { $0.value == name })?.key { return .action(match) }
+        if let match = names.first(where: { $0.value == name })?.key {
+            // All four or none. Three of them is a script with a bug in it, and guessing the
+            // fourth would take a screenshot of the wrong thing rather than saying so.
+            if match == .area, let rect = rect(from: url) {
+                return .captureRect(rect, displayID: displayID(from: url))
+            }
+            return .action(match)
+        }
         // The action's own raw value as a fallback, so `sarvkrit://area` works too.
         if let action = ScreenshotAction(rawValue: raw) { return .action(action) }
         return nil

@@ -40,6 +40,40 @@ enum CaptureSession {
         }
     }
 
+    /// Captures a rect given up front, with no overlay at all.
+    ///
+    /// What `sarvkrit://capture-area?x=…&y=…&width=…&height=…` runs, and the reference has the
+    /// same parameters. A script that already knows where to look should not have to put a
+    /// full-screen overlay in front of somebody to say so.
+    ///
+    /// **Deliberately the same crop a drag produces** — `CaptureGeometry.pixelRect` against the
+    /// display's own geometry — rather than a second path that could disagree with it about
+    /// scale or about which way `y` runs.
+    ///
+    /// - Parameter rect: global AppKit points, bottom-left origin, like every other rect here.
+    static func captureRect(_ rect: CGRect, displayID: CGDirectDisplayID? = nil,
+                            using capturer: ScreenCapturing,
+                            options: CaptureOptions) async throws -> Result? {
+        let frames = try await capturer.snapshotAllDisplays(options: options)
+        guard !frames.isEmpty else { throw CaptureError.noDisplays }
+
+        let frame: DisplayFrame?
+        if let displayID {
+            frame = frames.first { $0.geometry.displayID == displayID }
+        } else {
+            // The display the rect starts on, so a rect straddling two crops from one bitmap with
+            // one scale — the same rule area selection follows.
+            frame = frames.first { $0.geometry.frame.intersects(rect) } ?? frames.first
+        }
+        guard let frame else { throw CaptureError.noDisplays }
+
+        let clamped = CaptureGeometry.clamp(rect, to: frame.geometry)
+        guard clamped.width >= 1, clamped.height >= 1 else { return nil }
+        let pixels = CaptureGeometry.pixelRect(forGlobalRect: clamped, in: frame.geometry)
+        guard let cropped = frame.image.cropping(to: pixels.integral) else { return nil }
+        return Result(image: cropped, sourceRect: clamped, display: frame.geometry)
+    }
+
     /// Freeze, let the user pick a window, then take a fresh capture of it.
     ///
     /// The second capture is not redundant. The frozen desktop has the window composited onto
