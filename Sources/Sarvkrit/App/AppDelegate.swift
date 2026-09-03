@@ -146,6 +146,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // The editor half. Until this is wired the Annotate button is hidden rather than present
+        // and inert — a nil closure is how an absent half is absent.
+        QuickAccessController.shared.openEditor = { [weak screenshots] item in
+            guard let screenshots else { return }
+            MainActor.assumeIsolated {
+                guard let data = try? Data(contentsOf: screenshots.store.url(for: item)),
+                      let contents = try? CaptureDocumentFile.decode(data) else { return }
+                ScreenshotEditorController.shared.open(
+                    image: contents.base ?? contents.flattened,
+                    document: contents.document,
+                    historyItemID: item.id)
+            }
+        }
+        // Saving an edit rewrites the history entry in place rather than adding a second one:
+        // the store is the sole writer of that directory, and the overlay and the history row are
+        // both pointing at this id while the edit happens.
+        ScreenshotEditorController.shared.commitEdit = { [weak screenshots] image, id in
+            guard let screenshots, let id else { return }
+            MainActor.assumeIsolated { screenshots.store.replaceImage(of: id, with: image) }
+        }
+
         QuickAccessController.shared.store = screenshots.store
         QuickAccessController.shared.corner = screenshots.quickAccessCorner
         QuickAccessController.shared.autoCloseAfter = screenshots.quickAccessAutoClose

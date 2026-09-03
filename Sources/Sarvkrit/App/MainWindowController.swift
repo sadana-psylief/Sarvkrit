@@ -41,14 +41,27 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         // Dock icon: an .accessory app cannot fully activate, so its windows never reliably
         // take key focus — they appear, then ignore clicks and typing. Must happen *before*
         // activate(), or the activation applies to the old policy.
-        NSApp.setActivationPolicy(.regular)
+        //
+        // Through the lease rather than directly, because the editor windows need the same thing:
+        // an unconditional drop on close would put the app back to .accessory while an editor was
+        // still open, and that editor would stop accepting input for no visible reason.
+        if !isShowing {
+            isShowing = true
+            ActivationPolicyLease.shared.acquire()
+        }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Back to a menu bar app once the window is gone: no Dock icon, no app menu.
+    /// Tracks whether this window currently holds a lease, so showing an already-open window
+    /// doesn't take a second one it will never give back.
+    private var isShowing = false
+
+    /// Back to a menu bar app once the last window is gone: no Dock icon, no app menu.
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        guard isShowing else { return }
+        isShowing = false
+        ActivationPolicyLease.shared.release()
     }
 
     /// Keep the window object around after closing. Rebuilding the SwiftUI hosting view on
