@@ -115,14 +115,21 @@ final class SelectionView: NSView {
         guard case .area = mode else { return }
         let local = convert(event.locationInWindow, from: nil)
 
-        // A press on a handle of an already-settled selection adjusts it rather than starting a
-        // new one — otherwise the only way to fix a selection that is slightly wrong is to press
-        // Escape and do the whole capture again.
-        if let settled = gesture.settledRect,
-           let handle = SelectionHandles.handle(at: local, bounds: viewRect(settled)) {
-            activeHandle = handle
-            needsDisplay = true
-            return
+        if let settled = gesture.settledRect {
+            // A press on a handle adjusts the selection rather than starting a new one —
+            // otherwise the only way to fix one that is slightly wrong is Escape and start the
+            // whole capture again.
+            if let handle = SelectionHandles.handle(at: local, bounds: viewRect(settled)) {
+                activeHandle = handle
+                needsDisplay = true
+                return
+            }
+            // A press *inside* waits for the mouse-up that takes the shot. Falling through here
+            // called `began` and threw the settled rect away, so clicking your own selection
+            // silently cancelled it — which a synthesised drag caught and a hundred unit tests
+            // on the gesture could not, because the bug was in the view's dispatch.
+            if viewRect(settled).contains(local) { return }
+            // A press outside starts again, which is what the hand expects.
         }
 
         gesture.began(at: globalPoint(local))
