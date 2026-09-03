@@ -241,7 +241,7 @@ final class EditorKeyRoutingTests: XCTestCase {
 final class BackgroundLayoutTests: XCTestCase {
 
     func testPaddingSurroundsTheImage() {
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 50
         style.aspect = .free
         let (canvas, rect) = BackgroundLayout.compute(imageSize: CGSize(width: 200, height: 100),
@@ -253,7 +253,7 @@ final class BackgroundLayoutTests: XCTestCase {
     func testAnAspectTargetIsMetByPaddingNeverByCropping() {
         // Trimming pixels off a capture to reach 16:9 would silently remove content the user
         // framed on purpose.
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 0
         style.aspect = .sixteenNine
         let imageSize = CGSize(width: 100, height: 100)
@@ -265,7 +265,7 @@ final class BackgroundLayoutTests: XCTestCase {
     }
 
     func testTheImageStaysCentredWhenTheCanvasGrows() {
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 10
         style.aspect = .square
         let (canvas, rect) = BackgroundLayout.compute(imageSize: CGSize(width: 300, height: 100),
@@ -275,7 +275,7 @@ final class BackgroundLayoutTests: XCTestCase {
     }
 
     func testAZeroSizedImageIsNotACrash() {
-        let (canvas, _) = BackgroundLayout.compute(imageSize: .zero, style: BackgroundStyle())
+        let (canvas, _) = BackgroundLayout.compute(imageSize: .zero, style: CaptureBackground())
         XCTAssertEqual(canvas, .zero)
     }
 }

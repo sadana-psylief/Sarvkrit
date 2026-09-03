@@ -199,6 +199,12 @@ you need it. Lock Mode makes it ignore clicks so you can work through it — and
 can't be clicked to unlock, **⌃⇧P** unlocks every pinned shot and one draws a coloured border while
 locked. Needs no permissions at all.
 
+**⌃⇧⎋ always clears the screen.** Everything in this category floats above your other windows, and
+one thing deliberately ignores clicks, so there is one shortcut that means *get all of it off my
+screen* — overlays, pinned shots, the capture bar, whatever state any of it is in. It's registered
+with the system rather than by watching the keyboard, so it keeps working even if you revoke
+Sarvkrit's other permissions.
+
 ### ⚙️ System
 
 #### Keep Awake
@@ -278,6 +284,8 @@ switch it on or wake the Mac up.
 | **⌃⇧Z** | Anywhere | Bring back the last capture overlay you dismissed |
 | **⌃⇧H** | Anywhere | Hide the capture overlays until the next shot |
 | **⌃⇧P** | Anywhere | Pin the clipboard image, or unlock every pinned shot |
+| **⌃⇧Y** | Anywhere | Browse everything you've captured |
+| **⌃⇧⎋** | Anywhere | Clear everything Sarvkrit has put on screen |
 | **Esc** | Capture overlay | Cancel |
 | **⇧** drag | Capture overlay | Keep the shape you're already drawing |
 | **⌥** drag | Capture overlay | Grow from the centre |

@@ -150,7 +150,7 @@ final class BackgroundCompositorTests: XCTestCase {
     }
 
     func testTheCompositeIsBiggerThanTheScreenshotByThePadding() throws {
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 20
         style.aspect = .free
         let composed = try XCTUnwrap(BackgroundCompositor.render(try image(100, 60), style: style))
@@ -159,7 +159,7 @@ final class BackgroundCompositorTests: XCTestCase {
     }
 
     func testAnAspectTargetProducesThatAspect() throws {
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 0
         style.aspect = .square
         let composed = try XCTUnwrap(BackgroundCompositor.render(try image(200, 50), style: style))
@@ -240,7 +240,7 @@ final class BackgroundPresetStoreTests: XCTestCase {
 
     func testAPresetSurvivesAReload() {
         let store = BackgroundPresetStore(directory: root)
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 99
         store.add(name: "Brand", style: style)
 
@@ -252,7 +252,7 @@ final class BackgroundPresetStoreTests: XCTestCase {
 
     func testRemovingAPresetPersists() {
         let store = BackgroundPresetStore(directory: root)
-        store.add(name: "One", style: BackgroundStyle())
+        store.add(name: "One", style: CaptureBackground())
         store.remove(id: store.presets[0].id)
         XCTAssertTrue(BackgroundPresetStore(directory: root).presets.isEmpty)
     }

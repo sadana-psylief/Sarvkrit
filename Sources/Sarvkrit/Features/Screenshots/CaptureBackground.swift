@@ -22,7 +22,11 @@ struct GradientSpec: Codable, Equatable {
 }
 
 /// What surrounds a screenshot.
-struct BackgroundStyle: Codable, Equatable {
+///
+/// **Not `BackgroundStyle`, which is what this was called first.** SwiftUI ships a type of that
+/// name, so in any file importing SwiftUI the bare initialiser was ambiguous — it compiled
+/// wherever the contextual type happened to disambiguate it and failed the moment one didn't.
+struct CaptureBackground: Codable, Equatable {
     enum Fill: Codable, Equatable {
         case none
         case solid(RGBAColour)

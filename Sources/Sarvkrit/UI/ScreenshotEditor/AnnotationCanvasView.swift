@@ -14,10 +14,9 @@ import CoreGraphics
 @MainActor
 protocol AnnotationCanvasDelegate: AnyObject {
     func canvasDidEdit(_ view: AnnotationCanvasView)
-    func canvas(_ view: AnnotationCanvasView, beginTextEditingAt point: CGPoint)
 }
 
-final class AnnotationCanvasView: NSView {
+final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     weak var delegate: AnnotationCanvasDelegate?
 
     private let model: EditorDocumentModel
@@ -159,11 +158,19 @@ final class AnnotationCanvasView: NSView {
         dragStart = point
 
         if model.tool == .select {
+            if event.clickCount == 2,
+               let hit = AnnotationGeometry.hitTest(model.document, at: point,
+                                                    tolerance: tolerance),
+               let element = model.document.elements.first(where: { $0.id == hit }),
+               case .text = element.kind {
+                editText(hit)
+                return
+            }
             beginSelectOrDrag(at: point, viewPoint: convert(event.locationInWindow, from: nil))
             return
         }
         if model.tool == .text {
-            delegate?.canvas(self, beginTextEditingAt: point)
+            beginTextEditing(at: point)
             return
         }
         if model.tool == .counter {
@@ -321,6 +328,103 @@ final class AnnotationCanvasView: NSView {
         delegate?.canvasDidEdit(self)
     }
 
+    // MARK: - Text editing
+
+    /// The field editor sitting over the canvas while a text annotation is typed.
+    ///
+    /// **A real `NSTextField`, not a prompt or a fixed string.** A drawing surface cannot host a
+    /// caret, so text is the one tool that needs a genuine control laid over it — which is also
+    /// why the canvas is an `NSView` rather than a SwiftUI `Canvas`. The first version of this
+    /// dropped the literal word "Text" on the image with no way to change it.
+    private var textEditor: NSTextField?
+    private var editingElementID: AnnotationElement.ID?
+
+    private func beginTextEditing(at point: CGPoint) {
+        commitTextEditing()
+
+        let scale = max(model.document.scale, 1)
+        var element = TextElement(origin: point,
+                                  string: "",
+                                  fontSize: 30 * scale,
+                                  colour: model.colour)
+        element.fontName = NSFont.systemFont(ofSize: element.fontSize, weight: .semibold).fontName
+
+        model.edit { $0.add(.text(element)) }
+        guard let added = model.document.elements.last else { return }
+        editingElementID = added.id
+        model.selection = added.id
+        presentEditor(for: element, at: point)
+    }
+
+    /// Reopens the editor on an existing element, for a double-click.
+    func editText(_ id: AnnotationElement.ID) {
+        guard let element = model.document.elements.first(where: { $0.id == id }),
+              case .text(let text) = element.kind else { return }
+        commitTextEditing()
+        editingElementID = id
+        model.selection = id
+        presentEditor(for: text, at: text.origin)
+    }
+
+    private func presentEditor(for element: TextElement, at point: CGPoint) {
+        let field = NSTextField(frame: .zero)
+        field.stringValue = element.string
+        field.isBordered = false
+        field.drawsBackground = true
+        field.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.14)
+        field.focusRingType = .none
+        field.delegate = self
+        field.font = NSFont(name: element.fontName, size: element.fontSize * transform.zoom)
+            ?? NSFont.systemFont(ofSize: element.fontSize * transform.zoom, weight: .semibold)
+        field.textColor = NSColor(cgColor: element.colour.cgColor) ?? .red
+        field.placeholderString = "Type…"
+
+        let origin = transform.toView(CGPoint(x: point.x + imageRect.minX,
+                                              y: point.y + imageRect.minY))
+        let height = element.fontSize * transform.zoom * 1.4
+        field.frame = NSRect(x: origin.x - 4, y: origin.y - 4,
+                             width: max(160, bounds.maxX - origin.x - 24), height: height)
+
+        addSubview(field)
+        textEditor = field
+        model.isEditingText = true
+        window?.makeFirstResponder(field)
+    }
+
+    /// Writes the typed string back and takes the field away.
+    ///
+    /// An empty string removes the element rather than leaving an invisible one behind for the
+    /// user to trip over with the select tool later.
+    func commitTextEditing() {
+        guard let field = textEditor, let id = editingElementID else { return }
+        let typed = field.stringValue
+
+        field.removeFromSuperview()
+        textEditor = nil
+        editingElementID = nil
+        model.isEditingText = false
+
+        model.edit { document in
+            guard let index = document.elements.firstIndex(where: { $0.id == id }) else { return }
+            if typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                document.elements.remove(at: index)
+                return
+            }
+            if case .text(var text) = document.elements[index].kind {
+                text.string = typed
+                document.elements[index].kind = .text(text)
+            }
+        }
+        if model.document.elements.first(where: { $0.id == id }) == nil { model.selection = nil }
+        needsDisplay = true
+        delegate?.canvasDidEdit(self)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        commitTextEditing()
+        return super.resignFirstResponder()
+    }
+
     // MARK: - Element transforms
 
     static func translate(_ element: inout AnnotationElement, by delta: CGSize) {
@@ -377,5 +481,31 @@ final class AnnotationCanvasView: NSView {
         case .emoji(var value): value.rect = map(value.rect); element.kind = .emoji(value)
         case .unknown: break
         }
+    }
+}
+
+extension AnnotationCanvasView {
+    /// Return commits the text; Escape abandons it. Both matter — without them the only way out
+    /// of the field is clicking elsewhere, which is not obvious while a caret is blinking at you.
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            commitTextEditing()
+            window?.makeFirstResponder(self)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            textEditorStringForCancel()
+            window?.makeFirstResponder(self)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Escape throws away what was typed, which for a brand-new element means removing it.
+    private func textEditorStringForCancel() {
+        (subviews.compactMap { $0 as? NSTextField }.first)?.stringValue = ""
+        commitTextEditing()
     }
 }

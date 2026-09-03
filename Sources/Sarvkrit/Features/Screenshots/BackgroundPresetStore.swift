@@ -5,7 +5,7 @@ import os
 struct BackgroundPreset: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String
-    var style: BackgroundStyle
+    var style: CaptureBackground
 }
 
 /// Saved background settings.
@@ -33,7 +33,7 @@ final class BackgroundPresetStore: ObservableObject {
             .appendingPathComponent("Screenshots", isDirectory: true)
     }
 
-    func add(name: String, style: BackgroundStyle) {
+    func add(name: String, style: CaptureBackground) {
         presets.append(BackgroundPreset(name: name, style: style))
         save()
     }

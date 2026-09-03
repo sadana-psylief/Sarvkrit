@@ -9,7 +9,7 @@ import Foundation
 /// deliberately.
 enum BackgroundLayout {
 
-    static func compute(imageSize: CGSize, style: BackgroundStyle) -> (canvas: CGSize, imageRect: CGRect) {
+    static func compute(imageSize: CGSize, style: CaptureBackground) -> (canvas: CGSize, imageRect: CGRect) {
         guard imageSize.width > 0, imageSize.height > 0 else { return (.zero, .zero) }
 
         let padded = CGSize(width: imageSize.width + style.padding * 2,

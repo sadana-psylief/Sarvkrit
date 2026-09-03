@@ -82,7 +82,7 @@ final class RenderOrientationTests: XCTestCase {
 
     func testCompositingOntoABackgroundKeepsOrientation() throws {
         let base = try topRedBottomBlue(40, 40)
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 10
         style.aspect = .free
         style.shadow = nil
@@ -106,7 +106,7 @@ final class RenderOrientationTests: XCTestCase {
                        CGSize(width: 200, height: 100))
         XCTAssertEqual(AnnotationRenderer.composition(for: document).imageRect.origin, .zero)
 
-        var style = BackgroundStyle()
+        var style = CaptureBackground()
         style.padding = 30
         style.aspect = .free
         document.background = style

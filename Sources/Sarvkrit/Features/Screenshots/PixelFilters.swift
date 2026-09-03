@@ -53,6 +53,11 @@ enum PixelFilters {
         let ciRect = CGRect(x: rect.minX, y: extent.height - rect.maxY,
                             width: rect.width, height: rect.height)
 
+        // Secure redaction never touches Core Image — see `secure(_:element:rect:)`.
+        if element.mode == .secureBlur {
+            return secure(base, element: element, rect: rect)
+        }
+
         let filtered: CIImage?
         switch element.mode {
         case .smoothBlur:
@@ -60,7 +65,7 @@ enum PixelFilters {
         case .pixellate:
             filtered = pixellate(source, element: element, ciRect: ciRect)
         case .secureBlur:
-            filtered = secure(source, element: element, ciRect: ciRect)
+            filtered = nil
         }
         guard let filtered else { return nil }
 
@@ -101,41 +106,63 @@ enum PixelFilters {
 
     /// Mean colour plus seeded noise. Nothing in the output derives from the pixels except the
     /// average, so nothing can be recovered from it.
-    private static func secure(_ source: CIImage,
+    ///
+    /// **Built with CoreGraphics in sRGB rather than Core Image.** The average has to come back
+    /// out looking like the tone it replaced, and Core Image works in a linear space: sampling an
+    /// sRGB average and handing it to `CIColor` rendered the patch markedly lighter than its
+    /// surroundings — a bright rectangle sitting exactly where the secret was, which is the
+    /// opposite of the point. Averaging the bytes directly and filling in sRGB has no such
+    /// ambiguity, and it is also simply easier to be sure about.
+    private static func secure(_ base: CGImage,
                                element: PixelFilterElement,
-                               ciRect: CGRect) -> CIImage? {
-        let average = CIFilter.areaAverage()
-        average.inputImage = source
-        average.extent = ciRect
-        guard let averaged = average.outputImage else { return nil }
+                               rect: CGRect) -> CGImage? {
+        let width = max(1, Int(rect.width)), height = max(1, Int(rect.height))
+        guard let cropped = base.cropping(to: rect) else { return nil }
 
-        var pixel = [UInt8](repeating: 0, count: 4)
-        context.render(averaged, toBitmap: &pixel, rowBytes: 4,
-                       bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-                       format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        let sRGB = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        var samples = [UInt8](repeating: 0, count: width * height * 4)
+        guard let reader = samples.withUnsafeMutableBytes({ raw -> CGContext? in
+            CGContext(data: raw.baseAddress, width: width, height: height,
+                      bitsPerComponent: 8, bytesPerRow: width * 4, space: sRGB,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        }) else { return nil }
+        reader.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        let flat = CIImage(color: CIColor(red: Double(pixel[0]) / 255,
-                                          green: Double(pixel[1]) / 255,
-                                          blue: Double(pixel[2]) / 255))
+        var totals = (r: 0.0, g: 0.0, b: 0.0)
+        let count = Double(width * height)
+        for index in stride(from: 0, to: samples.count, by: 4) {
+            totals.r += Double(samples[index])
+            totals.g += Double(samples[index + 1])
+            totals.b += Double(samples[index + 2])
+        }
+        let mean = (r: totals.r / count / 255,
+                    g: totals.g / count / 255,
+                    b: totals.b / count / 255)
 
-        // Texture from the seed, not from the image: it looks like a heavy blur without carrying
-        // anything.
-        let noise = CIFilter.randomGenerator()
-        guard let grain = noise.outputImage else { return flat }
-        let softened = CIFilter.gaussianBlur()
-        softened.inputImage = grain.transformed(
-            by: CGAffineTransform(translationX: CGFloat(element.seed % 512),
-                                  y: CGFloat((element.seed / 512) % 512)))
-        softened.radius = Float(max(element.radius / 4, 1))
+        guard let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
 
-        guard let texture = softened.outputImage else { return flat }
-        let blend = CIFilter.sourceOverCompositing()
-        blend.inputImage = texture.applyingFilter("CIColorMatrix", parameters: [
-            // Keep the grain very faint: it is there so the patch doesn't read as a flat sticker.
-            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.08),
-        ])
-        blend.backgroundImage = flat
-        return blend.outputImage
+        context.setFillColor(CGColor(srgbRed: mean.r, green: mean.g, blue: mean.b, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Texture from the seed, never from the pixels, so the patch doesn't read as a flat
+        // sticker while still carrying nothing. Kept faint and centred on the mean, so it cannot
+        // shift the overall tone.
+        var generator = SeededRandom(seed: element.seed)
+        let cell = max(3, Int(element.radius / 3))
+        for y in stride(from: 0, to: height, by: cell) {
+            for x in stride(from: 0, to: width, by: cell) {
+                let jitter = (generator.nextUnit() - 0.5) * 0.06
+                context.setFillColor(CGColor(srgbRed: min(max(mean.r + jitter, 0), 1),
+                                             green: min(max(mean.g + jitter, 0), 1),
+                                             blue: min(max(mean.b + jitter, 0), 1),
+                                             alpha: 1))
+                context.fill(CGRect(x: x, y: y, width: cell, height: cell))
+            }
+        }
+        return context.makeImage()
     }
 
     // MARK: - Masking

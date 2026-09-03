@@ -44,33 +44,44 @@ struct ScreenshotEditorView: View {
         .background(.quaternary.opacity(0.4))
     }
 
+    /// Tools in the groups they belong to, the way a drawing app arranges them.
+    ///
+    /// A single undifferentiated row of fourteen glyphs is a row you have to read every time. The
+    /// separators mean the eye can go straight to "a shape", "some text", "hide something".
+    private static let toolGroups: [[ToolKind]] = [
+        [.select, .crop],
+        [.arrow, .line, .rectangle, .ellipse],
+        [.text, .counter, .emoji],
+        [.pencil, .highlighter],
+        [.blur, .pixelate, .spotlight],
+    ]
+
     private var toolbar: some View {
-        HStack(spacing: Theme.Space.md) {
-            HStack(spacing: 2) {
-                ForEach(ToolKind.allCases) { tool in
-                    Button { model.tool = tool } label: {
-                        Image(systemName: tool.symbolName)
-                            .frame(width: 26, height: 24)
-                            .background(model.tool == tool ? Color.accentColor.opacity(0.22)
-                                                           : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .clickableCursor()
-                    .help(tool.key.map { "\(tool.title)  (\($0.uppercased()))" } ?? tool.title)
+        HStack(spacing: 12) {
+            ForEach(Array(Self.toolGroups.enumerated()), id: \.offset) { _, group in
+                HStack(spacing: 2) {
+                    ForEach(group) { tool in toolButton(tool) }
                 }
+                .padding(2)
+                .background(Color.primary.opacity(0.07),
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
 
             Divider().frame(height: 18)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 ForEach(Array(RGBAColour.palette.enumerated()), id: \.offset) { index, colour in
                     Button { model.colour = colour } label: {
                         Circle()
                             .fill(Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .red))
-                            .frame(width: 15, height: 15)
-                            .overlay(Circle().strokeBorder(
-                                model.colour == colour ? Color.primary : Color.clear, lineWidth: 2))
+                            .frame(width: 16, height: 16)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    model.colour == colour
+                                        ? Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .red)
+                                        : .clear,
+                                    lineWidth: 2)
+                                    .padding(-3))
                     }
                     .buttonStyle(.plain)
                     .clickableCursor()
@@ -78,29 +89,59 @@ struct ScreenshotEditorView: View {
                 }
             }
 
-            Slider(value: $model.strokeWidth, in: 2...32)
-                .frame(width: 90)
-                .help("Line thickness")
-
-            Spacer(minLength: 0)
-
-            Button { showsBackgroundInspector.toggle() } label: {
-                Image(systemName: "square.on.square.badge.person.crop")
+            HStack(spacing: 6) {
+                Image(systemName: "lineweight")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Slider(value: $model.strokeWidth, in: 2...36)
+                    .frame(width: 84)
             }
-            .help("Background")
+            .help("Line thickness")
+
+            Spacer(minLength: 8)
 
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!model.canUndo).help("Undo  (⌘Z)")
             Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                 .disabled(!model.canRedo).help("Redo  (⇧⌘Z)")
+
+            Button { showsBackgroundInspector.toggle() } label: {
+                Image(systemName: "square.on.square.badge.person.crop")
+                    .frame(width: 26, height: 20)
+                    .background(showsBackgroundInspector ? Color.accentColor : .clear,
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .foregroundStyle(showsBackgroundInspector ? Color.white : Color.primary)
+            }
+            .help("Background")
+
             Button(action: onCopy) { Image(systemName: "doc.on.doc") }.help("Copy  (⌘C)")
-            Button(action: onSave) { Image(systemName: "square.and.arrow.down") }.help("Save  (⌘S)")
             Button(action: onSaveEditable) { Image(systemName: "square.and.pencil") }
                 .help("Save so it stays editable  (⇧⌘S)")
+            Button("Done", action: onSave)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .help("Save  (⌘S)")
         }
         .buttonStyle(.plain)
         .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, Theme.Space.sm)
+        .padding(.vertical, 8)
+    }
+
+    private func toolButton(_ tool: ToolKind) -> some View {
+        let isActive = model.tool == tool
+        return Button { model.tool = tool } label: {
+            Image(systemName: tool.symbolName)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 26, height: 20)
+                .background(isActive ? Color.accentColor : .clear,
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .foregroundStyle(isActive ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .clickableCursor()
+        .help(tool.key.map { "\(tool.title)  (\($0.uppercased()))" } ?? tool.title)
+        .accessibilityLabel(tool.title)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 }
 
@@ -126,21 +167,6 @@ struct AnnotationCanvasHost: NSViewRepresentable {
         init(model: EditorDocumentModel) { self.model = model }
 
         func canvasDidEdit(_ view: AnnotationCanvasView) {
-            view.refresh()
-        }
-
-        /// Text needs a real caret, which is the one thing a drawing surface cannot provide — so
-        /// an `NSTextField` is put over the canvas for the duration of the edit and committed on
-        /// blur. While it is up, `isEditingText` gates the single-key tool shortcuts.
-        func canvas(_ view: AnnotationCanvasView, beginTextEditingAt point: CGPoint) {
-            let scale = max(model.document.scale, 1)
-            model.edit {
-                $0.add(.text(TextElement(origin: point,
-                                         string: "Text",
-                                         fontSize: 36 * scale,
-                                         colour: model.colour)))
-            }
-            model.selection = model.document.elements.last?.id
             view.refresh()
         }
     }

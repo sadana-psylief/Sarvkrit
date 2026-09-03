@@ -7,9 +7,9 @@ struct BackgroundInspector: View {
     @ObservedObject var presets: BackgroundPresetStore
     @State private var presetName = ""
 
-    private var style: BackgroundStyle { model.document.background ?? BackgroundStyle() }
+    private var style: CaptureBackground { model.document.background ?? CaptureBackground() }
 
-    private func update(_ change: (inout BackgroundStyle) -> Void) {
+    private func update(_ change: (inout CaptureBackground) -> Void) {
         var next = style
         change(&next)
         model.edit { $0.background = next }
@@ -20,7 +20,7 @@ struct BackgroundInspector: View {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
                 Toggle("Add a background", isOn: Binding(
                     get: { model.document.background != nil },
-                    set: { on in model.edit { $0.background = on ? BackgroundStyle() : nil } }))
+                    set: { on in model.edit { $0.background = on ? CaptureBackground() : nil } }))
 
                 if model.document.background != nil {
                     swatches
@@ -71,7 +71,7 @@ struct BackgroundInspector: View {
             }
             Toggle("Shadow", isOn: Binding(
                 get: { style.shadow != nil },
-                set: { on in update { $0.shadow = on ? BackgroundStyle.Shadow() : nil } }))
+                set: { on in update { $0.shadow = on ? CaptureBackground.Shadow() : nil } }))
             Picker("Shape", selection: Binding(get: { style.aspect },
                                                set: { value in update { $0.aspect = value } })) {
                 ForEach(AspectRatio.allCases) { Text($0.title).tag($0) }

@@ -21,7 +21,7 @@ struct AnnotationDocument: Codable, Equatable {
     /// rewriting every element's origin on crop would have destroyed them.
     var cropRect: CGRect?
     /// The background composite, applied after flattening. Nil means none.
-    var background: BackgroundStyle?
+    var background: CaptureBackground?
     var elements: [AnnotationElement] = []
 
     init(imageSize: CGSize, scale: CGFloat = 1) {
@@ -47,7 +47,7 @@ struct AnnotationDocument: Codable, Equatable {
         imageSize = try container.decode(CGSize.self, forKey: .imageSize)
         scale = try container.decodeIfPresent(CGFloat.self, forKey: .scale) ?? 1
         cropRect = try container.decodeIfPresent(CGRect.self, forKey: .cropRect)
-        background = try container.decodeIfPresent(BackgroundStyle.self, forKey: .background)
+        background = try container.decodeIfPresent(CaptureBackground.self, forKey: .background)
         elements = try container.decodeIfPresent([AnnotationElement].self, forKey: .elements) ?? []
     }
 

@@ -14,7 +14,7 @@ enum BackgroundCompositor {
     /// Split out of `render` so the live canvas can draw the same surround without flattening the
     /// image first — which is what makes the background visible while you are choosing it, rather
     /// than only once you save.
-    static func drawSurround(style: BackgroundStyle,
+    static func drawSurround(style: CaptureBackground,
                              canvas: CGRect,
                              imageRect: CGRect,
                              in context: CGContext) {
@@ -35,12 +35,12 @@ enum BackgroundCompositor {
     }
 
     /// The rounded-corner clip the screenshot is drawn through.
-    static func clipPath(imageRect: CGRect, style: BackgroundStyle) -> CGPath {
+    static func clipPath(imageRect: CGRect, style: CaptureBackground) -> CGPath {
         CGPath(roundedRect: imageRect, cornerWidth: style.cornerRadius,
                cornerHeight: style.cornerRadius, transform: nil)
     }
 
-    static func render(_ image: CGImage, style: BackgroundStyle) -> CGImage? {
+    static func render(_ image: CGImage, style: CaptureBackground) -> CGImage? {
         let imageSize = CGSize(width: image.width, height: image.height)
         let (canvas, imageRect) = BackgroundLayout.compute(imageSize: imageSize, style: style)
         guard canvas.width >= 1, canvas.height >= 1 else { return nil }
@@ -70,7 +70,7 @@ enum BackgroundCompositor {
         return context.makeImage()
     }
 
-    static func drawFill(_ fill: BackgroundStyle.Fill, in rect: CGRect,
+    static func drawFill(_ fill: CaptureBackground.Fill, in rect: CGRect,
                                  context: CGContext) {
         switch fill {
         case .none:
@@ -139,8 +139,8 @@ enum BackgroundCompositor {
     }
 
     /// A whole Auto Balance pass.
-    static func autoBalanced(_ image: CGImage, base: BackgroundStyle = BackgroundStyle())
-        -> BackgroundStyle {
+    static func autoBalanced(_ image: CGImage, base: CaptureBackground = CaptureBackground())
+        -> CaptureBackground {
         var style = base
         style.isAutoBalanced = true
         guard let grid = grid(from: image) else { return style }

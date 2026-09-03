@@ -183,3 +183,68 @@ final class SeededRandomTests: XCTestCase {
         }
     }
 }
+
+/// Colour fidelity of the redaction fill.
+///
+/// Split out because it is a different kind of failure from the others: the patch still hides the
+/// content perfectly, it just doesn't *match*, so it advertises where the secret was.
+final class SecureRedactionColourTests: XCTestCase {
+
+    private func flat(_ level: Double, _ side: Int = 40) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: level, green: level, blue: level, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    private func meanLuma(_ image: CGImage) throws -> Double {
+        var buffer = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let context = try XCTUnwrap(buffer.withUnsafeMutableBytes { raw in
+            CGContext(data: raw.baseAddress, width: image.width, height: image.height,
+                      bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        })
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let total = stride(from: 0, to: buffer.count, by: 4).reduce(0.0) { sum, index in
+            sum + Double(buffer[index])
+        }
+        return total / Double(buffer.count / 4) / 255
+    }
+
+    func testARedactedPatchMatchesTheToneItReplaced() throws {
+        // It used to come out markedly lighter: the average was sampled as sRGB bytes and handed
+        // to a CIColor that reads its components as linear, so mid-grey rendered as light grey —
+        // a bright rectangle sitting exactly where the secret was.
+        //
+        // Compared against the base's own *measured* tone rather than the nominal constant.
+        // `CGColor(red:green:blue:alpha:)` is generic RGB, so filling an sRGB context with "0.25"
+        // does not produce sRGB 0.25 — asserting against the constant tested the fixture's colour
+        // conversion rather than the redaction.
+        for level in [0.25, 0.5, 0.75] {
+            let base = try flat(level)
+            let expected = try meanLuma(base)
+            let element = PixelFilterElement(rect: CGRect(x: 0, y: 0, width: 40, height: 40),
+                                             mode: .secureBlur, radius: 12, seed: 4)
+            let patch = try XCTUnwrap(PixelFilters.render(element, over: base))
+            XCTAssertEqual(try meanLuma(patch), expected, accuracy: 0.02,
+                           "a redaction should look like the tone it covered (\(level) nominal)")
+        }
+    }
+
+    func testTheNoiseDoesNotShiftTheOverallTone() throws {
+        // The texture exists so the patch doesn't read as a flat sticker. If it biased the mean it
+        // would reintroduce the very brightness problem it sits on top of.
+        let base = try flat(0.5)
+        let expected = try meanLuma(base)
+        for seed in [UInt64(1), 7, 4242] {
+            let element = PixelFilterElement(rect: CGRect(x: 0, y: 0, width: 40, height: 40),
+                                             mode: .secureBlur, radius: 30, seed: seed)
+            let patch = try XCTUnwrap(PixelFilters.render(element, over: base))
+            XCTAssertEqual(try meanLuma(patch), expected, accuracy: 0.02, "seed \(seed)")
+        }
+    }
+}
