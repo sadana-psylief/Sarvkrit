@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Combine
 import Foundation
+import SwiftUI
 import os
 
 /// Taking screenshots.
@@ -13,7 +14,7 @@ import os
 /// The UI is reached through closures set by `AppDelegate`, the same separation
 /// `ClipboardFeature.showPicker` and `ShelfFeature.showShelf` use, so nothing under `Features/`
 /// imports the UI layer.
-final class ScreenshotFeature: Feature {
+final class ScreenshotFeature: Feature, ObservableObject {
     private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Screenshots")
 
     let id = "screenshot"
@@ -36,6 +37,38 @@ final class ScreenshotFeature: Feature {
     let requirements: Set<Requirement> = [.screenRecording]
 
     let capturer: ScreenCapturing
+    let store: CaptureHistoryStore
+
+    private let defaults: UserDefaults
+
+    /// Settings are hand-rolled computed properties over an injected `UserDefaults` with a
+    /// same-value guard in the setter — the idiom every other feature here uses, and for the
+    /// reason `AppState` documents: a same-value write through a SwiftUI two-way binding once
+    /// created an infinite notify/invalidate loop that pinned a CPU core.
+    var savesToDisk: Bool {
+        get { defaults.object(forKey: "screenshot.savesToDisk") as? Bool ?? true }
+        set {
+            guard newValue != savesToDisk else { return }
+            defaults.set(newValue, forKey: "screenshot.savesToDisk")
+            objectWillChange.send()
+        }
+    }
+
+    var copiesToClipboard: Bool {
+        get { defaults.object(forKey: "screenshot.copiesToClipboard") as? Bool ?? false }
+        set {
+            guard newValue != copiesToClipboard else { return }
+            defaults.set(newValue, forKey: "screenshot.copiesToClipboard")
+            objectWillChange.send()
+        }
+    }
+
+    var destinationSettings: CaptureDestination.Settings {
+        CaptureDestination.Settings(savesToDisk: savesToDisk,
+                                    copiesToClipboard: copiesToClipboard,
+                                    showsQuickAccess: false,
+                                    opensEditor: false)
+    }
 
     /// Set by `AppDelegate`. Nil until then, and every call site tolerates that — a nil closure is
     /// how a not-yet-built half of the feature is absent rather than crashing.
@@ -43,8 +76,19 @@ final class ScreenshotFeature: Feature {
 
     private var hotkeys: [GlobalHotkey] = []
 
-    init(capturer: ScreenCapturing = SCKScreenCaptureService()) {
+    init(capturer: ScreenCapturing = SCKScreenCaptureService(),
+         store: CaptureHistoryStore? = nil,
+         defaults: UserDefaults = .standard) {
         self.capturer = capturer
+        self.defaults = defaults
+        let retention = (defaults.string(forKey: "screenshot.retention")
+            .flatMap(CaptureRetention.Window.init(rawValue:))) ?? .month
+        self.store = store ?? CaptureHistoryStore(retention: retention)
+    }
+
+    @MainActor
+    func makeDetailView() -> AnyView? {
+        AnyView(ScreenshotDetailView(feature: self, store: store))
     }
 
     func activate() {

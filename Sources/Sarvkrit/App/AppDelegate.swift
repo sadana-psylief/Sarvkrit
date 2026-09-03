@@ -42,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppState.shared.features
             .compactMap { $0 as? ShelfFeature }
             .forEach { $0.store.flush() }
+        AppState.shared.features
+            .compactMap { $0 as? ScreenshotFeature }
+            .forEach { $0.store.flush() }
     }
 
     /// Same closure-wiring as the clipboard picker, for the same reason: the feature never imports
@@ -88,34 +91,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let screenshots = AppState.shared.features
             .compactMap({ $0 as? ScreenshotFeature }).first else { return }
 
-        screenshots.captureFullscreen = {
+        screenshots.captureFullscreen = { [weak screenshots] in
+            guard let screenshots else { return }
             Task { @MainActor in
-                await Self.captureFullscreen(using: screenshots.capturer)
+                await Self.captureFullscreen(with: screenshots)
             }
         }
     }
 
     @MainActor
-    private static func captureFullscreen(using capturer: ScreenCapturing) async {
+    private static func captureFullscreen(with feature: ScreenshotFeature) async {
         do {
-            let frames = try await capturer.snapshotAllDisplays(options: CaptureOptions())
+            let frames = try await feature.capturer.snapshotAllDisplays(options: CaptureOptions())
             // The display the pointer is on, not the first one — on a multi-display Mac the first
             // is whichever has the menu bar, which is rarely the one being looked at.
             let pointer = NSEvent.mouseLocation
-            let frame = frames.first { $0.geometry.frame.contains(pointer) } ?? frames.first
-            guard let frame else { throw CaptureError.noDisplays }
+            guard let frame = frames.first(where: { $0.geometry.frame.contains(pointer) })
+                    ?? frames.first
+            else { throw CaptureError.noDisplays }
 
-            CaptureWriter.copyToPasteboard(frame.image)
-            ToastPresenter.shared.show("Screenshot copied", symbolName: "camera.viewfinder")
+            let plan = CaptureDestination.plan(for: .fullscreen,
+                                               settings: feature.destinationSettings)
+            var saved = true
+            if plan.writesFile {
+                saved = feature.store.add(image: frame.image, mode: .fullscreen,
+                                          sourceRect: frame.geometry.frame,
+                                          displayID: frame.geometry.displayID) != nil
+            }
+            if plan.writesClipboard {
+                CaptureWriter.copyToPasteboard(frame.image)
+            }
+
+            guard saved else {
+                ToastPresenter.shared.show("Couldn't save the screenshot",
+                                           symbolName: "exclamationmark.triangle")
+                return
+            }
+            let where_ = plan.writesFile && plan.writesClipboard ? "saved and copied"
+                       : plan.writesFile ? "saved" : "copied"
+            ToastPresenter.shared.show("Screenshot \(where_)", symbolName: "camera.viewfinder")
         } catch {
-            // A denied grant arrives here as `noDisplays`, not as a permission error — there is no
+            // A denied grant arrives as `noDisplays`, not as a permission error — there is no
             // permission error to catch. If the preflight disagrees, the grant landed after launch
             // and only a relaunch can pick it up.
             let stale = ScreenRecordingRelaunch.looksLikeStaleGrant(
                 preflightGranted: AppState.shared.permissions.canCaptureScreen,
                 capturedDisplayCount: 0)
             ToastPresenter.shared.show(
-                stale ? "Restart Sarvkrit to finish enabling screenshots" : "Couldn't take a screenshot",
+                stale ? "Quit and reopen Sarvkrit to finish enabling screenshots"
+                      : "Couldn't take a screenshot",
                 symbolName: "exclamationmark.triangle")
         }
     }
