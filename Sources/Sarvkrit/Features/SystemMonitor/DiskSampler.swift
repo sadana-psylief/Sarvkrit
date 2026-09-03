@@ -29,3 +29,30 @@ enum DiskSampler {
         )
     }
 }
+
+/// Cumulative bytes moved to and from the boot disk.
+struct DiskThroughput: Equatable {
+    var read: UInt64
+    var written: UInt64
+}
+
+extension DiskSampler {
+    /// Summed across every `IOBlockStorageDriver`, not taken from the first.
+    ///
+    /// The boot disk presents more than one driver and the first one found reports all-zero
+    /// counters, so reading `first` here reports a Mac that never touches its disk — a bug that
+    /// looks exactly like an idle system.
+    static func readThroughput() -> DiskThroughput? {
+        let drivers = IORegistryProperties.all(matching: "IOBlockStorageDriver")
+        guard !drivers.isEmpty else { return nil }
+
+        var read: UInt64 = 0
+        var written: UInt64 = 0
+        for properties in drivers {
+            guard let statistics = properties["Statistics"] as? [String: Any] else { continue }
+            read += (statistics["Bytes (Read)"] as? NSNumber)?.uint64Value ?? 0
+            written += (statistics["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
+        }
+        return DiskThroughput(read: read, written: written)
+    }
+}
