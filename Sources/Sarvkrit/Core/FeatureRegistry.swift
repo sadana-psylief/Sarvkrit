@@ -22,6 +22,7 @@ enum FeatureRegistry {
             VolumeMixerFeature(),
             PrivacyGuardFeature(),
             KeepAwakeFeature(),
+            SystemMonitorFeature(),
         ]
     }
 }

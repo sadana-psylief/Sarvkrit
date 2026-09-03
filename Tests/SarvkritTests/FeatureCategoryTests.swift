@@ -41,6 +41,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["volume-mixer"], .sound)
         XCTAssertEqual(byID["privacy-guard"], .sound)
         XCTAssertEqual(byID["keep-awake"], .system)
+        XCTAssertEqual(byID["system-monitor"], .system)
     }
 
     func testPopulatedCategoriesSkipEmptyOnesAndKeepDeclarationOrder() {
@@ -116,6 +117,7 @@ final class FeatureCategoryTests: XCTestCase {
                 "clipboard-history", "file-rules", "trash-cleanup", "app-sweep", "keep-awake",
                 "window-management", "text-snippets", "shelf", "audio-switcher",
                 "mute-microphone", "music-blocker", "volume-mixer", "privacy-guard",
+                "system-monitor",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()

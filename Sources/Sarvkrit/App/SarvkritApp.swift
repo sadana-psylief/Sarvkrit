@@ -5,12 +5,6 @@ struct SarvkritApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState.shared
 
-    init() {
-        // Before any scene exists, so a duplicate launch never puts a second icon in the menu
-        // bar — not even briefly. This call does not return if another Sarvkrit is running.
-        MainActor.assumeIsolated { SingleInstance.yieldIfAlreadyRunning() }
-    }
-
     var body: some Scene {
         MenuBarExtra(isInserted: $state.showMenuBarIcon) {
             if let keepAwake = state.features.compactMap({ $0 as? KeepAwakeFeature }).first {
@@ -19,14 +13,20 @@ struct SarvkritApp: App {
         } label: {
             // Template rendering is what makes the icon invert correctly in light and dark
             // menu bars and dim when the menu bar is inactive. Never ship a coloured one.
-            // Both features are handed in directly rather than reached through AppState: SwiftUI
+            // Every feature is handed in directly rather than reached through AppState: SwiftUI
             // doesn't observe through a nested ObservableObject, so an icon routed that way would
             // change only on some unrelated redraw — and an indicator you can't rely on noticing is
             // worse than none.
+            //
+            // The System Monitor is here for its readings, not the icon. It adds no status item of
+            // its own: Sarvkrit is one menu bar icon, and MenuBarLabel composes the countdown and
+            // the readings into the single text slot a MenuBarExtra label can actually render.
             if let keepAwake = state.features.compactMap({ $0 as? KeepAwakeFeature }).first,
                let micMute = state.features.compactMap({ $0 as? MuteMicrophoneFeature }).first,
-               let privacy = state.features.compactMap({ $0 as? PrivacyGuardFeature }).first {
-                MenuBarLabel(keepAwake: keepAwake, micMute: micMute, privacy: privacy)
+               let privacy = state.features.compactMap({ $0 as? PrivacyGuardFeature }).first,
+               let monitor = state.features.compactMap({ $0 as? SystemMonitorFeature }).first {
+                MenuBarLabel(
+                    keepAwake: keepAwake, micMute: micMute, privacy: privacy, monitor: monitor)
             } else {
                 Image(systemName: MenuBarIconState.idle.symbolName)
             }
