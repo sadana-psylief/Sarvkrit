@@ -111,6 +111,24 @@ enum CaptureSession {
         return Result(image: frame.image, sourceRect: frame.geometry.frame, display: frame.geometry)
     }
 
+    /// Pick a region, then capture it repeatedly while the user scrolls, and stitch.
+    static func captureScrolling(using capturer: ScreenCapturing,
+                                 options: CaptureOptions,
+                                 chrome: CaptureOverlayController.Chrome) async throws -> Result? {
+        guard let picked = try await captureArea(using: capturer, options: options,
+                                                 chrome: chrome),
+              let rect = picked.sourceRect, let display = picked.display else { return nil }
+
+        let stitched: CGImage? = await withCheckedContinuation { continuation in
+            ScrollCaptureSession.shared.start(region: rect, display: display,
+                                              capturer: capturer, options: options) {
+                continuation.resume(returning: $0)
+            }
+        }
+        guard let stitched else { return nil }
+        return Result(image: stitched, sourceRect: rect, display: display)
+    }
+
     /// The display under the pointer, whole.
     ///
     /// Not `NSScreen.main` and not the first display: the first is whichever has the menu bar,

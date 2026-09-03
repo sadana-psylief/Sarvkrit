@@ -125,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        screenshots.captureScrolling = { [weak screenshots] in
+            guard let screenshots else { return }
+            Task { @MainActor in await Self.capture(.scrolling, with: screenshots) }
+        }
         screenshots.restoreLastOverlay = {
             MainActor.assumeIsolated { QuickAccessController.shared.restoreLastClosed() }
         }
@@ -158,6 +162,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CaptureOverlayController.shared.dismiss()
             return
         }
+        // Pressing the scrolling shortcut again finishes the capture in progress, which is a more
+        // useful second press than starting a competing session.
+        if ScrollCaptureSession.shared.isRunning {
+            ScrollCaptureSession.shared.finish()
+            return
+        }
 
         do {
             let options = feature.captureOptions
@@ -178,6 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .window:
                 result = try await CaptureSession.captureWindow(using: feature.capturer,
                                                                 options: options)
+            case .scrolling:
+                result = try await CaptureSession.captureScrolling(using: feature.capturer,
+                                                                   options: options,
+                                                                   chrome: feature.overlayChrome)
             default:
                 result = try await CaptureSession.captureFullscreen(using: feature.capturer,
                                                                     options: options)

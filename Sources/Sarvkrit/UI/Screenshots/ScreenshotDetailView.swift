@@ -184,6 +184,26 @@ struct ScreenshotDetailView: View {
                 Text("History")
             }
 
+            Section {
+                Text("""
+                    ⌃⇧S draws an area, then captures it each time you pause while scrolling, and \
+                    stitches the frames into one tall image. Scroll slowly and in one direction. \
+                    It needs no extra permission — Sarvkrit watches your scrolling rather than \
+                    doing the scrolling for you.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("""
+                    Vertical scrolling is what this is tested against. A full-width sticky header \
+                    or footer is detected and written once; a floating button that sits in the \
+                    middle of a row will repeat.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Scrolling capture")
+            }
+
             CaptureShortcutsSection(feature: feature, shortcuts: feature.shortcuts)
 
             if !store.items.isEmpty {
