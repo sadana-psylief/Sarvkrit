@@ -28,16 +28,22 @@ final class QuickAccessController: NSObject {
     private var lastClosed: UUID?
     private var hiddenTemporarily = false
 
-    var corner: QuickAccessPlacement.Corner = .bottomRight
-    /// Nil means "stay until dismissed".
-    var autoCloseAfter: TimeInterval? = 8
+    var corner: QuickAccessPlacement.Corner = .bottomLeft
+    /// Nil means "stay until dismissed", which is the default — see the feature's setting.
+    var autoCloseAfter: TimeInterval?
 
     weak var store: CaptureHistoryStore?
     /// Nil until the editor half exists; the Annotate button hides while it is.
     var openEditor: ((CaptureHistoryItem) -> Void)?
     var pinToScreen: ((CaptureHistoryItem) -> Void)?
 
-    private static let panelSize = CGSize(width: 216, height: 178)
+    /// The frame follows the capture's shape, so the panel is measured per item rather than fixed.
+    private static func panelSize(for image: NSImage) -> CGSize {
+        let width = CaptureChrome.Metrics.thumbnailWidth
+        let aspect = image.size.height > 0 ? image.size.width / image.size.height : 1.6
+        return CGSize(width: width,
+                      height: min(max(width / max(aspect, 0.4), 90), width * 1.15))
+    }
 
     // MARK: - Showing
 
@@ -49,27 +55,16 @@ final class QuickAccessController: NSObject {
         // which is whichever has key focus. `ScreenPlacement` records the same reasoning.
         guard let screen = ScreenPlacement.screenUnderPointer() else { return }
 
-        let index = entries.count
-        guard let offset = QuickAccessPlacement.stackOffset(
-            forIndex: index, size: Self.panelSize, corner: corner, in: screen.visibleFrame)
-        else {
-            // The stack has filled the screen: the newest replaces the oldest rather than walking
-            // off the edge.
-            if let oldest = entries.first { close(oldest, remember: false) }
-            show(item)
-            return
-        }
-
-        let origin = QuickAccessPlacement.origin(forSize: Self.panelSize, corner: corner,
-                                                 in: screen.visibleFrame)
+        let size = Self.panelSize(for: image)
         let panel = FloatingPanel(
-            contentRect: NSRect(origin: CGPoint(x: origin.x + offset.width,
-                                                y: origin.y + offset.height),
-                                size: Self.panelSize),
-            // Not key: the overlay must never steal focus from what the user is typing into. Every
-            // action on it is a click, so it does not need keyboard input.
+            contentRect: NSRect(origin: .zero, size: size),
+            // Not key: the overlay must never steal focus from what the user is typing into.
+            // Every action on it is a click.
             style: .init(level: .floating, acceptsKey: false, clickThrough: false,
-                         joinsAllSpaces: true, hasShadow: true))
+                         joinsAllSpaces: true,
+                         // The view draws its own shadow, shaped to the rounded corners; a window
+                         // shadow would trace the square frame around them.
+                         hasShadow: false))
 
         let entry = Entry(panel: panel, itemID: item.id)
         panel.contentView = NSHostingView(rootView: QuickAccessView(
@@ -94,10 +89,15 @@ final class QuickAccessController: NSObject {
                 }
                 self?.close(itemID: item.id, remember: false)
             },
+            onSave: { [weak self] in
+                // Already on disk — this is the "put it where I can find it" action.
+                NSWorkspace.shared.activateFileViewerSelecting([store.url(for: item)])
+                self?.close(itemID: item.id, remember: false)
+            },
             onReveal: {
                 NSWorkspace.shared.activateFileViewerSelecting([store.url(for: item)])
             },
-            onDelete: { [weak self] in
+            onClose: { [weak self] in
                 store.remove(id: item.id)
                 self?.close(itemID: item.id, remember: false)
             },
@@ -105,12 +105,14 @@ final class QuickAccessController: NSObject {
                 self?.setHovering(hovering, for: item.id)
             }))
 
+        // Newest first: it goes at the anchor and everything already there shuffles along.
+        entries.insert(entry, at: 0)
         panel.orderFrontRegardless()
-        entries.append(entry)
+        restack(on: screen)
         scheduleAutoClose(for: entry)
     }
 
-    /// Brings back the capture that was closed last.
+    /// Brings back the capture that was closed last.    /// Brings back the capture that was closed last.
     func restoreLastClosed() {
         guard let id = lastClosed, let item = store?.items.first(where: { $0.id == id })
         else { return }
@@ -196,16 +198,41 @@ final class QuickAccessController: NSObject {
     }
 
     /// Closing one from the middle would otherwise leave a hole in the pile.
-    private func restack() {
-        guard let screen = ScreenPlacement.screenUnderPointer() else { return }
-        let origin = QuickAccessPlacement.origin(forSize: Self.panelSize, corner: corner,
-                                                 in: screen.visibleFrame)
-        for (index, entry) in entries.enumerated() {
-            guard let offset = QuickAccessPlacement.stackOffset(
-                forIndex: index, size: Self.panelSize, corner: corner, in: screen.visibleFrame)
-            else { continue }
-            entry.panel.setFrameOrigin(CGPoint(x: origin.x + offset.width,
-                                               y: origin.y + offset.height))
+    /// Lays the stack out from the anchor corner.
+    ///
+    /// Newest at the anchor, older ones pushed away from it. Panels are different heights because
+    /// captures are different shapes, so this walks and accumulates rather than multiplying an
+    /// index by a fixed pitch — which is what left gaps and overlaps when a tall shot followed a
+    /// wide one.
+    private func restack(on screen: NSScreen? = nil) {
+        guard let visible = (screen ?? ScreenPlacement.screenUnderPointer())?.visibleFrame
+        else { return }
+        let inset = CaptureChrome.Metrics.thumbnailInset
+        let gap = CaptureChrome.Metrics.thumbnailGap
+
+        var offset: CGFloat = 0
+        for entry in entries {
+            let size = entry.panel.frame.size
+            let x: CGFloat
+            switch corner {
+            case .topLeft, .bottomLeft: x = visible.minX + inset
+            case .topRight, .bottomRight: x = visible.maxX - size.width - inset
+            }
+            let y: CGFloat
+            switch corner {
+            case .topLeft, .topRight: y = visible.maxY - size.height - inset - offset
+            case .bottomLeft, .bottomRight: y = visible.minY + inset + offset
+            }
+
+            // Once the pile would leave the screen, stop moving them — the oldest simply sit
+            // under the newest rather than walking off the edge.
+            let fits = y >= visible.minY && y + size.height <= visible.maxY
+            if fits {
+                entry.panel.setFrameOrigin(CGPoint(x: x, y: y))
+                offset += size.height + gap
+            } else {
+                entry.panel.orderOut(nil)
+            }
         }
     }
 

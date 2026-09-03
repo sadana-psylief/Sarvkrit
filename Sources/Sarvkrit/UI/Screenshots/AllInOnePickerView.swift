@@ -1,20 +1,30 @@
 import AppKit
 import SwiftUI
 
-/// The mode picker, floated over the frozen screen.
+/// The capture bar: one shortcut, every mode.
+///
+/// Two bars side by side, matching the shape the category has settled on — modes on the left, the
+/// size of what you are about to take on the right. The split matters: the modes are a choice you
+/// make constantly and the size is one you touch rarely, and putting them in one container made
+/// the rare thing compete with the common one.
 struct AllInOnePickerView: View {
     @State private var memory: CaptureModeMemory
     @State private var widthText: String
     @State private var heightText: String
     @State private var timerSeconds: Int
+    @State private var hovered: CaptureMode?
+    @FocusState private var focusedField: Field?
+
+    private enum Field: Hashable { case width, height }
 
     let onPick: (CaptureModeMemory, Int) -> Void
     let onCancel: () -> Void
 
-    /// Only the modes All-In-One can start. Scrolling and text recognition have their own
-    /// shortcuts and their own flows; listing them here would offer a button that behaves
-    /// unlike its neighbours.
-    private static let modes: [CaptureMode] = [.area, .window, .fullscreen]
+    /// The modes this bar can start.
+    ///
+    /// Text recognition sits after a divider because it is the one entry that doesn't produce a
+    /// picture — grouping it with the others would imply it does.
+    private static let captureModes: [CaptureMode] = [.area, .fullscreen, .window, .scrolling]
 
     init(memory: CaptureModeMemory,
          timerSeconds: Int,
@@ -29,78 +39,177 @@ struct AllInOnePickerView: View {
     }
 
     var body: some View {
-        VStack(spacing: Theme.Space.md) {
-            HStack(spacing: Theme.Space.sm) {
-                ForEach(Self.modes, id: \.self) { mode in
-                    modeButton(mode)
-                }
-            }
-
-            if memory.mode == .area {
-                HStack(spacing: Theme.Space.xs) {
-                    sizeField("Width", text: $widthText)
-                    Text("×").foregroundStyle(.secondary)
-                    sizeField("Height", text: $heightText)
-                    Toggle(isOn: $memory.aspectLocked) {
-                        Image(systemName: memory.aspectLocked ? "lock" : "lock.open")
-                    }
-                    .toggleStyle(.button)
-                    .help("Lock the aspect ratio while dragging")
-                }
-                .font(.caption)
-            }
-
-            HStack(spacing: Theme.Space.sm) {
-                Picker("Timer", selection: $timerSeconds) {
-                    Text("No timer").tag(0)
-                    Text("3s").tag(3)
-                    Text("5s").tag(5)
-                    Text("10s").tag(10)
-                }
-                .labelsHidden()
-                .frame(width: 96)
-
-                Button("Capture") { pick() }
-                    .keyboardShortcut(.defaultAction)
-                Button("Cancel", role: .cancel) { onCancel() }
-                    .keyboardShortcut(.cancelAction)
-            }
+        HStack(alignment: .center, spacing: CaptureChrome.Metrics.barGap) {
+            modeBar
+            sizeBar
         }
-        .padding(Theme.Space.md)
-        .frame(width: 380)
-        .background(.regularMaterial,
-                    in: RoundedRectangle(cornerRadius: Theme.Radius.module, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.module, style: .continuous)
-            .strokeBorder(Color(nsColor: .separatorColor).opacity(0.5), lineWidth: 0.5))
-        // The panel is borderless, so the background is the only thing that can move it.
-        .background(WindowDragHandle())
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
     }
 
-    private func modeButton(_ mode: CaptureMode) -> some View {
-        Button {
-            memory.mode = mode
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: mode.symbolName).font(.system(size: 18))
-                Text(mode.title).font(.caption2)
+    // MARK: - Modes
+
+    private var modeBar: some View {
+        CaptureChrome.Bar {
+            HStack(spacing: CaptureChrome.Metrics.cellGap) {
+                ForEach(Self.captureModes, id: \.self) { mode in
+                    cell(for: mode)
+                }
+                timerCell
+                // One divider, before the entry that doesn't produce a picture. Fencing the timer
+                // off as well implied it was a different *kind* of thing, when it is a modifier on
+                // whichever mode you pick next.
+                divider
+                cell(for: .textRecognition)
             }
-            .frame(width: 84, height: 56)
-            .background(memory.mode == mode ? Color.accentColor.opacity(0.2) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .padding(CaptureChrome.Metrics.barPadding)
+        }
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(CaptureChrome.Colours.divider)
+            .frame(width: 1, height: CaptureChrome.Metrics.dividerHeight)
+            .padding(.horizontal, 5)
+    }
+
+    private func cell(for mode: CaptureMode) -> some View {
+        let isSelected = memory.mode == mode
+        let isHovered = hovered == mode
+        return Button {
+            memory.mode = mode
+            // Picking a mode is the decision; nothing else on the bar needs confirming.
+            commit()
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: mode.symbolName)
+                    .font(.system(size: CaptureChrome.Metrics.iconSize, weight: .regular))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(CaptureChrome.Colours.icon)
+                    .frame(height: CaptureChrome.Metrics.iconSize + 4)
+                Text(mode.title)
+                    .font(CaptureChrome.Text.label)
+                    .foregroundStyle(isSelected || isHovered
+                                     ? CaptureChrome.Colours.labelStrong
+                                     : CaptureChrome.Colours.label)
+            }
+            .frame(width: CaptureChrome.Metrics.cellWidth,
+                   height: CaptureChrome.Metrics.cellHeight)
+            .background(
+                RoundedRectangle(cornerRadius: CaptureChrome.Metrics.cellRadius,
+                                 style: .continuous)
+                    .fill(isSelected ? CaptureChrome.Colours.cellSelected
+                          : isHovered ? CaptureChrome.Colours.cellHover : .clear)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .clickableCursor()
+        .onHover { hovered = $0 ? mode : (hovered == mode ? nil : hovered) }
+        .help(mode.title)
+        .accessibilityLabel(mode.title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
-    private func sizeField(_ label: String, text: Binding<String>) -> some View {
-        TextField(label, text: text)
-            .textFieldStyle(.roundedBorder)
-            .frame(width: 64)
-            .monospacedDigit()
-            .accessibilityLabel(label)
+    /// The timer is a mode-shaped control that cycles rather than a picker, so it doesn't open a
+    /// menu over the screen you are about to capture.
+    private var timerCell: some View {
+        let isHovered = hovered == nil && timerSeconds > 0
+        return Button {
+            timerSeconds = [0, 3, 5, 10].first { $0 > timerSeconds } ?? 0
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: timerSeconds == 0 ? "timer" : "timer.circle.fill")
+                    .font(.system(size: CaptureChrome.Metrics.iconSize, weight: .regular))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(CaptureChrome.Colours.icon)
+                    .frame(height: CaptureChrome.Metrics.iconSize + 4)
+                Text(timerSeconds == 0 ? "Timer" : "\(timerSeconds)s")
+                    .font(CaptureChrome.Text.label)
+                    .foregroundStyle(timerSeconds > 0
+                                     ? CaptureChrome.Colours.labelStrong
+                                     : CaptureChrome.Colours.label)
+            }
+            .frame(width: CaptureChrome.Metrics.cellWidth,
+                   height: CaptureChrome.Metrics.cellHeight)
+            .background(
+                RoundedRectangle(cornerRadius: CaptureChrome.Metrics.cellRadius,
+                                 style: .continuous)
+                    .fill(timerSeconds > 0 ? CaptureChrome.Colours.cellSelected
+                          : isHovered ? CaptureChrome.Colours.cellHover : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .clickableCursor()
+        .help("Count down before capturing")
+        .accessibilityLabel(timerSeconds == 0 ? "No timer" : "\(timerSeconds) second timer")
     }
 
-    private func pick() {
+    // MARK: - Size
+
+    private var sizeBar: some View {
+        CaptureChrome.Bar {
+            HStack(spacing: 8) {
+                field(text: $widthText, placeholder: "Auto", focus: .width)
+                Text("×")
+                    .font(CaptureChrome.Text.label)
+                    .foregroundStyle(CaptureChrome.Colours.label)
+                field(text: $heightText, placeholder: "Auto", focus: .height)
+
+                Rectangle()
+                    .fill(CaptureChrome.Colours.divider)
+                    .frame(width: 1, height: 26)
+                    .padding(.horizontal, 2)
+
+                Button {
+                    memory.aspectLocked.toggle()
+                } label: {
+                    Image(systemName: memory.aspectLocked ? "lock.fill" : "lock.open")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(memory.aspectLocked
+                                         ? CaptureChrome.Colours.labelStrong
+                                         : CaptureChrome.Colours.label)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(memory.aspectLocked ? CaptureChrome.Colours.cellSelected
+                                                          : .clear))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+                .help("Lock the aspect ratio while dragging")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(height: CaptureChrome.Metrics.cellHeight
+                   + CaptureChrome.Metrics.barPadding * 2)
+        }
+    }
+
+    private func field(text: Binding<String>, placeholder: String, focus: Field) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(CaptureChrome.Text.value)
+            .foregroundStyle(CaptureChrome.Colours.labelStrong)
+            .multilineTextAlignment(.center)
+            .frame(width: 62, height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(CaptureChrome.Colours.field))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(focusedField == focus
+                                  ? Color.accentColor.opacity(0.9)
+                                  : Color.white.opacity(0.08),
+                                  lineWidth: focusedField == focus ? 2 : 1))
+            .focused($focusedField, equals: focus)
+            .onSubmit { commit() }
+    }
+
+    // MARK: - Commit
+
+    private func commit() {
         var result = memory
         // Both fields or neither — half a typed size is not a size, and silently using one axis
         // would produce a selection the user did not ask for.

@@ -128,19 +128,20 @@ struct ScreenshotDetailView: View {
                     Picker("Close after", selection: Binding(
                         get: { feature.quickAccessAutoCloseSeconds },
                         set: { feature.quickAccessAutoCloseSeconds = $0 })) {
+                        Text("Stays until I dismiss it").tag(0.0)
                         Text("4 seconds").tag(4.0)
                         Text("8 seconds").tag(8.0)
                         Text("15 seconds").tag(15.0)
-                        Text("Never").tag(0.0)
                     }
                 }
             } header: {
                 Text("Capture overlay")
             } footer: {
                 Text("""
-                    The thumbnail that appears after a capture. Drag it straight into another app, \
-                    or leave the pointer on it to stop the countdown. ⌃⇧Z brings back the last one \
-                    you dismissed; ⌃⇧H hides them until the next capture.
+                    The thumbnail that appears after a capture. Drag it straight into another \
+                    app, or hover it to copy, annotate or pin. It stays put until you deal with \
+                    it — ⌃⇧Z brings back the last one you dismissed, ⌃⇧H hides them all until the \
+                    next capture.
                     """)
                     .font(.caption)
                     .foregroundStyle(.secondary)

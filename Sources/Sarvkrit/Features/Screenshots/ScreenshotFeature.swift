@@ -157,7 +157,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
     var quickAccessCorner: QuickAccessPlacement.Corner {
         get {
             defaults.string(forKey: "screenshot.quickAccessCorner")
-                .flatMap(QuickAccessPlacement.Corner.init(rawValue:)) ?? .bottomRight
+                .flatMap(QuickAccessPlacement.Corner.init(rawValue:)) ?? .bottomLeft
         }
         set {
             guard newValue != quickAccessCorner else { return }
@@ -168,8 +168,13 @@ final class ScreenshotFeature: Feature, ObservableObject {
 
     /// Zero means "stay until dismissed", which is how a nil is expressible in UserDefaults
     /// without a second key.
+    ///
+    /// **Zero is the default.** The promise this overlay makes is that a capture is still there
+    /// when you turn back to it — reach for it a few seconds later and find it gone and you stop
+    /// trusting it, which is worse than having no overlay at all. It goes when you act on it, when
+    /// the next capture arrives, or when you dismiss it.
     var quickAccessAutoCloseSeconds: Double {
-        get { defaults.object(forKey: "screenshot.quickAccessSeconds") as? Double ?? 8 }
+        get { defaults.object(forKey: "screenshot.quickAccessSeconds") as? Double ?? 0 }
         set {
             guard newValue != quickAccessAutoCloseSeconds else { return }
             defaults.set(newValue, forKey: "screenshot.quickAccessSeconds")

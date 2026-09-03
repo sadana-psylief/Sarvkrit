@@ -164,15 +164,24 @@ enum AnnotationRenderer {
     }
 
     private static func drawArrow(_ arrow: ArrowElement, in context: CGContext) {
-        // One filled outline rather than a stroked line plus a triangle — see `ArrowGeometry` for
-        // why that difference is the whole look of the tool.
-        let path = ArrowGeometry.path(from: arrow.start, to: arrow.end,
-                                      curvature: arrow.curvature,
-                                      head: arrow.head,
-                                      strokeWidth: arrow.stroke.width)
-        context.setFillColor(arrow.stroke.colour.cgColor)
-        context.addPath(path)
-        context.fillPath()
+        // A filled outline for the tapered styles and a stroked chevron for the open one — see
+        // `ArrowGeometry`, which is built to measurements rather than to taste.
+        switch ArrowGeometry.shape(from: arrow.start, to: arrow.end,
+                                   curvature: arrow.curvature,
+                                   head: arrow.head,
+                                   strokeWidth: arrow.stroke.width) {
+        case .fill(let path):
+            context.setFillColor(arrow.stroke.colour.cgColor)
+            context.addPath(path)
+            context.fillPath()
+        case .stroke(let path, let lineWidth):
+            context.setStrokeColor(arrow.stroke.colour.cgColor)
+            context.setLineWidth(lineWidth)
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            context.addPath(path)
+            context.strokePath()
+        }
     }
 
     private static func drawPencil(_ pencil: PencilElement, in context: CGContext) {

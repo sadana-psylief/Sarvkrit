@@ -16,6 +16,35 @@ final class ArrowGeometryTests: XCTestCase {
                            head: head, strokeWidth: width)
     }
 
+    /// The measured reference proportions, which are the whole point of this file.
+    func testTheProportionsMatchTheMeasuredReference() {
+        let w: CGFloat = 12
+        let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: w, length: 400)
+        XCTAssertEqual(metrics.neckHalf, w * 0.5, accuracy: 0.001, "shaft is W at the junction")
+        XCTAssertEqual(metrics.tailHalf, w * 0.175, accuracy: 0.001, "and 0.35W at the tail")
+        XCTAssertEqual(metrics.headLength, w * 3.0, accuracy: 0.001)
+        XCTAssertEqual(metrics.headHalf, w * 1.425, accuracy: 0.001, "2.85W barb to barb")
+        XCTAssertEqual(metrics.barbSetback, w * 0.3, accuracy: 0.001,
+                       "the barbs sit behind the junction — that is what makes it look swept")
+    }
+
+    func testTheOpenStyleIsStrokedNotFilled() {
+        // Four styles that all fill would make the open chevron impossible.
+        guard case .stroke = ArrowGeometry.shape(from: .zero, to: CGPoint(x: 100, y: 0),
+                                                 curvature: 0, head: .open, strokeWidth: 8)
+        else { return XCTFail("open should stroke") }
+        guard case .fill = ArrowGeometry.shape(from: .zero, to: CGPoint(x: 100, y: 0),
+                                               curvature: 0, head: .filled, strokeWidth: 8)
+        else { return XCTFail("filled should fill") }
+    }
+
+    func testAShortArrowKeepsAVisibleHead() {
+        // It used to lose the head entirely once the shaft minimum could not be met.
+        let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: 16, length: 30)
+        XCTAssertGreaterThan(metrics.headLength, 4, "the head must not vanish")
+        XCTAssertLessThan(metrics.headLength, 30 * 0.55, "and must not eat the shaft")
+    }
+
     func testTheOutlineIsClosedAndNonEmpty() {
         let box = path().boundingBox
         XCTAssertFalse(box.isNull)
@@ -26,33 +55,37 @@ final class ArrowGeometryTests: XCTestCase {
         // The property that gives the mark direction before you even notice the head — and the
         // thing a stroked line physically cannot do.
         let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: 10, length: 200)
-        XCTAssertLessThan(metrics.tailWidth, metrics.neckWidth)
+        XCTAssertLessThan(metrics.tailHalf, metrics.neckHalf)
     }
 
     func testTheHeadIsWiderThanTheShaft() {
         let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: 10, length: 200)
-        XCTAssertGreaterThan(metrics.headWidth, metrics.neckWidth)
+        XCTAssertGreaterThan(metrics.headHalf, metrics.neckHalf)
     }
 
     func testTheBackEdgeIsSweptNotFlat() {
-        // Zero sweep is a plain triangle. Every style keeps some.
-        for head in [ArrowElement.Head.filled, .open, .thin, .curved] {
+        // Zero setback is a plain triangle sitting on a stick.
+        for head in [ArrowElement.Head.filled, .thin, .curved] {
             let metrics = ArrowGeometry.metrics(for: head, strokeWidth: 10, length: 200)
-            XCTAssertGreaterThan(metrics.headSweep, 0, "\(head) lost its sweep")
-            XCTAssertLessThan(metrics.headSweep, 0.35, "\(head) is over-swept and grows spurs")
+            XCTAssertGreaterThan(metrics.barbSetback, 0, "\(head) lost its sweep")
+            XCTAssertLessThan(metrics.barbSetback, metrics.headLength * 0.25,
+                              "\(head) is over-swept and grows spurs")
         }
     }
 
-    func testAShortArrowAlwaysKeepsAVisibleShaft() {
-        // At 26pt on a 60pt arrow the untamed proportions produced a signpost, not a mark. The
-        // shaft has to survive even in that degenerate case — the assertion is about what the user
-        // sees, not about the particular clamp that achieves it.
+    func testTheShaftAlwaysSurvives() {
+        // The reference allows a head of 3W against a shaft of 2W, so at exactly five widths of
+        // length the head is legitimately 60% of the arrow. What must never happen is the head
+        // reaching the tail.
         for width in [CGFloat(4), 12, 26, 40] {
-            for length in [CGFloat(24), 60, 140] {
+            for length in [CGFloat(24), 60, 140, 400] {
                 let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: width,
                                                     length: length)
-                XCTAssertLessThan(metrics.headLength, length * 0.55,
-                                  "w=\(width) len=\(length): the head ate the shaft")
+                XCTAssertGreaterThan(length - metrics.headLength, 0,
+                                     "w=\(width) len=\(length): no shaft left")
+                XCTAssertLessThanOrEqual(metrics.headLength, max(length - width * 2,
+                                                                 length * 0.45) + 0.001,
+                                         "w=\(width) len=\(length): past the cap")
             }
         }
     }
@@ -63,7 +96,7 @@ final class ArrowGeometryTests: XCTestCase {
             for length in [CGFloat(30), 90, 400] {
                 let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: width,
                                                     length: length)
-                XCTAssertLessThanOrEqual(metrics.headWidth, metrics.headLength,
+                XCTAssertLessThanOrEqual(metrics.headHalf, metrics.headLength,
                                          "w=\(width) len=\(length)")
             }
         }
@@ -80,21 +113,44 @@ final class ArrowGeometryTests: XCTestCase {
     }
 
     func testACurvedArrowBowsAwayFromTheChord() {
-        // A quadratic reaches half its control offset at the midpoint, so a curvature of 60
-        // displaces the spine by about 30 — the bounding box grows by that, not by 60.
-        let straight = path(.curved, curvature: 0).boundingBox
-        let bowed = path(.curved, curvature: 60).boundingBox
-        XCTAssertGreaterThan(bowed.height, straight.height + 10)
-        XCTAssertGreaterThan(bowed.height, straight.height * 1.35)
+        // Measured on the top edge rather than the box height. A bowed arrow's head tilts with
+        // the curve, so its *vertical* extent shrinks even as the shaft rises — comparing heights
+        // makes a clearly bowed arrow look barely different from a straight one.
+        let straight = path(.filled, curvature: 0).boundingBox
+        let bowed = path(.filled, curvature: 60).boundingBox
+        XCTAssertGreaterThan(bowed.maxY, straight.maxY + 10,
+                             "the shaft should rise well above a straight arrow's edge")
     }
 
     func testTheFourStylesAreActuallyDifferent() {
-        // Four styles that render identically would be four buttons that do nothing.
-        let boxes = [ArrowElement.Head.filled, .open, .thin, .curved].map {
-            ArrowGeometry.metrics(for: $0, strokeWidth: 10, length: 200)
-        }
-        let signatures = Set(boxes.map { "\($0.tailWidth)-\($0.headLength)-\($0.headWidth)" })
-        XCTAssertEqual(signatures.count, 4)
+        // Four buttons that render the same thing would be four buttons that do nothing. `curved`
+        // shares its proportions with `filled` on purpose — what separates them is the default
+        // bow, so it has to be compared as a drawn shape rather than as numbers.
+        let straight = path(.filled).boundingBox
+        let curved = path(.curved).boundingBox
+        XCTAssertGreaterThan(curved.maxY, straight.maxY + 3,
+                             "curved must bow without the user touching the handle")
+
+        let thin = ArrowGeometry.metrics(for: .thin, strokeWidth: 10, length: 200)
+        let filled = ArrowGeometry.metrics(for: .filled, strokeWidth: 10, length: 200)
+        XCTAssertNotEqual(thin.headHalf, filled.headHalf)
+
+        guard case .stroke = ArrowGeometry.shape(from: .zero, to: CGPoint(x: 200, y: 0),
+                                                 curvature: 0, head: .open, strokeWidth: 10)
+        else { return XCTFail("open should be the stroked one") }
+    }
+
+    func testAnExplicitCurveOverridesTheDefaultBow() {
+        // Otherwise dragging the handle back to straight would be impossible on a curved arrow.
+        let defaulted = ArrowGeometry.effectiveCurvature(0, head: .curved,
+                                                         from: .zero, to: CGPoint(x: 100, y: 0))
+        XCTAssertEqual(defaulted, 14, accuracy: 0.001)
+        XCTAssertEqual(ArrowGeometry.effectiveCurvature(-40, head: .curved,
+                                                        from: .zero, to: CGPoint(x: 100, y: 0)),
+                       -40)
+        XCTAssertEqual(ArrowGeometry.effectiveCurvature(0, head: .filled,
+                                                        from: .zero, to: CGPoint(x: 100, y: 0)),
+                       0, "a straight style stays straight")
     }
 
     func testAZeroLengthArrowDoesNotCrash() {
