@@ -228,7 +228,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
         switch model.tool {
         case .arrow:
-            draft = .arrow(ArrowElement(start: start, end: point, stroke: stroke))
+            draft = .arrow(ArrowElement(start: start, end: point,
+                                        head: model.arrowHead, stroke: stroke))
         case .line:
             draft = .line(LineElement(start: start, end: point, stroke: stroke))
         case .rectangle:

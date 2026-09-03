@@ -19,6 +19,9 @@ final class EditorDocumentModel: ObservableObject {
     @Published var selection: AnnotationElement.ID?
     @Published var colour: RGBAColour = .red
     @Published var strokeWidth: CGFloat = 6
+    /// Which arrow shape new arrows get. Four were built; without this control the user could
+    /// only ever draw the first one.
+    @Published var arrowHead: ArrowElement.Head = .filled
     /// Set while a text annotation has the field editor. Gates the single-key tool shortcuts.
     @Published var isEditingText = false
     @Published private(set) var isDirty = false
@@ -97,6 +100,50 @@ final class EditorDocumentModel: ObservableObject {
     private func pruneSelection() {
         if let selection, !document.elements.contains(where: { $0.id == selection }) {
             self.selection = nil
+        }
+    }
+
+    /// Applies the current colour, thickness and arrow style to whatever is selected.
+    ///
+    /// Without this the toolbar only affects the *next* mark, so changing your mind about a colour
+    /// means deleting and redrawing — which is the difference between a toolbar and a preference.
+    func applyStyleToSelection() {
+        guard let selection else { return }
+        edit { document in
+            guard let index = document.elements.firstIndex(where: { $0.id == selection })
+            else { return }
+            let colour = self.colour
+            let width = self.scaledStrokeWidth
+            switch document.elements[index].kind {
+            case .arrow(var value):
+                value.stroke.colour = colour
+                value.stroke.width = width
+                value.head = self.arrowHead
+                document.elements[index].kind = .arrow(value)
+            case .line(var value):
+                value.stroke.colour = colour; value.stroke.width = width
+                document.elements[index].kind = .line(value)
+            case .rectangle(var value):
+                value.stroke.colour = colour; value.stroke.width = width
+                document.elements[index].kind = .rectangle(value)
+            case .ellipse(var value):
+                value.stroke.colour = colour; value.stroke.width = width
+                document.elements[index].kind = .ellipse(value)
+            case .pencil(var value):
+                value.stroke.colour = colour; value.stroke.width = width
+                document.elements[index].kind = .pencil(value)
+            case .text(var value):
+                value.colour = colour
+                document.elements[index].kind = .text(value)
+            case .highlighter(var value):
+                value.colour = colour
+                document.elements[index].kind = .highlighter(value)
+            case .counter(var value):
+                value.fill = colour
+                document.elements[index].kind = .counter(value)
+            default:
+                break
+            }
         }
     }
 

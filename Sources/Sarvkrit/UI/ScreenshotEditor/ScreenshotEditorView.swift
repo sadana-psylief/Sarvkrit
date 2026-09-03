@@ -71,7 +71,10 @@ struct ScreenshotEditorView: View {
 
             HStack(spacing: 5) {
                 ForEach(Array(RGBAColour.palette.enumerated()), id: \.offset) { index, colour in
-                    Button { model.colour = colour } label: {
+                    Button {
+                        model.colour = colour
+                        model.applyStyleToSelection()
+                    } label: {
                         Circle()
                             .fill(Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .red))
                             .frame(width: 16, height: 16)
@@ -89,12 +92,18 @@ struct ScreenshotEditorView: View {
                 }
             }
 
+            if model.tool == .arrow {
+                arrowStylePicker
+            }
+
             HStack(spacing: 6) {
                 Image(systemName: "lineweight")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Slider(value: $model.strokeWidth, in: 2...36)
-                    .frame(width: 84)
+                Slider(value: $model.strokeWidth, in: 2...36) { editing in
+                    if !editing { model.applyStyleToSelection() }
+                }
+                .frame(width: 84)
             }
             .help("Line thickness")
 
@@ -125,6 +134,32 @@ struct ScreenshotEditorView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, Theme.Space.md)
         .padding(.vertical, 8)
+    }
+
+    /// The four arrow shapes, drawn rather than named.
+    ///
+    /// Names would be guesswork — "filled" and "thin" mean nothing until you see them — so each
+    /// button draws the actual path the tool will produce, at the thickness currently set.
+    private var arrowStylePicker: some View {
+        HStack(spacing: 2) {
+            ForEach([ArrowElement.Head.filled, .open, .thin, .curved], id: \.self) { head in
+                Button {
+                    model.arrowHead = head
+                    model.applyStyleToSelection()
+                } label: {
+                    ArrowStyleSwatch(head: head, isActive: model.arrowHead == head)
+                        .frame(width: 34, height: 20)
+                        .background(model.arrowHead == head ? Color.accentColor : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+                .help("Arrow style")
+            }
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.07),
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private func toolButton(_ tool: ToolKind) -> some View {
@@ -168,6 +203,56 @@ struct AnnotationCanvasHost: NSViewRepresentable {
 
         func canvasDidEdit(_ view: AnnotationCanvasView) {
             view.refresh()
+        }
+    }
+}
+
+/// A miniature of one arrow style, drawn with the same geometry the tool uses so the button
+/// cannot promise a shape the canvas won't draw.
+struct ArrowStyleSwatch: NSViewRepresentable {
+    let head: ArrowElement.Head
+    let isActive: Bool
+
+    func makeNSView(context: Context) -> SwatchView { SwatchView(head: head, isActive: isActive) }
+
+    func updateNSView(_ view: SwatchView, context: Context) {
+        view.head = head
+        view.isActive = isActive
+    }
+
+    final class SwatchView: NSView {
+        var head: ArrowElement.Head { didSet { needsDisplay = true } }
+        var isActive: Bool { didSet { needsDisplay = true } }
+
+        init(head: ArrowElement.Head, isActive: Bool) {
+            self.head = head
+            self.isActive = isActive
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not used from a nib") }
+
+        override func draw(_ dirtyRect: NSRect) {
+            guard let context = NSGraphicsContext.current?.cgContext else { return }
+            let colour = isActive ? NSColor.white : NSColor.labelColor
+            let start = CGPoint(x: bounds.minX + 5, y: bounds.midY)
+            let end = CGPoint(x: bounds.maxX - 5, y: bounds.midY)
+
+            switch ArrowGeometry.shape(from: start, to: end, curvature: 0,
+                                       head: head, strokeWidth: 3.2) {
+            case .fill(let path):
+                context.setFillColor(colour.cgColor)
+                context.addPath(path)
+                context.fillPath()
+            case .stroke(let path, let lineWidth):
+                context.setStrokeColor(colour.cgColor)
+                context.setLineWidth(lineWidth)
+                context.setLineCap(.round)
+                context.setLineJoin(.round)
+                context.addPath(path)
+                context.strokePath()
+            }
         }
     }
 }
