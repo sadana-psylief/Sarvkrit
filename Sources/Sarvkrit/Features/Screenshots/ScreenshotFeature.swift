@@ -180,6 +180,25 @@ final class ScreenshotFeature: Feature, ObservableObject {
         quickAccessAutoCloseSeconds > 0 ? quickAccessAutoCloseSeconds : nil
     }
 
+    /// The picker's last selection, so a retake is one keypress.
+    var modeMemory: CaptureModeMemory {
+        get { CaptureModeMemory.load(from: defaults) }
+        set {
+            guard newValue != modeMemory else { return }
+            newValue.save(to: defaults)
+            objectWillChange.send()
+        }
+    }
+
+    var selfTimerSeconds: Int {
+        get { defaults.object(forKey: "screenshot.selfTimerSeconds") as? Int ?? 0 }
+        set {
+            guard newValue != selfTimerSeconds else { return }
+            defaults.set(newValue, forKey: "screenshot.selfTimerSeconds")
+            objectWillChange.send()
+        }
+    }
+
     var destinationSettings: CaptureDestination.Settings {
         CaptureDestination.Settings(savesToDisk: savesToDisk,
                                     copiesToClipboard: copiesToClipboard,
@@ -194,6 +213,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
     var captureWindow: (() -> Void)?
     var restoreLastOverlay: (() -> Void)?
     var hideOverlays: (() -> Void)?
+    var showAllInOne: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -219,6 +239,9 @@ final class ScreenshotFeature: Feature, ObservableObject {
             },
             bind(id: GlobalHotkey.ID.captureWindow, key: kVK_ANSI_W, name: "window") { [weak self] in
                 self?.captureWindow?()
+            },
+            bind(id: GlobalHotkey.ID.captureAllInOne, key: kVK_ANSI_5, name: "all-in-one") { [weak self] in
+                self?.showAllInOne?()
             },
             bind(id: GlobalHotkey.ID.restoreLastOverlay, key: kVK_ANSI_Z, name: "restore overlay") { [weak self] in
                 self?.restoreLastOverlay?()

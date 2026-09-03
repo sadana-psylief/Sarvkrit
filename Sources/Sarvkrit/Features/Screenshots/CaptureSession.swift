@@ -69,6 +69,48 @@ enum CaptureSession {
                       display: frames.first { $0.geometry.frame.intersects(picked.frame) }?.geometry)
     }
 
+    /// Runs a countdown, then captures.
+    ///
+    /// **The final capture is always live, even when Freeze is on.** A countdown over a bitmap
+    /// taken *before* the countdown defeats the entire point of a self-timer — the seconds exist
+    /// so the screen can be arranged, and freezing first would throw that arrangement away. So a
+    /// timed area capture picks its rect against a frozen frame, waits, and then re-captures.
+    static func timedCapture(_ mode: CaptureMode,
+                             seconds: Int,
+                             using capturer: ScreenCapturing,
+                             options: CaptureOptions,
+                             chrome: CaptureOverlayController.Chrome) async throws -> Result? {
+        // Choose first, so the countdown is spent arranging rather than aiming.
+        var chosenRect: CGRect?
+        var chosenDisplay: DisplaySnapshotGeometry?
+        if mode == .area {
+            guard let picked = try await captureArea(using: capturer, options: options,
+                                                     chrome: chrome) else { return nil }
+            chosenRect = picked.sourceRect
+            chosenDisplay = picked.display
+        }
+
+        await withCheckedContinuation { continuation in
+            CountdownPresenter.shared.run(seconds: seconds) { _ in continuation.resume() }
+        }
+
+        let frames = try await capturer.snapshotAllDisplays(options: options)
+        guard !frames.isEmpty else { throw CaptureError.noDisplays }
+
+        if let chosenRect, let chosenDisplay,
+           let frame = frames.first(where: { $0.geometry.displayID == chosenDisplay.displayID }) {
+            let pixels = CaptureGeometry.pixelRect(forGlobalRect: chosenRect, in: frame.geometry)
+            guard let cropped = frame.image.cropping(to: pixels.integral) else { return nil }
+            return Result(image: cropped, sourceRect: chosenRect, display: frame.geometry)
+        }
+
+        let pointer = NSEvent.mouseLocation
+        guard let frame = frames.first(where: { $0.geometry.frame.contains(pointer) })
+                ?? frames.first
+        else { throw CaptureError.noDisplays }
+        return Result(image: frame.image, sourceRect: frame.geometry.frame, display: frame.geometry)
+    }
+
     /// The display under the pointer, whole.
     ///
     /// Not `NSScreen.main` and not the first display: the first is whichever has the menu bar,

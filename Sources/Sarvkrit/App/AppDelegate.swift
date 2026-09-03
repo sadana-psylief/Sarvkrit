@@ -104,6 +104,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let screenshots else { return }
             Task { @MainActor in await Self.capture(.window, with: screenshots) }
         }
+        screenshots.showAllInOne = { [weak screenshots] in
+            guard let screenshots else { return }
+            MainActor.assumeIsolated {
+                guard !AllInOneController.shared.isPresenting else {
+                    AllInOneController.shared.dismiss()
+                    return
+                }
+                AllInOneController.shared.present(
+                    memory: screenshots.modeMemory,
+                    timerSeconds: screenshots.selfTimerSeconds
+                ) { choice in
+                    guard let (memory, seconds) = choice else { return }
+                    screenshots.modeMemory = memory
+                    screenshots.selfTimerSeconds = seconds
+                    Task { @MainActor in
+                        await Self.capture(memory.mode, with: screenshots,
+                                           timerSeconds: seconds, memory: memory)
+                    }
+                }
+            }
+        }
         screenshots.restoreLastOverlay = {
             MainActor.assumeIsolated { QuickAccessController.shared.restoreLastClosed() }
         }
@@ -127,7 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private static func capture(_ mode: CaptureMode, with feature: ScreenshotFeature) async {
+    private static func capture(_ mode: CaptureMode,
+                                with feature: ScreenshotFeature,
+                                timerSeconds: Int = 0,
+                                memory: CaptureModeMemory? = nil) async {
         // Pressing the shortcut again while the overlay is up should dismiss it, not stack a
         // second full-screen overlay on top of the first.
         if CaptureOverlayController.shared.isPresenting {
@@ -138,6 +162,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let options = feature.captureOptions
             let result: CaptureSession.Result?
+            if timerSeconds > 0 {
+                result = try await CaptureSession.timedCapture(
+                    mode, seconds: timerSeconds, using: feature.capturer,
+                    options: options, chrome: feature.overlayChrome)
+                guard let result else { return }
+                deliver(result, mode: mode, with: feature)
+                return
+            }
             switch mode {
             case .area:
                 result = try await CaptureSession.captureArea(using: feature.capturer,

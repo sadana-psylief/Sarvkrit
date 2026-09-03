@@ -41,6 +41,28 @@ struct ScreenshotDetailView: View {
             }
 
             Section {
+                Picker("Self-timer", selection: Binding(
+                    get: { feature.selfTimerSeconds },
+                    set: { feature.selfTimerSeconds = $0 })) {
+                    Text("Off").tag(0)
+                    Text("3 seconds").tag(3)
+                    Text("5 seconds").tag(5)
+                    Text("10 seconds").tag(10)
+                }
+            } header: {
+                Text("All-In-One")
+            } footer: {
+                Text("""
+                    ⌃⇧5 opens a picker with every mode, remembering what you chose last so a \
+                    retake is one keypress. With a timer set you choose the area first and the \
+                    countdown is yours to arrange the screen in — the shot is taken live at the \
+                    end, not frozen at the start.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Toggle("Show crosshair", isOn: Binding(
                     get: { feature.showsCrosshair }, set: { feature.showsCrosshair = $0 }))
                 Toggle("Show magnifier", isOn: Binding(
