@@ -63,6 +63,34 @@ final class ScreenshotFeature: Feature, ObservableObject {
         }
     }
 
+    var hidesDesktopIcons: Bool {
+        get { defaults.object(forKey: "screenshot.hidesDesktopIcons") as? Bool ?? false }
+        set {
+            guard newValue != hidesDesktopIcons else { return }
+            defaults.set(newValue, forKey: "screenshot.hidesDesktopIcons")
+            objectWillChange.send()
+        }
+    }
+
+    var showsCursor: Bool {
+        get { defaults.object(forKey: "screenshot.showsCursor") as? Bool ?? false }
+        set {
+            guard newValue != showsCursor else { return }
+            defaults.set(newValue, forKey: "screenshot.showsCursor")
+            objectWillChange.send()
+        }
+    }
+
+    var captureOptions: CaptureOptions {
+        var options = CaptureOptions()
+        options.hidesDesktopIcons = hidesDesktopIcons
+        // Never for the frozen snapshot itself — the overlay draws its own crosshair, and a frozen
+        // cursor sitting under the live one reads as a rendering fault. This is applied when the
+        // final image is taken, not when the screen is frozen.
+        options.showsCursor = false
+        return options
+    }
+
     var destinationSettings: CaptureDestination.Settings {
         CaptureDestination.Settings(savesToDisk: savesToDisk,
                                     copiesToClipboard: copiesToClipboard,
@@ -73,6 +101,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
     /// Set by `AppDelegate`. Nil until then, and every call site tolerates that — a nil closure is
     /// how a not-yet-built half of the feature is absent rather than crashing.
     var captureFullscreen: (() -> Void)?
+    var captureArea: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -92,17 +121,36 @@ final class ScreenshotFeature: Feature, ObservableObject {
     }
 
     func activate() {
-        let fullscreen = GlobalHotkey(id: GlobalHotkey.ID.captureFullscreen)
-        let status = fullscreen.register(keyCode: UInt32(kVK_ANSI_F),
-                                         modifiers: UInt32(controlKey | shiftKey)) { [weak self] in
-            MainActor.assumeIsolated { self?.captureFullscreen?() }
+        hotkeys = [
+            bind(id: GlobalHotkey.ID.captureArea, key: kVK_ANSI_A, name: "area") { [weak self] in
+                self?.captureArea?()
+            },
+            bind(id: GlobalHotkey.ID.captureFullscreen, key: kVK_ANSI_F, name: "fullscreen") { [weak self] in
+                self?.captureFullscreen?()
+            },
+        ]
+    }
+
+    /// ⌃⇧ plus a letter.
+    ///
+    /// **Not ⌘⇧3/4/5.** Those belong to the system screenshot service, which claims them below
+    /// `RegisterEventHotKey` — registering one either reports `eventHotKeyExistsErr` or succeeds
+    /// and never fires, and a shortcut that silently does nothing is the worst of the options.
+    /// ⌃⌥ is already crowded: window management owns most of the letters, the Shelf has S, and
+    /// the clipboard has ⌃⌥1–5. ⌃⇧ is free.
+    private func bind(id: UInt32, key: Int, name: String,
+                      onFire: @escaping () -> Void) -> GlobalHotkey {
+        let hotkey = GlobalHotkey(id: id)
+        let status = hotkey.register(keyCode: UInt32(key),
+                                     modifiers: UInt32(controlKey | shiftKey)) {
+            MainActor.assumeIsolated { onFire() }
         }
         if status != noErr {
-            // Not fatal, and worth a log rather than a crash: another app holding the combination
-            // is a normal thing that happens, and the settings pane reports it properly.
-            log.error("couldn't register the fullscreen capture hotkey: \(status, privacy: .public)")
+            // Another app holding the combination is a normal thing that happens, and the settings
+            // pane reports it properly. Worth a log, not a crash.
+            log.error("couldn't register the \(name, privacy: .public) capture hotkey: \(status, privacy: .public)")
         }
-        hotkeys = [fullscreen]
+        return hotkey
     }
 
     func deactivate() {

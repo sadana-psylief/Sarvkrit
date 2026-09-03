@@ -93,55 +93,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         screenshots.captureFullscreen = { [weak screenshots] in
             guard let screenshots else { return }
-            Task { @MainActor in
-                await Self.captureFullscreen(with: screenshots)
-            }
+            Task { @MainActor in await Self.capture(.fullscreen, with: screenshots) }
+        }
+        screenshots.captureArea = { [weak screenshots] in
+            guard let screenshots else { return }
+            Task { @MainActor in await Self.capture(.area, with: screenshots) }
         }
     }
 
     @MainActor
-    private static func captureFullscreen(with feature: ScreenshotFeature) async {
+    private static func capture(_ mode: CaptureMode, with feature: ScreenshotFeature) async {
+        // Pressing the shortcut again while the overlay is up should dismiss it, not stack a
+        // second full-screen overlay on top of the first.
+        if CaptureOverlayController.shared.isPresenting {
+            CaptureOverlayController.shared.dismiss()
+            return
+        }
+
         do {
-            let frames = try await feature.capturer.snapshotAllDisplays(options: CaptureOptions())
-            // The display the pointer is on, not the first one — on a multi-display Mac the first
-            // is whichever has the menu bar, which is rarely the one being looked at.
-            let pointer = NSEvent.mouseLocation
-            guard let frame = frames.first(where: { $0.geometry.frame.contains(pointer) })
-                    ?? frames.first
-            else { throw CaptureError.noDisplays }
-
-            let plan = CaptureDestination.plan(for: .fullscreen,
-                                               settings: feature.destinationSettings)
-            var saved = true
-            if plan.writesFile {
-                saved = feature.store.add(image: frame.image, mode: .fullscreen,
-                                          sourceRect: frame.geometry.frame,
-                                          displayID: frame.geometry.displayID) != nil
+            let options = feature.captureOptions
+            let result: CaptureSession.Result?
+            switch mode {
+            case .area:
+                result = try await CaptureSession.captureArea(using: feature.capturer,
+                                                              options: options)
+            default:
+                result = try await CaptureSession.captureFullscreen(using: feature.capturer,
+                                                                    options: options)
             }
-            if plan.writesClipboard {
-                CaptureWriter.copyToPasteboard(frame.image)
-            }
+            // Cancelling is an ordinary outcome, not a failure — no toast.
+            guard let result else { return }
+            deliver(result, mode: mode, with: feature)
+        } catch {
+            reportFailure()
+        }
+    }
 
-            guard saved else {
+    @MainActor
+    private static func deliver(_ result: CaptureSession.Result,
+                                mode: CaptureMode,
+                                with feature: ScreenshotFeature) {
+        let plan = CaptureDestination.plan(for: mode, settings: feature.destinationSettings)
+
+        if plan.writesFile {
+            guard feature.store.add(image: result.image, mode: mode,
+                                    sourceRect: result.sourceRect,
+                                    displayID: result.display?.displayID) != nil else {
                 ToastPresenter.shared.show("Couldn't save the screenshot",
                                            symbolName: "exclamationmark.triangle")
                 return
             }
-            let where_ = plan.writesFile && plan.writesClipboard ? "saved and copied"
-                       : plan.writesFile ? "saved" : "copied"
-            ToastPresenter.shared.show("Screenshot \(where_)", symbolName: "camera.viewfinder")
-        } catch {
-            // A denied grant arrives as `noDisplays`, not as a permission error — there is no
-            // permission error to catch. If the preflight disagrees, the grant landed after launch
-            // and only a relaunch can pick it up.
-            let stale = ScreenRecordingRelaunch.looksLikeStaleGrant(
-                preflightGranted: AppState.shared.permissions.canCaptureScreen,
-                capturedDisplayCount: 0)
-            ToastPresenter.shared.show(
-                stale ? "Quit and reopen Sarvkrit to finish enabling screenshots"
-                      : "Couldn't take a screenshot",
-                symbolName: "exclamationmark.triangle")
         }
+        if plan.writesClipboard {
+            CaptureWriter.copyToPasteboard(result.image)
+        }
+
+        let verb = plan.writesFile && plan.writesClipboard ? "saved and copied"
+                 : plan.writesFile ? "saved" : "copied"
+        ToastPresenter.shared.show("Screenshot \(verb)", symbolName: "camera.viewfinder")
+    }
+
+    @MainActor
+    private static func reportFailure() {
+        // A denied grant arrives as `noDisplays`, not as a permission error — there is no
+        // permission error to catch. If the preflight disagrees, the grant landed after launch and
+        // only a relaunch can pick it up.
+        let stale = ScreenRecordingRelaunch.looksLikeStaleGrant(
+            preflightGranted: AppState.shared.permissions.canCaptureScreen,
+            capturedDisplayCount: 0)
+        ToastPresenter.shared.show(
+            stale ? "Quit and reopen Sarvkrit to finish enabling screenshots"
+                  : "Couldn't take a screenshot",
+            symbolName: "exclamationmark.triangle")
     }
 
     /// Cut & Paste raises its confirmation through a closure, so the feature never imports SwiftUI.
