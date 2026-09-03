@@ -32,7 +32,7 @@ enum MenuBarReadout {
     private static func text(for kind: MetricKind, in snapshot: SystemSnapshot) -> String {
         switch kind {
         case .cpu:
-            return MetricFormatting.percent(snapshot.cpu?.usage)
+            return MetricFormatting.percent(snapshot.cpu?.usage ?? nil)
         case .gpu:
             return MetricFormatting.percent(snapshot.gpu?.usage)
         case .power:

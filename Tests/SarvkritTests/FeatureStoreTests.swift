@@ -65,6 +65,6 @@ final class FeatureStoreTests: XCTestCase {
                              "app-sweep", "shelf", "audio-switcher",
                              "mute-microphone", "music-blocker",
                              "volume-mixer", "privacy-guard",
-                             "keep-awake"])
+                             "keep-awake", "system-monitor"])
     }
 }

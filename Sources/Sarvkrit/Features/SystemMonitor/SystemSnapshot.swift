@@ -16,8 +16,10 @@ struct SystemSnapshot: Equatable {
 }
 
 struct CPUSample: Equatable {
-    /// 0…100 across all cores, from the tick delta between two samples.
-    var usage: Double
+    /// 0…100 across all cores, from the tick delta between two samples — and therefore `nil` on
+    /// the very first sample, which has nothing to diff against. Reporting 0% there would claim an
+    /// idle Mac rather than admitting to having no reading yet.
+    var usage: Double?
     var coreCount: Int
     var loadAverage: Double?
 }
@@ -75,4 +77,36 @@ struct PowerSample: Equatable {
     var watts: Double?
     /// The adapter's rated wattage, when one is connected.
     var adapterWatts: Int?
+}
+
+
+extension SystemSnapshot {
+    /// The single number a metric's sparkline plots.
+    ///
+    /// `nil` where the reading is genuinely unavailable, which `MetricHistory` stores as a gap
+    /// rather than flattening to zero. Rates are summed across both directions: one line per metric
+    /// is what fits, and "how busy is the disk" is the question a sparkline this size can answer.
+    func chartValue(for kind: MetricKind) -> Double? {
+        switch kind {
+        case .cpu:
+            return cpu?.usage
+        case .gpu:
+            return gpu?.usage
+        case .memory:
+            return memory?.usagePercent
+        case .disk:
+            guard let disk, let read = disk.readPerSecond, let written = disk.writePerSecond
+            else { return nil }
+            return read + written
+        case .network:
+            guard let network, let down = network.downloadPerSecond,
+                  let up = network.uploadPerSecond else { return nil }
+            return down + up
+        case .power:
+            return power?.watts
+        case .battery:
+            guard let battery, battery.isPresent else { return nil }
+            return battery.percent
+        }
+    }
 }
