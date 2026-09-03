@@ -139,7 +139,7 @@ final class CaptureHistoryStore: ObservableObject {
         items[index].pixelWidth = image.width
         items[index].pixelHeight = image.height
         items[index].byteCount = data.count
-        thumbnails.removeValue(forKey: id)
+        forgetThumbnails(id)
         save()
         return true
     }
@@ -149,7 +149,7 @@ final class CaptureHistoryStore: ObservableObject {
     func remove(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         try? fileManager.removeItem(at: url(for: items[index]))
-        thumbnails.removeValue(forKey: id)
+        forgetThumbnails(id)
         items.remove(at: index)
         save()
     }
@@ -169,7 +169,7 @@ final class CaptureHistoryStore: ObservableObject {
         guard !expired.isEmpty else { return }
         for item in items where expired.contains(item.id) {
             try? fileManager.removeItem(at: url(for: item))
-            thumbnails.removeValue(forKey: item.id)
+            forgetThumbnails(item.id)
         }
         items.removeAll { expired.contains($0.id) }
         save()
@@ -180,10 +180,21 @@ final class CaptureHistoryStore: ObservableObject {
     /// Cached on the store, not in view state: the history pane's hosting view is rebuilt every
     /// time the panel opens, so a cache held in `@State` would be thrown away each time. The same
     /// reasoning `ShelfStore` records.
-    private var thumbnails: [UUID: NSImage] = [:]
+    /// Keyed by size as well as id — see `thumbnail(for:height:)` for what went wrong when it
+    /// was not. Invalidation is by id, so it drops every size of a capture at once.
+    private var thumbnails: [ThumbnailKey: NSImage] = [:]
 
+    /// A thumbnail of `item`, `height` points tall.
+    ///
+    /// **Cached by id *and* height.** It was keyed by id alone, which meant the second caller to
+    /// ask for a different size silently got the first one's — the shelf asks for 430 for a
+    /// crisp tile and the drag proxy asks for 240, so whichever ran first decided both. The
+    /// aspect ratio was right either way, which is why it never looked obviously wrong.
     func thumbnail(for item: CaptureHistoryItem, height: CGFloat) -> NSImage? {
-        if let cached = thumbnails[item.id] { return cached }
+        // Rounded, so two callers asking for the same size in different arithmetic share an entry
+        // rather than each rendering their own.
+        let key = ThumbnailKey(id: item.id, height: height.rounded())
+        if let cached = thumbnails[key] { return cached }
         guard let image = NSImage(contentsOf: url(for: item)) else { return nil }
         let scale = image.size.height > 0 ? height / image.size.height : 1
         let size = NSSize(width: max(1, image.size.width * scale), height: height)
@@ -191,8 +202,19 @@ final class CaptureHistoryStore: ObservableObject {
         thumbnail.lockFocus()
         image.draw(in: NSRect(origin: .zero, size: size))
         thumbnail.unlockFocus()
-        thumbnails[item.id] = thumbnail
+        thumbnails[key] = thumbnail
         return thumbnail
+    }
+
+    struct ThumbnailKey: Hashable {
+        let id: UUID
+        let height: CGFloat
+    }
+
+    /// Drops every cached size of one capture. Called wherever the file behind it changed or
+    /// went away — a stale thumbnail of an edited capture is the shelf showing the old picture.
+    private func forgetThumbnails(_ id: UUID) {
+        thumbnails = thumbnails.filter { $0.key.id != id }
     }
 
     // MARK: - Persistence

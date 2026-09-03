@@ -42,6 +42,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch command {
             case .cancel:
                 CaptureOverlayGuard.shared.dismissEverything()
+            case .openAnnotate(let file):
+                openEditor(with: file)
+            case .openFromClipboard:
+                openEditorFromClipboard()
+            case .openSettings:
+                MainWindowController.shared.show()
             case .action(let action):
                 guard let screenshots = AppState.shared.features
                     .compactMap({ $0 as? ScreenshotFeature }).first else { return }
@@ -54,6 +60,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// Opens an image in the editor, defaulting to the newest capture.
+    private func openEditor(with file: URL?) {
+        guard let screenshots = AppState.shared.features
+            .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+        let url = file ?? screenshots.store.items.first.map { screenshots.store.url(for: $0) }
+        guard let url else {
+            ToastPresenter.shared.show("No capture to annotate yet",
+                                       symbolName: "photo.on.rectangle")
+            return
+        }
+        do {
+            try ScreenshotEditorController.shared.open(fileURL: url)
+        } catch {
+            Self.urlLog.error("open-annotate failed: \(String(describing: error), privacy: .public)")
+            ToastPresenter.shared.show("Couldn't open that image", symbolName: "exclamationmark.triangle")
+        }
+    }
+
+    private func openEditorFromClipboard() {
+        guard let image = NSPasteboard.general.readObjects(forClasses: [NSImage.self])?
+            .compactMap({ $0 as? NSImage }).first,
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else {
+            ToastPresenter.shared.show("No image on the clipboard", symbolName: "doc.on.clipboard")
+            return
+        }
+        ScreenshotEditorController.shared.open(image: cgImage)
     }
 
     private static let urlLog = Logger(subsystem: AppIdentity.logSubsystem, category: "URLScheme")

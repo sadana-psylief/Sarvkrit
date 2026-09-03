@@ -36,7 +36,14 @@ final class CaptureHistoryWindowController: NSObject {
         let panel = FloatingPanel(
             contentRect: frame,
             // Key, because Escape closes it and the arrows move the selection.
-            style: .init(level: .modalPanel, acceptsKey: true, clickThrough: false,
+            //
+            // **Above the Dock, which is the whole reason this is not `.modalPanel`.** The shelf
+            // is anchored to the bottom of the screen, which is exactly where the Dock lives, and
+            // at level 8 the Dock drew straight through it — over the thumbnails and over their
+            // captions, so half the row had no dimensions under it. Derived from the Dock's own
+            // level rather than written as a number, because that number is not ours.
+            style: .init(level: NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1),
+                         acceptsKey: true, clickThrough: false,
                          joinsAllSpaces: true, hasShadow: false))
         panel.contentView = NSHostingView(rootView: CaptureHistoryShelf(
             store: store,

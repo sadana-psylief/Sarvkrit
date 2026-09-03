@@ -218,3 +218,68 @@ final class CaptureRectSessionTests: XCTestCase {
         return try XCTUnwrap(context.makeImage())
     }
 }
+
+/// The thumbnail cache, which used to answer the wrong size.
+@MainActor
+final class CaptureThumbnailCacheTests: XCTestCase {
+
+    private func store() throws -> (CaptureHistoryStore, URL) {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return (CaptureHistoryStore(directory: directory), directory)
+    }
+
+    private func image(_ width: Int, _ height: Int) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 0.3, green: 0.6, blue: 0.9, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    func testTwoSizesOfTheSameCaptureAreBothTheSizeThatWasAskedFor() throws {
+        // The bug: keyed by id alone, so whichever caller ran first decided the size for the
+        // other. The shelf asks for 430 and the drag proxy for 240, and the aspect ratio was
+        // right either way — which is why it never looked obviously wrong.
+        let (store, directory) = try store()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let item = try XCTUnwrap(store.add(image: try image(800, 400), mode: .area,
+                                           sourceRect: .zero, displayID: nil))
+
+        let large = try XCTUnwrap(store.thumbnail(for: item, height: 430))
+        let small = try XCTUnwrap(store.thumbnail(for: item, height: 240))
+        XCTAssertEqual(large.size.height, 430, accuracy: 0.5)
+        XCTAssertEqual(small.size.height, 240, accuracy: 0.5)
+        XCTAssertEqual(large.size.width / large.size.height,
+                       small.size.width / small.size.height, accuracy: 0.01)
+    }
+
+    func testAskingTwiceForOneSizeReusesTheSameImage() throws {
+        let (store, directory) = try store()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let item = try XCTUnwrap(store.add(image: try image(800, 400), mode: .area,
+                                           sourceRect: .zero, displayID: nil))
+        let first = try XCTUnwrap(store.thumbnail(for: item, height: 240))
+        let second = try XCTUnwrap(store.thumbnail(for: item, height: 240))
+        XCTAssertTrue(first === second, "the cache stopped caching")
+    }
+
+    func testRemovingACaptureDropsEverySizeOfIt() throws {
+        // Invalidation is by id and the key is now a pair, so a naive `removeValue(forKey: id)`
+        // would leave every other size behind — and a stale thumbnail outliving its file is the
+        // shelf showing a picture that is no longer there.
+        let (store, directory) = try store()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let item = try XCTUnwrap(store.add(image: try image(800, 400), mode: .area,
+                                           sourceRect: .zero, displayID: nil))
+        _ = store.thumbnail(for: item, height: 430)
+        _ = store.thumbnail(for: item, height: 240)
+        store.remove(id: item.id)
+
+        XCTAssertNil(store.thumbnail(for: item, height: 430))
+        XCTAssertNil(store.thumbnail(for: item, height: 240))
+    }
+}

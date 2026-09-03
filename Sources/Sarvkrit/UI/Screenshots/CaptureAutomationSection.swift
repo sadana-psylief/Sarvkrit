@@ -53,6 +53,9 @@ struct CaptureAutomationSection: View {
     private func title(for command: CaptureURLCommand) -> String {
         switch command {
         case .cancel: return "Dismiss Everything"
+        case .openAnnotate: return "Annotate Last Capture"
+        case .openFromClipboard: return "Annotate Clipboard Image"
+        case .openSettings: return "Open Settings"
         case .captureRect: return "Capture Area"
         case .action(let action): return action.title
         }

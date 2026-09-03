@@ -53,6 +53,21 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
         var showsCrosshair = true
         var showsMagnifier = true
         var showsDimensions = true
+        /// One line above the pointer saying what this selection is *for*.
+        ///
+        /// Scrolling capture, text recognition and the self-timer all begin by drawing an area,
+        /// and without this they are pixel-for-pixel identical to an ordinary area capture — you
+        /// press the shortcut and have no way to tell which mode you are in until it ends. Nil
+        /// for plain area capture, which needs no explaining.
+        var hint: String?
+
+        /// The same chrome, carrying a hint. Keeps the mode's own settings — a user who turned
+        /// the magnifier off does not get it back because they chose scrolling capture.
+        func saying(_ hint: String) -> Chrome {
+            var copy = self
+            copy.hint = hint
+            return copy
+        }
     }
 
     func present(frames capturedFrames: [DisplayFrame],
@@ -91,6 +106,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             view.showsCrosshair = chrome.showsCrosshair
             view.showsMagnifier = chrome.showsMagnifier
             view.showsDimensions = chrome.showsDimensions
+            view.hint = chrome.hint
             panel.contentView = view
             panel.setFrame(screenFrame, display: false)
             // `.ignoresCycle` so ⌘` doesn't cycle into a full-screen overlay panel.

@@ -29,6 +29,13 @@ enum CaptureURLCommand: Equatable {
     case captureRect(CGRect, displayIndex: Int?)
     /// Puts every overlay, panel, countdown and pinned window away. See `CaptureOverlayGuard`.
     case cancel
+    /// Opens an image in the annotation editor. Nil means the most recent capture, which is the
+    /// thing anybody binding this to a key actually wants — "annotate the one I just took".
+    case openAnnotate(URL?)
+    /// Opens whatever image is on the clipboard in the editor.
+    case openFromClipboard
+    /// Sarvkrit's own window, on the Capture pane.
+    case openSettings
 
     static let scheme = "sarvkrit"
 
@@ -36,6 +43,9 @@ enum CaptureURLCommand: Equatable {
     var name: String {
         switch self {
         case .cancel: return "cancel"
+        case .openAnnotate: return "open-annotate"
+        case .openFromClipboard: return "open-from-clipboard"
+        case .openSettings: return "open-settings"
         case .captureRect: return "capture-area"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
@@ -59,7 +69,8 @@ enum CaptureURLCommand: Equatable {
     /// `captureRect` is not listed: it is `capture-area` with parameters, not a separate command,
     /// and a settings row offering a URL with somebody else's coordinates in it would be noise.
     static var all: [CaptureURLCommand] {
-        ScreenshotAction.allCases.map { .action($0) } + [.cancel]
+        ScreenshotAction.allCases.map { .action($0) }
+            + [.openAnnotate(nil), .openFromClipboard, .openSettings, .cancel]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -75,6 +86,19 @@ enum CaptureURLCommand: Equatable {
               width > 0, height > 0
         else { return nil }
         return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// A `filepath` parameter, as a file URL.
+    ///
+    /// Accepts a plain path as well as a `file://` URL, because a shell script interpolating
+    /// `$HOME/Desktop/shot.png` is the common case and rejecting it would be pedantry.
+    private static func filepath(from url: URL) -> URL? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "filepath" })?.value,
+              !raw.isEmpty
+        else { return nil }
+        if raw.hasPrefix("file://") { return URL(string: raw) }
+        return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
     }
 
     /// 1-based, as the reference documents it. Zero and negatives are refused rather than
@@ -99,6 +123,9 @@ enum CaptureURLCommand: Equatable {
         guard !name.isEmpty else { return nil }
 
         if name == "cancel" { return .cancel }
+        if name == "open-annotate" { return .openAnnotate(filepath(from: url)) }
+        if name == "open-from-clipboard" { return .openFromClipboard }
+        if name == "open-settings" { return .openSettings }
         if let match = names.first(where: { $0.value == name })?.key {
             // All four or none. Three of them is a script with a bug in it, and guessing the
             // fourth would take a screenshot of the wrong thing rather than saying so.

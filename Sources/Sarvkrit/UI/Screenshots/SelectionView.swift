@@ -37,6 +37,8 @@ final class SelectionView: NSView {
     private let display: DisplaySnapshotGeometry
 
     var showsCrosshair = true
+    /// See `CaptureOverlayController.Chrome.hint`.
+    var hint: String? { didSet { needsDisplay = true } }
     var showsDimensions = true
     /// Disabled when the overlay is live rather than frozen: sampling a fresh capture per frame
     /// gives a loupe that stutters, which is worse than not having one. The settings row says so.
@@ -371,6 +373,8 @@ final class SelectionView: NSView {
             if showsDimensions { drawReadout(for: selection, in: context) }
         }
 
+        if let hint, selection == nil { drawHint(hint, in: context) }
+
         // No crosshair or loupe in window mode: there is nothing to line up to the pixel, and a
         // loupe over a highlighted window is only clutter.
         if !isWindowMode, let pointer, selection == nil || gesture.isActive {
@@ -475,6 +479,36 @@ final class SelectionView: NSView {
         context.restoreGState()
 
         drawPointerReadout(at: point, global: global, in: context)
+    }
+
+    /// The mode hint, in a chip near the top of the display.
+    ///
+    /// Near the top rather than by the pointer: it is read once, at the start, and following the
+    /// cursor would put it under the loupe. It goes away as soon as there is a selection, because
+    /// by then you know what you are doing.
+    private func drawHint(_ text: String, in context: CGContext) {
+        let string = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ])
+        let textSize = string.size()
+        let box = CGSize(width: textSize.width + 28, height: 34)
+        let rect = CGRect(x: bounds.midX - box.width / 2,
+                          y: bounds.maxY - box.height - 60,
+                          width: box.width, height: box.height)
+
+        context.saveGState()
+        context.setFillColor(NSColor(white: 0.09, alpha: 0.92).cgColor)
+        context.addPath(CGPath(roundedRect: rect, cornerWidth: 12, cornerHeight: 12,
+                               transform: nil))
+        context.fillPath()
+        context.setStrokeColor(NSColor(white: 1, alpha: 0.14).cgColor)
+        context.addPath(CGPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
+                               cornerWidth: 12, cornerHeight: 12, transform: nil))
+        context.strokePath()
+        context.restoreGState()
+
+        string.draw(at: CGPoint(x: rect.minX + 14, y: rect.midY - textSize.height / 2))
     }
 
     /// The pointer's coordinates, in two lines beside the cursor.

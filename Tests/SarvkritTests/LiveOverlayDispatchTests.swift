@@ -230,3 +230,75 @@ final class LiveOverlayDispatchTests: XCTestCase {
         _ = box
     }
 }
+
+/// The mode hint on the overlay.
+///
+/// Scrolling capture, text recognition and the self-timer all begin by drawing an area, so
+/// without a label they are pixel-for-pixel an ordinary area capture — you press a shortcut and
+/// cannot tell which mode you are in. Checked here rather than in the pure layer because the
+/// question is whether it reaches the screen.
+@MainActor
+final class OverlayHintTests: XCTestCase {
+
+    func testEachAreaBasedModeSaysWhichOneItIs() {
+        let plain = CaptureOverlayController.Chrome()
+        XCTAssertNil(plain.hint, "plain area capture needs no explaining")
+
+        let scrolling = plain.saying("Scrolling Capture — draw the area, then scroll it")
+        XCTAssertEqual(scrolling.hint, "Scrolling Capture — draw the area, then scroll it")
+    }
+
+    func testAHintDoesNotDisturbTheModesOwnSettings() {
+        // Somebody who turned the magnifier off must not get it back by choosing another mode.
+        var chrome = CaptureOverlayController.Chrome()
+        chrome.showsMagnifier = false
+        chrome.showsCrosshair = false
+        let hinted = chrome.saying("Copy Text — draw the area to read")
+        XCTAssertFalse(hinted.showsMagnifier)
+        XCTAssertFalse(hinted.showsCrosshair)
+    }
+
+    func testTheHintIsDrawnAndThenGoesAwayOnceThereIsASelection() throws {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let scale = screen.backingScaleFactor
+        let pixels = CGSize(width: screen.frame.width * scale, height: screen.frame.height * scale)
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: Int(pixels.width), height: Int(pixels.height),
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+        context.fill(CGRect(origin: .zero, size: pixels))
+        let image = try XCTUnwrap(context.makeImage())
+        let geometry = DisplaySnapshotGeometry(
+            displayID: screen.displayID ?? CGMainDisplayID(),
+            frame: screen.frame, scale: scale, pixelSize: pixels)
+
+        let view = SelectionView(display: geometry, frozenImage: image, mode: .area)
+        view.frame = CGRect(origin: .zero, size: screen.frame.size)
+        view.hint = "Scrolling Capture — draw the area, then scroll it"
+        view.seedPointer(CGPoint(x: screen.frame.midX, y: screen.frame.midY))
+
+        func darkPixelsNearTheTop() throws -> Int {
+            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: rep)
+            var count = 0
+            let band = max(0, rep.pixelsHigh / 12)
+            for y in stride(from: 0, to: band, by: 2) {
+                for x in stride(from: 0, to: rep.pixelsWide, by: 4) {
+                    if let colour = rep.colorAt(x: x, y: y), colour.brightnessComponent < 0.2 {
+                        count += 1
+                    }
+                }
+            }
+            return count
+        }
+
+        let withHint = try darkPixelsNearTheTop()
+        XCTAssertGreaterThan(withHint, 100, "the hint chip was never drawn")
+
+        view.hint = nil
+        XCTAssertLessThan(try darkPixelsNearTheTop(), withHint / 4,
+                          "removing the hint left it on screen")
+    }
+}

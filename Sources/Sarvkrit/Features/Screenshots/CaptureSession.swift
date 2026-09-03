@@ -143,8 +143,10 @@ enum CaptureSession {
         var chosenRect: CGRect?
         var chosenDisplay: DisplaySnapshotGeometry?
         if mode == .area {
-            guard let picked = try await captureArea(using: capturer, options: options,
-                                                     chrome: chrome) else { return nil }
+            guard let picked = try await captureArea(
+                using: capturer, options: options,
+                chrome: chrome.saying("Self-Timer — draw the area, then \(seconds)s to arrange"))
+            else { return nil }
             chosenRect = picked.sourceRect
             chosenDisplay = picked.display
         }
@@ -175,7 +177,8 @@ enum CaptureSession {
                                  options: CaptureOptions,
                                  chrome: CaptureOverlayController.Chrome) async throws -> Result? {
         guard let picked = try await captureArea(using: capturer, options: options,
-                                                 chrome: chrome),
+                                                 chrome: chrome.saying(
+                                                     "Scrolling Capture — draw the area, then scroll it")),
               let rect = picked.sourceRect, let display = picked.display else { return nil }
 
         let stitched: CGImage? = await withCheckedContinuation { continuation in
@@ -195,7 +198,8 @@ enum CaptureSession {
     static func recognizeText(using capturer: ScreenCapturing,
                               options: CaptureOptions,
                               chrome: CaptureOverlayController.Chrome) async throws -> Result? {
-        try await captureArea(using: capturer, options: options, chrome: chrome)
+        try await captureArea(using: capturer, options: options,
+                              chrome: chrome.saying("Copy Text — draw the area to read"))
     }
 
     /// The display under the pointer, whole.
