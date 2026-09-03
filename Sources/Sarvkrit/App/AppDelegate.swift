@@ -103,6 +103,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let screenshots else { return }
             Task { @MainActor in await Self.capture(.window, with: screenshots) }
         }
+        screenshots.restoreLastOverlay = {
+            MainActor.assumeIsolated { QuickAccessController.shared.restoreLastClosed() }
+        }
+        screenshots.hideOverlays = {
+            MainActor.assumeIsolated { QuickAccessController.shared.hideAll() }
+        }
+
+        QuickAccessController.shared.store = screenshots.store
+        QuickAccessController.shared.corner = screenshots.quickAccessCorner
+        QuickAccessController.shared.autoCloseAfter = screenshots.quickAccessAutoClose
     }
 
     @MainActor
@@ -143,10 +153,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 with feature: ScreenshotFeature) {
         let plan = CaptureDestination.plan(for: mode, settings: feature.destinationSettings)
 
+        var item: CaptureHistoryItem?
         if plan.writesFile {
-            guard feature.store.add(image: result.image, mode: mode,
-                                    sourceRect: result.sourceRect,
-                                    displayID: result.display?.displayID) != nil else {
+            item = feature.store.add(image: result.image, mode: mode,
+                                     sourceRect: result.sourceRect,
+                                     displayID: result.display?.displayID)
+            guard item != nil else {
                 ToastPresenter.shared.show("Couldn't save the screenshot",
                                            symbolName: "exclamationmark.triangle")
                 return
@@ -154,6 +166,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if plan.writesClipboard {
             CaptureWriter.copyToPasteboard(result.image)
+        }
+
+        // The overlay stands in for the toast when it is on — two confirmations of the same event
+        // is one too many, and the overlay says more.
+        if plan.showsOverlay, let item {
+            let controller = QuickAccessController.shared
+            controller.corner = feature.quickAccessCorner
+            controller.autoCloseAfter = feature.quickAccessAutoClose
+            controller.allowShowingAgain()
+            controller.show(item)
+            return
         }
 
         let verb = plan.writesFile && plan.writesClipboard ? "saved and copied"

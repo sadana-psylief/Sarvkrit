@@ -62,6 +62,36 @@ struct ScreenshotDetailView: View {
             }
 
             Section {
+                Toggle("Show the capture overlay", isOn: Binding(
+                    get: { feature.showsQuickAccess }, set: { feature.showsQuickAccess = $0 }))
+                if feature.showsQuickAccess {
+                    Picker("Corner", selection: Binding(
+                        get: { feature.quickAccessCorner },
+                        set: { feature.quickAccessCorner = $0 })) {
+                        ForEach(QuickAccessPlacement.Corner.allCases) { Text($0.title).tag($0) }
+                    }
+                    Picker("Close after", selection: Binding(
+                        get: { feature.quickAccessAutoCloseSeconds },
+                        set: { feature.quickAccessAutoCloseSeconds = $0 })) {
+                        Text("4 seconds").tag(4.0)
+                        Text("8 seconds").tag(8.0)
+                        Text("15 seconds").tag(15.0)
+                        Text("Never").tag(0.0)
+                    }
+                }
+            } header: {
+                Text("Capture overlay")
+            } footer: {
+                Text("""
+                    The thumbnail that appears after a capture. Drag it straight into another app, \
+                    or leave the pointer on it to stop the countdown. ⌃⇧Z brings back the last one \
+                    you dismissed; ⌃⇧H hides them until the next capture.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Toggle("Keep the window's shadow", isOn: Binding(
                     get: { feature.includesWindowShadow },
                     set: { feature.includesWindowShadow = $0 }))

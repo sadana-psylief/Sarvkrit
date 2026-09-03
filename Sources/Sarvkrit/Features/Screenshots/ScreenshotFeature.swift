@@ -144,10 +144,46 @@ final class ScreenshotFeature: Feature, ObservableObject {
         return options
     }
 
+    var showsQuickAccess: Bool {
+        get { defaults.object(forKey: "screenshot.showsQuickAccess") as? Bool ?? true }
+        set {
+            guard newValue != showsQuickAccess else { return }
+            defaults.set(newValue, forKey: "screenshot.showsQuickAccess")
+            objectWillChange.send()
+        }
+    }
+
+    var quickAccessCorner: QuickAccessPlacement.Corner {
+        get {
+            defaults.string(forKey: "screenshot.quickAccessCorner")
+                .flatMap(QuickAccessPlacement.Corner.init(rawValue:)) ?? .bottomRight
+        }
+        set {
+            guard newValue != quickAccessCorner else { return }
+            defaults.set(newValue.rawValue, forKey: "screenshot.quickAccessCorner")
+            objectWillChange.send()
+        }
+    }
+
+    /// Zero means "stay until dismissed", which is how a nil is expressible in UserDefaults
+    /// without a second key.
+    var quickAccessAutoCloseSeconds: Double {
+        get { defaults.object(forKey: "screenshot.quickAccessSeconds") as? Double ?? 8 }
+        set {
+            guard newValue != quickAccessAutoCloseSeconds else { return }
+            defaults.set(newValue, forKey: "screenshot.quickAccessSeconds")
+            objectWillChange.send()
+        }
+    }
+
+    var quickAccessAutoClose: TimeInterval? {
+        quickAccessAutoCloseSeconds > 0 ? quickAccessAutoCloseSeconds : nil
+    }
+
     var destinationSettings: CaptureDestination.Settings {
         CaptureDestination.Settings(savesToDisk: savesToDisk,
                                     copiesToClipboard: copiesToClipboard,
-                                    showsQuickAccess: false,
+                                    showsQuickAccess: showsQuickAccess,
                                     opensEditor: false)
     }
 
@@ -156,6 +192,8 @@ final class ScreenshotFeature: Feature, ObservableObject {
     var captureFullscreen: (() -> Void)?
     var captureArea: (() -> Void)?
     var captureWindow: (() -> Void)?
+    var restoreLastOverlay: (() -> Void)?
+    var hideOverlays: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -181,6 +219,12 @@ final class ScreenshotFeature: Feature, ObservableObject {
             },
             bind(id: GlobalHotkey.ID.captureWindow, key: kVK_ANSI_W, name: "window") { [weak self] in
                 self?.captureWindow?()
+            },
+            bind(id: GlobalHotkey.ID.restoreLastOverlay, key: kVK_ANSI_Z, name: "restore overlay") { [weak self] in
+                self?.restoreLastOverlay?()
+            },
+            bind(id: GlobalHotkey.ID.hideOverlays, key: kVK_ANSI_H, name: "hide overlays") { [weak self] in
+                self?.hideOverlays?()
             },
             bind(id: GlobalHotkey.ID.captureFullscreen, key: kVK_ANSI_F, name: "fullscreen") { [weak self] in
                 self?.captureFullscreen?()
