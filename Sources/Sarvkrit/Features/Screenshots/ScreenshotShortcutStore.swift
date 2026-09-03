@@ -16,11 +16,15 @@ final class ScreenshotShortcutStore: ObservableObject {
     private let defaultsKey = "screenshot.shortcuts"
     private let defaults: UserDefaults
 
+    private let clearedKey = "screenshot.clearedShortcuts"
+
     @Published private(set) var bindings: [ScreenshotAction: WindowShortcut]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.bindings = Self.load(from: defaults, key: defaultsKey) ?? ScreenshotAction.defaults
+        self.bindings = Self.load(from: defaults, bindingsKey: defaultsKey, clearedKey: clearedKey)
+        self.cleared = Set((defaults.array(forKey: clearedKey) as? [String] ?? [])
+            .compactMap(ScreenshotAction.init(rawValue:)))
     }
 
     func shortcut(for action: ScreenshotAction) -> WindowShortcut? { bindings[action] }
@@ -35,16 +39,28 @@ final class ScreenshotShortcutStore: ObservableObject {
         }
         if let shortcut {
             bindings[action] = shortcut
+            cleared.remove(action)
         } else {
             bindings.removeValue(forKey: action)
+            cleared.insert(action)
         }
         save()
     }
 
     func resetToDefaults() {
         bindings = ScreenshotAction.defaults
+        cleared = []
         save()
     }
+
+    /// Bindings the user deliberately removed.
+    ///
+    /// **Recorded separately from the map, and this is not bookkeeping for its own sake.** Before,
+    /// an action simply absent from the stored map meant "cleared" — which made a *newly added*
+    /// action indistinguishable from a cleared one, so any shortcut introduced in a later version
+    /// would silently never register for anyone who had ever changed a binding. Defaults now fill
+    /// in for anything unknown, and only this set suppresses them.
+    private var cleared: Set<ScreenshotAction> = []
 
     /// Which capture a combination triggers, for the window recorder's conflict warning.
     static func match(keyCode: Int64, flags: CGEventFlags,
@@ -59,20 +75,42 @@ final class ScreenshotShortcutStore: ObservableObject {
             bindings.map { ($0.key.rawValue, $0.value) })
         do {
             defaults.set(try JSONEncoder().encode(encodable), forKey: defaultsKey)
+            defaults.set(cleared.map(\.rawValue).sorted(), forKey: clearedKey)
         } catch {
             log.error("couldn't save capture shortcuts: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     private static func load(from defaults: UserDefaults,
-                             key: String) -> [ScreenshotAction: WindowShortcut]? {
-        guard let data = defaults.data(forKey: key),
+                             bindingsKey: String,
+                             clearedKey: String) -> [ScreenshotAction: WindowShortcut] {
+        var result = ScreenshotAction.defaults
+
+        // Anything the user explicitly cleared stays cleared.
+        let cleared = Set((defaults.array(forKey: clearedKey) as? [String] ?? [])
+            .compactMap(ScreenshotAction.init(rawValue:)))
+        for action in cleared { result.removeValue(forKey: action) }
+
+        guard let data = defaults.data(forKey: bindingsKey),
               let raw = try? JSONDecoder().decode([String: WindowShortcut].self, from: data)
-        else { return nil }
+        else { return result }
+
         // An action that no longer exists is dropped rather than failing the whole decode —
         // otherwise removing one mode in a later version resets every binding the user made.
-        return Dictionary(uniqueKeysWithValues: raw.compactMap { key, value in
-            ScreenshotAction(rawValue: key).map { ($0, value) }
-        })
+        for (key, shortcut) in raw {
+            guard let action = ScreenshotAction(rawValue: key) else { continue }
+            result[action] = shortcut
+        }
+        // A rebind can move a combination onto an action that already had one; make sure two
+        // actions never end up sharing a key after a merge.
+        var seen: [WindowShortcut: ScreenshotAction] = [:]
+        for (action, shortcut) in result.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+            if let owner = seen[shortcut], owner != action {
+                result.removeValue(forKey: action)
+            } else {
+                seen[shortcut] = action
+            }
+        }
+        return result
     }
 }

@@ -254,6 +254,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
     var showAllInOne: (() -> Void)?
     var captureScrolling: (() -> Void)?
     var recognizeText: (() -> Void)?
+    var showHistory: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -323,6 +324,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
         case .hideOverlays: return { [weak self] in self?.hideOverlays?() }
         case .scrolling: return { [weak self] in self?.captureScrolling?() }
         case .textRecognition: return { [weak self] in self?.recognizeText?() }
+        case .history: return { [weak self] in self?.showHistory?() }
         // Owned by PinToScreenFeature, which registers it itself.
         case .pinClipboard: return nil
         }

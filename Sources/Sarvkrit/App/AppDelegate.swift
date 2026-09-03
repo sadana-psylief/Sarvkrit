@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireCutPasteToasts()
         wireScreenshots()
         wirePinToScreen()
+        // Installed unconditionally, before anything can put a window on screen. This is the one
+        // shortcut that must never be missing when it is needed.
+        CaptureOverlayGuard.shared.install()
         reconcileKeepAwake()
 
         guard !AppState.shared.hasCompletedOnboarding else { return }
@@ -37,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// thread. That trade is only safe if quitting waits for the last one — otherwise the most
     /// recent copies would be lost on the way out.
     func applicationWillTerminate(_ notification: Notification) {
+        // Belt and braces. Floating windows die with the process anyway, but quitting is exactly
+        // the moment a user reaches for when something is stuck, and it must not leave anything
+        // behind — including a hidden cursor.
+        CaptureOverlayGuard.shared.dismissEverything()
+
         AppState.shared.features
             .compactMap { $0 as? ClipboardFeature }
             .forEach { $0.store.flush() }
@@ -125,6 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        screenshots.showHistory = {
+            MainActor.assumeIsolated { CaptureHistoryWindowController.shared.show() }
+        }
         screenshots.recognizeText = { [weak screenshots] in
             guard let screenshots else { return }
             Task { @MainActor in await Self.capture(.textRecognition, with: screenshots) }
@@ -170,6 +181,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let screenshots, let id else { return }
             MainActor.assumeIsolated { _ = screenshots.store.replaceImage(of: id, with: image) }
         }
+
+        CaptureHistoryWindowController.shared.store = screenshots.store
+        CaptureHistoryWindowController.shared.openEditor = QuickAccessController.shared.openEditor
+        CaptureHistoryWindowController.shared.pinToScreen = QuickAccessController.shared.pinToScreen
 
         QuickAccessController.shared.store = screenshots.store
         QuickAccessController.shared.corner = screenshots.quickAccessCorner

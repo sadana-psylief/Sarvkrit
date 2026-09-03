@@ -140,3 +140,78 @@ final class ScreenshotShortcutTests: XCTestCase {
         XCTAssertEqual(store.shortcut(for: .area), ScreenshotAction.area.defaultShortcut)
     }
 }
+
+/// The merge rules that decide which shortcuts exist after an upgrade.
+final class ScreenshotShortcutMergeTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        suiteName = "test.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+    }
+
+    override func tearDownWithError() throws {
+        defaults.removePersistentDomain(forName: suiteName)
+        try super.tearDownWithError()
+    }
+
+    func testAnActionAddedInALaterVersionGetsItsDefault() {
+        // The bug this rule exists for: an action simply absent from the stored map used to mean
+        // "cleared", so any shortcut introduced later would silently never register for anyone who
+        // had ever changed a binding — which is everyone who has used the recorder once.
+        let store = ScreenshotShortcutStore(defaults: defaults)
+        store.bind(.area, to: WindowShortcut(keyCode: 11, modifiers: [.maskControl, .maskCommand]))
+
+        // Simulate an older build's stored map: it knows nothing about `.history`.
+        var raw = try! JSONDecoder().decode(
+            [String: WindowShortcut].self,
+            from: defaults.data(forKey: "screenshot.shortcuts")!)
+        raw.removeValue(forKey: "history")
+        defaults.set(try! JSONEncoder().encode(raw), forKey: "screenshot.shortcuts")
+
+        let reloaded = ScreenshotShortcutStore(defaults: defaults)
+        XCTAssertEqual(reloaded.shortcut(for: .history), ScreenshotAction.history.defaultShortcut,
+                       "a new action must fall back to its default")
+        XCTAssertEqual(reloaded.shortcut(for: .area)?.keyCode, 11, "and a rebind must survive")
+    }
+
+    func testAClearedBindingStaysClearedAcrossReloads() {
+        // The other half: defaults filling in must not resurrect something deliberately removed.
+        let store = ScreenshotShortcutStore(defaults: defaults)
+        store.bind(.scrolling, to: nil)
+        XCTAssertNil(ScreenshotShortcutStore(defaults: defaults).shortcut(for: .scrolling))
+    }
+
+    func testRebindingAClearedActionUnclearsIt() {
+        let store = ScreenshotShortcutStore(defaults: defaults)
+        store.bind(.scrolling, to: nil)
+        // Deliberately a combination no default already owns: ⌃⇧Y belongs to Browse Captures,
+        // and picking it here had the de-duplication drop one of the two — correctly, but it made
+        // the test look like a bug in unclearing.
+        let custom = WindowShortcut(keyCode: 11, modifiers: [.maskControl, .maskShift])
+        store.bind(.scrolling, to: custom)
+        XCTAssertEqual(ScreenshotShortcutStore(defaults: defaults).shortcut(for: .scrolling),
+                       custom)
+    }
+
+    func testMergingNeverLeavesTwoActionsOnOneKey() {
+        // Filling in defaults can collide with a rebind that took that very combination.
+        let store = ScreenshotShortcutStore(defaults: defaults)
+        store.bind(.area, to: ScreenshotAction.window.defaultShortcut)
+
+        let reloaded = ScreenshotShortcutStore(defaults: defaults)
+        let shortcuts = reloaded.bindings.values
+        XCTAssertEqual(Set(shortcuts).count, shortcuts.count,
+                       "two actions share a combination after merging")
+    }
+
+    func testResetClearsTheClearedSetToo() {
+        let store = ScreenshotShortcutStore(defaults: defaults)
+        store.bind(.scrolling, to: nil)
+        store.resetToDefaults()
+        XCTAssertEqual(ScreenshotShortcutStore(defaults: defaults).shortcut(for: .scrolling),
+                       ScreenshotAction.scrolling.defaultShortcut)
+    }
+}

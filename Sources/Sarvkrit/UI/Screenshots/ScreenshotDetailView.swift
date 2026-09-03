@@ -207,9 +207,12 @@ struct ScreenshotDetailView: View {
 
             CaptureShortcutsSection(feature: feature, shortcuts: feature.shortcuts)
 
-            if store.items.count > 1 {
-                Section {
-                    Button("Combine the last two captures…") {
+            Section {
+                Button("Browse Captures…") {
+                    CaptureHistoryWindowController.shared.show()
+                }
+                if store.items.count > 1 {
+                    Button("Combine the Last Two…") {
                         let recent = Array(store.items.prefix(2)).reversed()
                         let images = recent.compactMap { item -> CGImage? in
                             guard let data = try? Data(contentsOf: store.url(for: item)) else {
@@ -220,23 +223,16 @@ struct ScreenshotDetailView: View {
                         guard images.count == 2 else { return }
                         ScreenshotEditorController.shared.open(combining: images)
                     }
-                } header: {
-                    Text("Combine")
-                } footer: {
-                    Text("""
-                        Stacks them into one image and opens it in the editor, where every tool \
-                        works on the result the same way it would on a single capture.
-                        """)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
+            } footer: {
+                Text("""
+                    ⌃⇧Y opens the browser: everything you have captured, grouped by when, with \
+                    each one draggable straight into another app.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            if !store.items.isEmpty {
-                Section {
-                    CaptureHistoryStrip(store: store)
-                }
-            }
         }
         .formStyle(.grouped)
         .navigationTitle(feature.title)

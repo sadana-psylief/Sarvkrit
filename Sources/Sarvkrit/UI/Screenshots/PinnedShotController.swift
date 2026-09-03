@@ -72,9 +72,19 @@ final class PinnedShotController: NSObject {
     private func applyLock(_ pin: Pin) {
         pin.panel.ignoresMouseEvents = pin.isLocked
         refresh(pin)
+        if pin.isLocked {
+            // Said at the moment it becomes true, because from then on the pin cannot be clicked
+            // to ask. A locked window with no visible way out is the worst thing this feature can
+            // leave behind.
+            ToastPresenter.shared.show(
+                "Locked — press ⌃⇧P to unlock, or \(CaptureOverlayGuard.shortcutDescription) "
+                + "to clear everything",
+                symbolName: "lock.fill")
+        }
     }
 
-    /// Unlocks everything. The only way out of Lock Mode, and the reason it is safe to offer.
+    /// Unlocks everything. One of two ways out of Lock Mode — the other is
+    /// `CaptureOverlayGuard`, which also closes them — and the reason it is safe to offer at all.
     func unlockAll() {
         for pin in pins where pin.isLocked {
             pin.isLocked = false

@@ -16,6 +16,7 @@ enum ScreenshotAction: String, CaseIterable, Codable, Identifiable {
     case restoreOverlay
     case hideOverlays
     case pinClipboard
+    case history
 
     var id: String { rawValue }
 
@@ -30,6 +31,7 @@ enum ScreenshotAction: String, CaseIterable, Codable, Identifiable {
         case .restoreOverlay: return "Restore Last Overlay"
         case .hideOverlays: return "Hide Overlays"
         case .pinClipboard: return "Pin Clipboard Image"
+        case .history: return "Browse Captures"
         }
     }
 
@@ -46,6 +48,7 @@ enum ScreenshotAction: String, CaseIterable, Codable, Identifiable {
         case .restoreOverlay: return GlobalHotkey.ID.restoreLastOverlay
         case .hideOverlays: return GlobalHotkey.ID.hideOverlays
         case .pinClipboard: return GlobalHotkey.ID.pinClipboardImage
+        case .history: return GlobalHotkey.ID.historyBrowser
         }
     }
 
@@ -70,6 +73,7 @@ enum ScreenshotAction: String, CaseIterable, Codable, Identifiable {
         case .restoreOverlay: return kVK_ANSI_Z
         case .hideOverlays: return kVK_ANSI_H
         case .pinClipboard: return kVK_ANSI_P
+        case .history: return kVK_ANSI_Y
         }
     }
 

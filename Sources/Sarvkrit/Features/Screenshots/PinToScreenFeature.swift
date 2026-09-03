@@ -25,7 +25,8 @@ final class PinToScreenFeature: Feature, ObservableObject {
         without switching windows. Resize it, fade it, and drag it wherever you need it.
 
         Lock Mode makes a pinned shot ignore clicks so you can work through it. ⌃⇧P unlocks \
-        every pinned shot, which is the way back out.
+        every pinned shot, and ⌃⇧⎋ clears everything Sarvkrit has put on your screen — overlays, \
+        pins and all — from anywhere, whatever state it is in.
         """
     let symbolName = "pin"
     var shortcutHint: String? { "⌃⇧P" }
@@ -92,8 +93,9 @@ struct PinToScreenDetailView: View {
             } footer: {
                 Text("""
                     A locked shot ignores clicks so you can work through it — which also means it \
-                    can't be clicked to unlock. ⌃⇧P and the button above are the ways back, and a \
-                    locked shot draws a coloured border so you can tell.
+                    can't be clicked to unlock. ⌃⇧P and the button above are the ways back, a \
+                    locked shot draws a coloured border so you can tell, and ⌃⇧⎋ clears \
+                    everything Sarvkrit has on screen no matter what state it is in.
                     """)
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -42,6 +42,10 @@ final class GlobalHotkey {
         static let restoreLastOverlay: UInt32 = 10
         static let hideOverlays: UInt32 = 11
         static let pinClipboardImage: UInt32 = 12
+        /// The escape hatch. See `CaptureOverlayGuard` — this one exists so a floating window can
+        /// never be the reason a user cannot use their own screen.
+        static let dismissAllOverlays: UInt32 = 13
+        static let historyBrowser: UInt32 = 14
     }
 
     /// Distinct per hotkey. Two sharing an id would collide.
