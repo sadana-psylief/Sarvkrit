@@ -168,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // both pointing at this id while the edit happens.
         ScreenshotEditorController.shared.commitEdit = { [weak screenshots] image, id in
             guard let screenshots, let id else { return }
-            MainActor.assumeIsolated { screenshots.store.replaceImage(of: id, with: image) }
+            MainActor.assumeIsolated { _ = screenshots.store.replaceImage(of: id, with: image) }
         }
 
         QuickAccessController.shared.store = screenshots.store

@@ -21,7 +21,7 @@ enum CaptureFilename {
                      counter: Int = 0,
                      calendar: Calendar = .current,
                      timeZone: TimeZone = .current) -> String {
-        var formatter = DateFormatter()
+        let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = timeZone
         formatter.locale = Locale(identifier: "en_US_POSIX")

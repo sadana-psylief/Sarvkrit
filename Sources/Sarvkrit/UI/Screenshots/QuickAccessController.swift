@@ -135,9 +135,14 @@ final class QuickAccessController: NSObject {
         guard autoCloseAfter != nil else { return }
         // Polled rather than a one-shot timer, because hovering pauses the countdown and a
         // one-shot would have to be cancelled and re-armed with recomputed time on every hover.
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self, weak entry] _ in
+        // The *id* is captured, not the entry: `Entry` is a main-actor class and a Timer's
+        // closure is @Sendable. Looking it up each tick also means the timer can never act on an
+        // entry that has already been closed.
+        let itemID = entry.itemID
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let entry else { return }
+                guard let self,
+                      let entry = self.entries.first(where: { $0.itemID == itemID }) else { return }
                 if QuickAccessTimer.hasExpired(now: Date(), shownAt: entry.shownAt,
                                                duration: self.autoCloseAfter,
                                                hoveredSince: entry.hoveredSince) {
@@ -151,6 +156,7 @@ final class QuickAccessController: NSObject {
 
     private func setHovering(_ hovering: Bool, for itemID: UUID) {
         guard let entry = entries.first(where: { $0.itemID == itemID }) else { return }
+        let itemID = entry.itemID
         if hovering {
             entry.hoveredSince = entry.hoveredSince ?? Date()
         } else if let since = entry.hoveredSince {
@@ -159,9 +165,11 @@ final class QuickAccessController: NSObject {
             let paused = Date().timeIntervalSince(since)
             entry.hoveredSince = nil
             entry.timer?.invalidate()
-            let adjusted = Timer(timeInterval: 0.25, repeats: true) { [weak self, weak entry] _ in
+            let adjusted = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, let entry else { return }
+                    guard let self,
+                          let entry = self.entries.first(where: { $0.itemID == itemID })
+                    else { return }
                     if QuickAccessTimer.hasExpired(
                         now: Date().addingTimeInterval(-paused), shownAt: entry.shownAt,
                         duration: self.autoCloseAfter, hoveredSince: nil) {
