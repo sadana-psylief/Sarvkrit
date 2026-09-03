@@ -7,13 +7,6 @@ import SwiftUI
 struct VolumeMixerTrayView: View {
     @ObservedObject var feature: VolumeMixerFeature
 
-    /// Capped and scrollable rather than growing with the app count.
-    ///
-    /// A MenuBarExtra panel is positioned by the system once, anchored under the icon; content that
-    /// changes height while it's open drags the top edge away from the menu bar. The list of
-    /// playing apps changes on its own every couple of seconds, which is exactly that case.
-    private static let maxHeight: CGFloat = 132
-
     var body: some View {
         VStack(spacing: 0) {
             ModuleSeparator()
@@ -29,7 +22,13 @@ struct VolumeMixerTrayView: View {
                         }
                     }
                 }
-                .frame(height: min(Self.maxHeight, CGFloat(feature.processes.count) * 34))
+                // Grows with the app count. It used to be capped at 132pt because a panel whose
+                // content changed height while open drifted away from the menu bar — and this list
+                // changes on its own every couple of seconds. `MenuBarWindowAnchor` holds the
+                // panel's top edge now, so the cap was buying nothing. The `ScrollView` stays: it
+                // costs nothing and is the only thing standing between an implausible number of
+                // apps playing at once and a panel taller than the screen.
+                .frame(height: CGFloat(feature.processes.count) * 34)
             }
         }
     }
