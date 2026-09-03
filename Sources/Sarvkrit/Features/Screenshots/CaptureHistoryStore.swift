@@ -62,6 +62,15 @@ final class CaptureHistoryStore: ObservableObject {
     func url(for fileName: String) -> URL { directory.appendingPathComponent(fileName) }
     func url(for item: CaptureHistoryItem) -> URL { url(for: item.fileName) }
 
+    /// Where a copy is also written for the user, if they have chosen a folder.
+    ///
+    /// The history directory is ours and is named by UUID; this is the human-facing copy, named by
+    /// the user's pattern. Two files rather than one because the two have different jobs: the
+    /// history needs stable identity across renames, and the user's folder needs a name they can
+    /// read.
+    var exportFolder: URL?
+    var exportPattern: String = CaptureFilename.defaultPattern
+
     /// Writes a capture and records it. Newest first.
     ///
     /// Returns nil when the write fails, so a caller can say so rather than showing an overlay
@@ -84,6 +93,8 @@ final class CaptureHistoryStore: ObservableObject {
             return nil
         }
 
+        exportCopy(of: data, mode: mode)
+
         let item = CaptureHistoryItem(
             fileName: fileName, mode: mode,
             pixelWidth: image.width, pixelHeight: image.height, byteCount: data.count,
@@ -91,6 +102,24 @@ final class CaptureHistoryStore: ObservableObject {
         items.insert(item, at: 0)
         save()
         return item
+    }
+
+    /// A readable copy in the user's chosen folder.
+    ///
+    /// Failing here does not fail the capture: the history copy is already written, so the shot is
+    /// not lost — the user simply doesn't get the convenience copy, and the log says why.
+    private func exportCopy(of data: Data, mode: CaptureMode) {
+        guard let folder = exportFolder else { return }
+        let base = CaptureFilename.make(pattern: exportPattern, mode: mode, date: Date())
+        let url = CaptureFilename.unique(base: base, extension: "png", in: folder) {
+            fileManager.fileExists(atPath: $0.path)
+        }
+        do {
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            log.error("couldn't write the capture to the chosen folder: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Replaces an item's pixels in place, keeping its identity and its position in the list.

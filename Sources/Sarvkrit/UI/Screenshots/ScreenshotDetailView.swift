@@ -25,6 +25,39 @@ struct ScreenshotDetailView: View {
             }
 
             Section {
+                LabeledContent("Also save to") {
+                    HStack(spacing: Theme.Space.sm) {
+                        Text(feature.exportFolder?.lastPathComponent ?? "Nowhere")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("Choose…") { chooseFolder() }
+                        if feature.exportFolderPath != nil {
+                            Button("Clear") { feature.exportFolderPath = nil }
+                        }
+                    }
+                }
+                if feature.exportFolderPath != nil {
+                    TextField("Name", text: Binding(
+                        get: { feature.filenamePattern },
+                        set: { feature.filenamePattern = $0 }))
+                    Text(CaptureFilename.make(pattern: feature.filenamePattern,
+                                              mode: .area, date: Date()) + ".png")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Where captures go")
+            } footer: {
+                Text("""
+                    Captures are always kept in Sarvkrit's own history. A folder here gets a \
+                    second, readable copy. Tokens: \(CaptureFilename.tokens.joined(separator: ", ")).
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Toggle("Save to my capture folder", isOn: Binding(
                     get: { feature.savesToDisk }, set: { feature.savesToDisk = $0 }))
                 Toggle("Also copy to the clipboard", isOn: Binding(
@@ -161,6 +194,18 @@ struct ScreenshotDetailView: View {
         }
         .formStyle(.grouped)
         .navigationTitle(feature.title)
+    }
+
+    /// The app is not sandboxed, so a plain path is enough — no security-scoped bookmark needed.
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Where should Sarvkrit also save screenshots?"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        feature.exportFolderPath = url.path
     }
 }
 

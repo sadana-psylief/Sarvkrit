@@ -200,6 +200,38 @@ final class ScreenshotFeature: Feature, ObservableObject {
         }
     }
 
+    /// Where the readable copies go. Nil means the history folder only.
+    ///
+    /// Stored as a path rather than a bookmark because the app is not sandboxed — a bookmark
+    /// would buy nothing here, and `Rule` only uses one because a *watched* folder has to survive
+    /// being renamed while the app is running.
+    var exportFolderPath: String? {
+        get { defaults.string(forKey: "screenshot.exportFolder") }
+        set {
+            guard newValue != exportFolderPath else { return }
+            defaults.set(newValue, forKey: "screenshot.exportFolder")
+            applyExportSettings()
+            objectWillChange.send()
+        }
+    }
+
+    var exportFolder: URL? { exportFolderPath.map { URL(fileURLWithPath: $0) } }
+
+    var filenamePattern: String {
+        get { defaults.string(forKey: "screenshot.filenamePattern") ?? CaptureFilename.defaultPattern }
+        set {
+            guard newValue != filenamePattern else { return }
+            defaults.set(newValue, forKey: "screenshot.filenamePattern")
+            applyExportSettings()
+            objectWillChange.send()
+        }
+    }
+
+    private func applyExportSettings() {
+        store.exportFolder = exportFolder
+        store.exportPattern = filenamePattern
+    }
+
     var destinationSettings: CaptureDestination.Settings {
         CaptureDestination.Settings(savesToDisk: savesToDisk,
                                     copiesToClipboard: copiesToClipboard,
@@ -229,6 +261,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
         let retention = (defaults.string(forKey: "screenshot.retention")
             .flatMap(CaptureRetention.Window.init(rawValue:))) ?? .month
         self.store = store ?? CaptureHistoryStore(retention: retention)
+        applyExportSettings()
     }
 
     @MainActor
