@@ -39,14 +39,23 @@ struct MenuBarView: View {
         }
         .padding(Theme.Space.md)
         .frame(width: Theme.Size.dropdownWidth)
-        // The panel's own height is deliberately NOT animated, though it does change between tabs
-        // — Keyboard is one row, Files is three.
+        // Reaches the panel's own NSWindow, which `MenuBarExtra` does not hand out. A background,
+        // so it takes the panel's size without contributing any of its own.
+        .background(
+            MenuBarWindowProbe(
+                onWindow: { MenuBarWindowAnchor.shared.attach(to: $0) },
+                onHeight: { MenuBarWindowAnchor.shared.note(contentHeight: $0) }
+            )
+        )
+        // Grow and shrink the panel rather than snapping it — Keyboard is one row, Files is three.
         //
-        // A MenuBarExtra window is positioned by the system, once, anchored under the menu bar
-        // icon. An NSWindow's origin is its bottom-left, so when the content shrinks and the panel
-        // is resized without its origin being adjusted, the top edge falls away from the menu bar.
-        // Animating the resize walks it through many intermediate heights and makes that far more
-        // likely. A panel that snaps to its new size is much better than one that comes unmoored.
+        // This used to be unsafe, and the comment here used to say so: a height change would leave
+        // the panel floating away from the menu bar, and animating walked it through many
+        // intermediate heights. The measured reason turned out to be that SwiftUI does not resize
+        // this window on a *shrink* at all — it keeps the tallest height of the presentation and
+        // centres the smaller content inside it. `MenuBarWindowAnchor` now does that resize, on
+        // every height change including each frame of an animated one.
+        .standardMotion(value: selection)
         .standardMotion(value: app.needsAccessibility)
         .onAppear {
             selection = TrayTab.resolve(storedID: app.selectedTrayTabID, available: app.trayTabs)
