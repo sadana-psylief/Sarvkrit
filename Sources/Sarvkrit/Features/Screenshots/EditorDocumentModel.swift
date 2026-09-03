@@ -120,9 +120,20 @@ final class EditorDocumentModel: ObservableObject {
 
     // MARK: - Output
 
-    /// The finished image.
+    /// The finished image, annotations only.
     func flatten() -> CGImage? {
         AnnotationRenderer.flatten(document, base: base)
+    }
+
+    /// The finished image with its background, which is what save and copy produce.
+    ///
+    /// The background is composited *after* flattening rather than being another element, because
+    /// it changes the canvas size — every annotation coordinate would have to shift if it were
+    /// part of the document's own space.
+    func flattenWithBackground() -> CGImage? {
+        guard let flattened = flatten() else { return nil }
+        guard let background = document.background else { return flattened }
+        return BackgroundCompositor.render(flattened, style: background) ?? flattened
     }
 
     func markSaved() { isDirty = false }

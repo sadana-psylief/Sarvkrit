@@ -4,6 +4,8 @@ import SwiftUI
 /// The editor's SwiftUI shell: toolbar, colours, inspector. The canvas itself is AppKit.
 struct ScreenshotEditorView: View {
     @ObservedObject var model: EditorDocumentModel
+    @ObservedObject var presets: BackgroundPresetStore
+    @State private var showsBackgroundInspector = false
     let onSave: () -> Void
     let onSaveEditable: () -> Void
     let onCopy: () -> Void
@@ -13,9 +15,15 @@ struct ScreenshotEditorView: View {
             toolbar
             Divider()
             if model.document.unknownCount > 0 { unknownBanner }
-            AnnotationCanvasHost(model: model)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .underPageBackgroundColor))
+            HStack(spacing: 0) {
+                AnnotationCanvasHost(model: model)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .underPageBackgroundColor))
+                if showsBackgroundInspector {
+                    Divider()
+                    BackgroundInspector(model: model, presets: presets)
+                }
+            }
         }
     }
 
@@ -75,6 +83,11 @@ struct ScreenshotEditorView: View {
                 .help("Line thickness")
 
             Spacer(minLength: 0)
+
+            Button { showsBackgroundInspector.toggle() } label: {
+                Image(systemName: "square.on.square.badge.person.crop")
+            }
+            .help("Background")
 
             Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!model.canUndo).help("Undo  (⌘Z)")

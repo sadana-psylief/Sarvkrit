@@ -206,6 +206,31 @@ struct ScreenshotDetailView: View {
 
             CaptureShortcutsSection(feature: feature, shortcuts: feature.shortcuts)
 
+            if store.items.count > 1 {
+                Section {
+                    Button("Combine the last two captures…") {
+                        let recent = Array(store.items.prefix(2)).reversed()
+                        let images = recent.compactMap { item -> CGImage? in
+                            guard let data = try? Data(contentsOf: store.url(for: item)) else {
+                                return nil
+                            }
+                            return CaptureDocumentFile.image(from: data)
+                        }
+                        guard images.count == 2 else { return }
+                        ScreenshotEditorController.shared.open(combining: images)
+                    }
+                } header: {
+                    Text("Combine")
+                } footer: {
+                    Text("""
+                        Stacks them into one image and opens it in the editor, where every tool \
+                        works on the result the same way it would on a single capture.
+                        """)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if !store.items.isEmpty {
                 Section {
                     CaptureHistoryStrip(store: store)

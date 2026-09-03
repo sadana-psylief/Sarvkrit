@@ -44,6 +44,7 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
         window.contentMinSize = NSSize(width: 560, height: 400)
         window.contentView = NSHostingView(rootView: ScreenshotEditorView(
             model: model,
+            presets: Self.presets,
             onSave: { [weak self] in self?.save(editable: false) },
             onSaveEditable: { [weak self] in self?.save(editable: true) },
             onCopy: { [weak self] in self?.copyToPasteboard() }))
@@ -65,6 +66,8 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
     }
 
     private static var openCount = 0
+    /// Shared across editors: presets are a user setting, not per-document state.
+    private static let presets = BackgroundPresetStore()
 
     // MARK: - Keys
 
@@ -104,7 +107,7 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
     // MARK: - Output
 
     private func copyToPasteboard() {
-        guard let flattened = model.flatten(),
+        guard let flattened = model.flattenWithBackground(),
               let data = try? CaptureDocumentFile.encodeFlat(flattened) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setData(data, forType: .png)
@@ -112,7 +115,7 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
     }
 
     private func save(editable: Bool) {
-        guard let flattened = model.flatten() else { return }
+        guard let flattened = model.flattenWithBackground() else { return }
         onCommit(flattened, model.historyItemID)
         model.markSaved()
 
@@ -192,5 +195,20 @@ final class ScreenshotEditorController {
         let data = try Data(contentsOf: fileURL)
         let contents = try CaptureDocumentFile.decode(data)
         open(image: contents.base ?? contents.flattened, document: contents.document)
+    }
+
+    /// Combines several captures into one and opens the result.
+    ///
+    /// The combined image becomes the base bitmap of a brand-new document, which is why this
+    /// needs no special handling anywhere else: the Background tool, every annotation tool, OCR
+    /// and the file format all apply to it exactly as they would to a single capture.
+    func open(combining images: [CGImage],
+              mode: CombineLayout.Mode = .vertical,
+              spacing: CGFloat = 24,
+              normalize: CombineLayout.Normalize = .widest) {
+        guard let combined = ImageCombiner.render(images, mode: mode, spacing: spacing,
+                                                  normalize: normalize,
+                                                  backgroundColour: .white) else { return }
+        open(image: combined)
     }
 }
