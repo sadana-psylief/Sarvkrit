@@ -48,7 +48,11 @@ final class SelectionView: NSView {
     private static let magnifierTileSize: CGFloat = 5.2
 
     /// Pointer position in view coordinates, for the crosshair.
-    private var pointer: CGPoint?
+    ///
+    /// Readable from outside so a test can assert that a `mouseMoved` delivered through
+    /// `NSApplication` actually reached the view — the crosshair moving is the only observable
+    /// effect, and photographing it to find out is a slower way to learn the same fact.
+    private(set) var pointer: CGPoint?
     /// The handle currently being dragged on a settled selection.
     private var activeHandle: SelectionHandles.Handle?
     /// Where a press inside a settled selection started, and where that selection was — enough to

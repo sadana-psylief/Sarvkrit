@@ -91,6 +91,27 @@ final class LiveOverlayDispatchTests: XCTestCase {
                       "keys would go to the window, not the view")
     }
 
+    /// Mouse tracking, through the same dispatch as the clicks.
+    ///
+    /// `acceptsMouseMovedEvents` is asserted above; this is the other half — that a moved event
+    /// arriving at the application actually lands on the view and moves the crosshair. Together
+    /// they cover everything about tracking except the window server's own delivery.
+    func testMouseMovedThroughAppKitsDispatchMovesTheCrosshair() throws {
+        let (panel, _) = try present()
+        let view = try XCTUnwrap(panel.contentView as? SelectionView)
+        let height = panel.frame.height
+
+        NSApp.sendEvent(try mouse(.mouseMoved, at: CGPoint(x: 300, y: height - 300), in: panel))
+        let first = try XCTUnwrap(view.pointer, "the view never learned where the pointer was")
+
+        NSApp.sendEvent(try mouse(.mouseMoved, at: CGPoint(x: 700, y: height - 500), in: panel))
+        let second = try XCTUnwrap(view.pointer)
+
+        XCTAssertNotEqual(first, second, "the crosshair stayed where it was")
+        XCTAssertEqual(second.x - first.x, 400, accuracy: 1)
+        XCTAssertEqual(abs(second.y - first.y), 200, accuracy: 1)
+    }
+
     /// A drag and the click that takes it, delivered by `NSApp.sendEvent`.
     func testADragThroughAppKitsDispatchProducesACroppedImage() throws {
         let (panel, box) = try present()

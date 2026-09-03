@@ -46,11 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let screenshots = AppState.shared.features
                     .compactMap({ $0 as? ScreenshotFeature }).first else { return }
                 screenshots.perform(action)
-            case .captureRect(let rect, let displayID):
+            case .captureRect(let rect, let displayIndex):
                 guard let screenshots = AppState.shared.features
                     .compactMap({ $0 as? ScreenshotFeature }).first else { return }
                 Task { @MainActor in
-                    await Self.captureRect(rect, displayID: displayID, with: screenshots)
+                    await Self.captureRect(rect, displayIndex: displayIndex, with: screenshots)
                 }
             }
         }
@@ -360,11 +360,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     /// A rect handed over by a script: capture it and deliver it like any other capture.
-    private static func captureRect(_ rect: CGRect, displayID: CGDirectDisplayID?,
+    private static func captureRect(_ rect: CGRect, displayIndex: Int?,
                                     with feature: ScreenshotFeature) async {
         do {
             guard let result = try await CaptureSession.captureRect(
-                rect, displayID: displayID, using: feature.capturer,
+                rect, displayIndex: displayIndex, pointer: NSEvent.mouseLocation,
+                using: feature.capturer,
                 options: feature.captureOptions) else { return }
             // `.area`, because that is what it is — the same destination rules, the same history
             // entry, the same overlay afterwards. Only the aiming was different.

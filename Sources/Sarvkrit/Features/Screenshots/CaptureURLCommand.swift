@@ -16,9 +16,17 @@ import Foundation
 /// defaulting to something — a typo in a script must do nothing, not silently take a screenshot.
 enum CaptureURLCommand: Equatable {
     case action(ScreenshotAction)
-    /// `capture-area` with all four coordinates: take this rect now, no overlay. Global AppKit
-    /// points, bottom-left origin — the same space every other rect in this feature uses.
-    case captureRect(CGRect, displayID: CGDirectDisplayID?)
+    /// `capture-area` with all four coordinates: take this rect now, no overlay.
+    ///
+    /// **Points from the lower-left corner of the chosen screen**, which is the reference's
+    /// convention and therefore the one scripts are already written in. Note *screen*, not the
+    /// global desktop: the two are the same thing on the main display and differ on every other,
+    /// and picking the global reading would silently capture the wrong monitor.
+    ///
+    /// `displayIndex` is 1 for the main display, 2 for the next, matching the reference — a
+    /// script author has no way to learn a `CGDirectDisplayID`. Nil means the display the pointer
+    /// is on.
+    case captureRect(CGRect, displayIndex: Int?)
     /// Puts every overlay, panel, countdown and pinned window away. See `CaptureOverlayGuard`.
     case cancel
 
@@ -69,10 +77,15 @@ enum CaptureURLCommand: Equatable {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    private static func displayID(from url: URL) -> CGDirectDisplayID? {
-        URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
-            .first { $0.name.lowercased() == "display" }?
-            .value.flatMap { UInt32($0) }
+    /// 1-based, as the reference documents it. Zero and negatives are refused rather than
+    /// clamped: a script that computed an index wrongly should capture nothing, not the wrong
+    /// screen.
+    private static func displayIndex(from url: URL) -> Int? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "display" })?.value,
+              let index = Int(raw), index >= 1
+        else { return nil }
+        return index
     }
 
     static func parse(_ url: URL) -> CaptureURLCommand? {
@@ -90,7 +103,7 @@ enum CaptureURLCommand: Equatable {
             // All four or none. Three of them is a script with a bug in it, and guessing the
             // fourth would take a screenshot of the wrong thing rather than saying so.
             if match == .area, let rect = rect(from: url) {
-                return .captureRect(rect, displayID: displayID(from: url))
+                return .captureRect(rect, displayIndex: displayIndex(from: url))
             }
             return .action(match)
         }

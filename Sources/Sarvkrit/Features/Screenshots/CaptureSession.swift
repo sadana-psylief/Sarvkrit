@@ -51,27 +51,52 @@ enum CaptureSession {
     /// scale or about which way `y` runs.
     ///
     /// - Parameter rect: global AppKit points, bottom-left origin, like every other rect here.
-    static func captureRect(_ rect: CGRect, displayID: CGDirectDisplayID? = nil,
+    static func captureRect(_ rect: CGRect, displayIndex: Int? = nil,
+                            pointer: CGPoint? = nil,
                             using capturer: ScreenCapturing,
                             options: CaptureOptions) async throws -> Result? {
         let frames = try await capturer.snapshotAllDisplays(options: options)
         guard !frames.isEmpty else { throw CaptureError.noDisplays }
 
+        let ordered = orderedForScripting(frames)
         let frame: DisplayFrame?
-        if let displayID {
-            frame = frames.first { $0.geometry.displayID == displayID }
+        if let displayIndex {
+            // Out of range is nil rather than the nearest display: a script asking for monitor 3
+            // on a two-monitor Mac has a bug, and quietly answering with monitor 2 hides it.
+            frame = ordered.indices.contains(displayIndex - 1) ? ordered[displayIndex - 1] : nil
+        } else if let pointer {
+            frame = ordered.first { $0.geometry.frame.contains(pointer) } ?? ordered.first
         } else {
-            // The display the rect starts on, so a rect straddling two crops from one bitmap with
-            // one scale — the same rule area selection follows.
-            frame = frames.first { $0.geometry.frame.intersects(rect) } ?? frames.first
+            frame = ordered.first
         }
         guard let frame else { throw CaptureError.noDisplays }
 
-        let clamped = CaptureGeometry.clamp(rect, to: frame.geometry)
+        // The rect arrives relative to that screen's lower-left corner; everything downstream
+        // works in global points.
+        let global = rect.offsetBy(dx: frame.geometry.frame.minX, dy: frame.geometry.frame.minY)
+        let clamped = CaptureGeometry.clamp(global, to: frame.geometry)
         guard clamped.width >= 1, clamped.height >= 1 else { return nil }
         let pixels = CaptureGeometry.pixelRect(forGlobalRect: clamped, in: frame.geometry)
         guard let cropped = frame.image.cropping(to: pixels.integral) else { return nil }
         return Result(image: cropped, sourceRect: clamped, display: frame.geometry)
+    }
+
+    /// Displays in the order a script counts them: the main one is 1, the rest left to right.
+    ///
+    /// `snapshotAllDisplays` returns whatever ScreenCaptureKit enumerated, and that order is not
+    /// promised to be stable across launches — which would make `display=2` mean a different
+    /// monitor on different days.
+    static func orderedForScripting(_ frames: [DisplayFrame]) -> [DisplayFrame] {
+        let main = CGMainDisplayID()
+        return frames.sorted { lhs, rhs in
+            if (lhs.geometry.displayID == main) != (rhs.geometry.displayID == main) {
+                return lhs.geometry.displayID == main
+            }
+            if lhs.geometry.frame.minX != rhs.geometry.frame.minX {
+                return lhs.geometry.frame.minX < rhs.geometry.frame.minX
+            }
+            return lhs.geometry.displayID < rhs.geometry.displayID
+        }
     }
 
     /// Freeze, let the user pick a window, then take a fresh capture of it.

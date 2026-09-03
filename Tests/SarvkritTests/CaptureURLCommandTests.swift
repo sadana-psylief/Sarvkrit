@@ -75,7 +75,7 @@ final class CaptureURLRectTests: XCTestCase {
     func testAllFourCoordinatesMeanCaptureItNow() {
         let command = parse("sarvkrit://capture-area?x=100&y=200&width=300&height=400")
         XCTAssertEqual(command, .captureRect(CGRect(x: 100, y: 200, width: 300, height: 400),
-                                             displayID: nil))
+                                             displayIndex: nil))
     }
 
     func testAPartialRectOpensTheOverlayInstead() {
@@ -91,9 +91,14 @@ final class CaptureURLRectTests: XCTestCase {
         XCTAssertEqual(parse("sarvkrit://capture-area?x=0&y=0&width=-5&height=400"), .action(.area))
     }
 
-    func testADisplayCanBeNamed() {
-        XCTAssertEqual(parse("sarvkrit://capture-area?x=1&y=2&width=3&height=4&display=7"),
-                       .captureRect(CGRect(x: 1, y: 2, width: 3, height: 4), displayID: 7))
+    func testADisplayIsCountedFromOneTheWayAScriptWouldWriteIt() {
+        // Not a CGDirectDisplayID: nobody writing a shell script can discover one of those, and
+        // the reference documents "1 is the main display, 2 is the secondary".
+        XCTAssertEqual(parse("sarvkrit://capture-area?x=1&y=2&width=3&height=4&display=2"),
+                       .captureRect(CGRect(x: 1, y: 2, width: 3, height: 4), displayIndex: 2))
+        XCTAssertEqual(parse("sarvkrit://capture-area?x=1&y=2&width=3&height=4&display=0"),
+                       .captureRect(CGRect(x: 1, y: 2, width: 3, height: 4), displayIndex: nil),
+                       "0 is not a display; fall back to the pointer's rather than guessing")
     }
 
     func testCoordinatesOnlyApplyToCaptureArea() {
@@ -104,64 +109,112 @@ final class CaptureURLRectTests: XCTestCase {
     }
 
     func testTheRectFormStillNamesItselfCaptureArea() {
-        XCTAssertEqual(CaptureURLCommand.captureRect(.zero, displayID: nil).name, "capture-area")
+        XCTAssertEqual(CaptureURLCommand.captureRect(.zero, displayIndex: nil).name, "capture-area")
     }
 }
 
 /// The crop a script's rect produces is the crop a drag produces.
 final class CaptureRectSessionTests: XCTestCase {
 
-    private func display(scale: CGFloat, origin: CGPoint = .zero) -> DisplaySnapshotGeometry {
+    private func display(_ id: CGDirectDisplayID, scale: CGFloat,
+                         origin: CGPoint = .zero) -> DisplaySnapshotGeometry {
         DisplaySnapshotGeometry(
-            displayID: 1,
+            displayID: id,
             frame: CGRect(origin: origin, size: CGSize(width: 400, height: 300)),
             scale: scale,
             pixelSize: CGSize(width: 400 * scale, height: 300 * scale))
     }
 
-    private func capturer(_ geometry: DisplaySnapshotGeometry) -> StubScreenCaptureService {
-        StubScreenCaptureService(displays: [geometry])
+    private func capturer(_ geometries: DisplaySnapshotGeometry...) -> StubScreenCaptureService {
+        StubScreenCaptureService(displays: geometries)
     }
 
     func testARectComesBackAtTheDisplaysOwnScale() async throws {
-        let geometry = display(scale: 2)
         let result = try await CaptureSession.captureRect(
             CGRect(x: 50, y: 40, width: 120, height: 90),
-            using: capturer(geometry), options: CaptureOptions())
+            using: capturer(display(1, scale: 2)), options: CaptureOptions())
         let image = try XCTUnwrap(result?.image)
         XCTAssertEqual(image.width, 240)
         XCTAssertEqual(image.height, 180)
     }
 
     func testARectIsClampedToTheDisplayRatherThanFailing() async throws {
-        let geometry = display(scale: 2)
         let result = try await CaptureSession.captureRect(
             CGRect(x: 350, y: 250, width: 200, height: 200),
-            using: capturer(geometry), options: CaptureOptions())
+            using: capturer(display(1, scale: 2)), options: CaptureOptions())
         let image = try XCTUnwrap(result?.image)
         XCTAssertEqual(image.width, 100, "clamped to the 50pt that is actually there")
         XCTAssertEqual(image.height, 100)
     }
 
     func testARectEntirelyOffTheDisplayCapturesNothing() async throws {
-        let geometry = display(scale: 2)
         let result = try await CaptureSession.captureRect(
             CGRect(x: 900, y: 900, width: 100, height: 100),
-            using: capturer(geometry), options: CaptureOptions())
+            using: capturer(display(1, scale: 2)), options: CaptureOptions())
         XCTAssertNil(result, "better nothing than a screenshot of somewhere else")
+    }
+
+    /// Coordinates are relative to the chosen screen, not to the desktop.
+    ///
+    /// The two are the same on the main display and differ on every other, which is why a
+    /// single-monitor Mac cannot tell this apart — the same blind spot `ScreenCoordinatesTests`
+    /// records for the other flip.
+    func testCoordinatesAreRelativeToTheChosenScreen() async throws {
+        let main = display(1, scale: 2)
+        let secondary = display(2, scale: 2, origin: CGPoint(x: -400, y: 0))
+        let result = try await CaptureSession.captureRect(
+            CGRect(x: 10, y: 20, width: 100, height: 80), displayIndex: 2,
+            using: capturer(main, secondary), options: CaptureOptions())
+
+        // 10pt from the secondary's own left edge, which is −390 on the desktop.
+        XCTAssertEqual(result?.sourceRect, CGRect(x: -390, y: 20, width: 100, height: 80))
+        XCTAssertEqual(result?.display?.displayID, 2)
+    }
+
+    @MainActor
+    func testDisplayOneIsAlwaysTheMainOneWhateverOrderTheyArriveIn() async throws {
+        // ScreenCaptureKit's enumeration order is not promised, and `display=2` meaning a
+        // different monitor on different days would be worse than not supporting it.
+        let main = display(CGMainDisplayID(), scale: 2)
+        let left = display(99, scale: 2, origin: CGPoint(x: -400, y: 0))
+        let ordered = CaptureSession.orderedForScripting([
+            DisplayFrame(geometry: left, image: try Self.pixel()),
+            DisplayFrame(geometry: main, image: try Self.pixel()),
+        ])
+        XCTAssertEqual(ordered.first?.geometry.displayID, CGMainDisplayID())
+    }
+
+    func testAskingForADisplayThatIsNotThereCapturesNothing() async throws {
+        do {
+            _ = try await CaptureSession.captureRect(
+                CGRect(x: 0, y: 0, width: 10, height: 10), displayIndex: 5,
+                using: capturer(display(1, scale: 2)), options: CaptureOptions())
+            XCTFail("monitor 5 on a one-monitor Mac is a bug in the script, not a capture")
+        } catch {
+            // Expected.
+        }
     }
 
     func testItAgreesWithWhatADragOfTheSameRectWouldProduce() async throws {
         // The point of sharing `CaptureGeometry.pixelRect`: two aiming methods, one crop.
-        let geometry = display(scale: 2, origin: CGPoint(x: -400, y: 0))
-        let rect = CGRect(x: -300, y: 60, width: 160, height: 120)
+        let geometry = display(1, scale: 2, origin: CGPoint(x: -400, y: 0))
+        let relative = CGRect(x: 100, y: 60, width: 160, height: 120)
         let result = try await CaptureSession.captureRect(
-            rect, using: capturer(geometry), options: CaptureOptions())
+            relative, using: capturer(geometry), options: CaptureOptions())
         let image = try XCTUnwrap(result?.image)
 
-        let expected = CaptureGeometry.pixelRect(forGlobalRect: rect, in: geometry).integral
+        let global = relative.offsetBy(dx: geometry.frame.minX, dy: geometry.frame.minY)
+        let expected = CaptureGeometry.pixelRect(forGlobalRect: global, in: geometry).integral
         XCTAssertEqual(CGFloat(image.width), expected.width)
         XCTAssertEqual(CGFloat(image.height), expected.height)
-        XCTAssertEqual(result?.sourceRect, rect)
+        XCTAssertEqual(result?.sourceRect, global)
+    }
+
+    private static func pixel() throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        return try XCTUnwrap(context.makeImage())
     }
 }
