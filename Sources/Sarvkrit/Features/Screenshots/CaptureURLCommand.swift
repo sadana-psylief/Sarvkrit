@@ -8,7 +8,8 @@ import Foundation
 ///
 /// Command names follow the reference's where they overlap, so anything already written against
 /// `cleanshot://capture-area` needs only its scheme changed. Two are ours: `hide-overlays`, and
-/// `cancel`, which is the scriptable form of the ⌃⇧⎋ escape hatch.
+/// `cancel`, which is the scriptable form of the ⌃⇧⎋ escape hatch. `pin` is the one that is not a
+/// drop-in — the reference's takes a `filepath`, ours pins whatever image is on the clipboard.
 ///
 /// **Parsing is pure and total.** An unknown command returns nil rather than throwing or
 /// defaulting to something — a typo in a script must do nothing, not silently take a screenshot.

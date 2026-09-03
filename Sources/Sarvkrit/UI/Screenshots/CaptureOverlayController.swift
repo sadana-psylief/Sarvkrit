@@ -24,7 +24,6 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
     private var windowCompletion: ((CapturableWindow?) -> Void)?
     private var completion: ((CGImage?, DisplaySnapshotGeometry?, CGRect?) -> Void)?
     private var observers: [NSObjectProtocol] = []
-    private var cursorHidden = false
 
     var isPresenting: Bool { !panels.isEmpty }
 
@@ -116,14 +115,20 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             first.makeFirstResponder(first.contentView)
         }
 
+        // **Whether a panel actually became key decides whether Escape works.** Sarvkrit is an
+        // accessory app and the overlay usually opens while it is in the background, which is the
+        // case `MainWindowController` records as windows that "appear, then ignore clicks and
+        // typing". Logged rather than assumed, because the failure is silent and the consequence
+        // is a full-screen overlay with no way out of it.
+        log.info("key window: \(self.panels.contains { $0.isKeyWindow }, privacy: .public)")
+
         // Seed the pointer so the crosshair and loupe are on screen the instant the overlay opens,
         // rather than only after the first mouse movement.
         for panel in panels {
             (panel.contentView as? SelectionView)?.seedPointer(NSEvent.mouseLocation)
         }
 
-        NSCursor.hide()
-        cursorHidden = true
+        OverlayCursor.hide()
         installCancelObservers()
     }
 
@@ -154,10 +159,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
         panels = []
         frames = [:]
         selectionMode = .area
-        if cursorHidden {
-            NSCursor.unhide()
-            cursorHidden = false
-        }
+        OverlayCursor.show()
     }
 
     // MARK: - SelectionViewDelegate

@@ -81,6 +81,8 @@ final class CaptureOverlayGuard {
         ScrollCaptureSession.shared.cancel()
         QuickAccessController.shared.closeAll()
         CaptureHistoryWindowController.shared.dismiss()
-        NSCursor.unhide()
+        // System-wide, not just AppKit's: the overlay hides the pointer with CGDisplayHideCursor
+        // because it runs from the background, and only the matching call brings it back.
+        OverlayCursor.show()
     }
 }

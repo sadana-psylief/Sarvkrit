@@ -73,6 +73,36 @@ final class SelectionView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used from a nib") }
 
+    /// A fully transparent cursor, so the pointer is invisible over the overlay.
+    ///
+    /// **This is what actually hides it.** `NSCursor.hide()` and `CGDisplayHideCursor` are both
+    /// scoped to the active application, and the overlay usually opens from the background. A
+    /// cursor rect is not: the window server asks whichever window is under the pointer what
+    /// cursor to draw, whoever is frontmost.
+    ///
+    /// It is also the safe way round. The rect lives and dies with the panel, so there is no
+    /// global state to leave hidden — where a missed `unhide` is a Mac with no pointer.
+    private static let invisibleCursor: NSCursor = {
+        let image = NSImage(size: NSSize(width: 1, height: 1))
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: 1, height: 1).fill()
+        image.unlockFocus()
+        return NSCursor(image: image, hotSpot: .zero)
+    }()
+
+    override func resetCursorRects() {
+        // Not in window mode: there the pointer is picking a window, and an invisible pointer with
+        // no crosshair drawn under it would leave nothing to aim with.
+        guard !isWindowMode else { super.resetCursorRects(); return }
+        addCursorRect(bounds, cursor: Self.invisibleCursor)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard !isWindowMode else { super.cursorUpdate(with: event); return }
+        Self.invisibleCursor.set()
+    }
+
     override var acceptsFirstResponder: Bool { true }
     /// Or the first click merely focuses the panel and the drag it belongs to is lost.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
