@@ -2,11 +2,11 @@
 
 A macOS menu bar app for the small things macOS does differently than you'd expect.
 
-Eight features, each an independent toggle you can turn on or off at any time. Nothing runs unless
+Sixteen features, each an independent toggle you can turn on or off at any time. Nothing runs unless
 you switch it on, and turning something off stops it immediately.
 
 ```
-Keyboard  ·  Clipboard  ·  Windows  ·  Files  ·  System
+Keyboard  ·  Clipboard  ·  Windows  ·  Files  ·  Sound  ·  System
 ```
 
 ---
@@ -180,6 +180,28 @@ holds for itself, which is why macOS asks for your password. Sarvkrit starts a s
 at the same time that restores normal sleep **the moment Sarvkrit quits — including if it crashes**,
 so your Mac can't be left permanently awake in a bag. The one case that can't cover is restarting
 your Mac; if that happens, Sarvkrit tells you on next launch and offers to put it back.
+
+#### System Monitor
+
+Shows what your Mac is actually doing — **CPU**, **GPU**, **Power**, **Battery**, **Memory**,
+**Disk** and **Network** — as a compact readout in the menu bar and a full pane in the window.
+
+- **Each reading switches on and off on its own.** Nothing is sampled for one you've turned off.
+- **Choose which numbers appear in the menu bar.** Pick none and you get just the icon; click it to
+  see everything at once.
+- **Refresh every 1, 2 or 5 seconds** — two by default. Changing it clears the graphs, since a
+  graph can only show one cadence at a time.
+- **Two minutes of history** is kept to draw the graphs. It lives in memory only, is never written
+  to disk, and is discarded the moment you switch the monitor off.
+
+Everything comes from public system APIs, so nothing here asks for a password or a permission.
+That is also why **Power** means where your energy is going — battery charge or discharge in watts,
+and the adapter's rating when one is plugged in — rather than per-chip wattage, which needs either
+undocumented SMC keys or a root process running continuously.
+
+Readings the Mac genuinely can't give are shown as **—**, never as zero. A desktop has no battery;
+a rate needs two samples, so it has nothing to report for the first couple of seconds after you
+switch it on or wake the Mac up.
 
 ---
 
