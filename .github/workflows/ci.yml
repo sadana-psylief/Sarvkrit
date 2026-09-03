@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A runner has no "Apple Development" certificate, and project.yml pins one on purpose:
+  # a stable signature is what keeps the local Accessibility (TCC) grant alive across
+  # rebuilds. That reason doesn't apply here, so signing is turned off on the command
+  # line instead of being changed in project.yml.
+  SIGNING_OFF: >-
+    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_REQUIRED=NO
+    CODE_SIGN_IDENTITY=
+    DEVELOPMENT_TEAM=
+  # No arch= here, unlike the Makefile: it lets this run on either an Intel or an Apple
+  # silicon runner. Naming the platform is what stops xcodebuild enumerating simulator
+  # runtimes and failing over a Mac-only app.
+  DEST: -destination platform=macOS
+
+jobs:
+  build:
+    name: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Sarvkrit.xcodeproj is generated from project.yml and is not checked in.
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild -project Sarvkrit.xcodeproj -scheme Sarvkrit \
+            -configuration Release $DEST -derivedDataPath build build $SIGNING_OFF
+
+  test:
+    # Not a required check, and expected to be flaky here. SarvkritTests is a unit-test
+    # bundle hosted *inside* Sarvkrit.app, and much of it (camera, microphone, Core Audio
+    # process taps, Accessibility) needs TCC grants a runner will not give. Left honest
+    # rather than forced green: nothing is gated on this job.
+    name: test (advisory)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Test
+        run: |
+          xcodebuild -project Sarvkrit.xcodeproj -scheme Sarvkrit \
+            -configuration Debug $DEST -derivedDataPath build test $SIGNING_OFF

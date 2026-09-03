@@ -1,0 +1,5 @@
+# Every change requests a review from the repository owner automatically.
+# Review is requested, not required: with `main` limiting merges to the owner,
+# a required approval would only deadlock the owner's own pull requests —
+# GitHub does not allow approving your own.
+*	@sadana-psylief
