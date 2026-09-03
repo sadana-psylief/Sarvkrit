@@ -81,6 +81,39 @@ final class ScreenshotFeature: Feature, ObservableObject {
         }
     }
 
+    var showsCrosshair: Bool {
+        get { defaults.object(forKey: "screenshot.showsCrosshair") as? Bool ?? true }
+        set {
+            guard newValue != showsCrosshair else { return }
+            defaults.set(newValue, forKey: "screenshot.showsCrosshair")
+            objectWillChange.send()
+        }
+    }
+
+    var showsMagnifier: Bool {
+        get { defaults.object(forKey: "screenshot.showsMagnifier") as? Bool ?? true }
+        set {
+            guard newValue != showsMagnifier else { return }
+            defaults.set(newValue, forKey: "screenshot.showsMagnifier")
+            objectWillChange.send()
+        }
+    }
+
+    var showsDimensions: Bool {
+        get { defaults.object(forKey: "screenshot.showsDimensions") as? Bool ?? true }
+        set {
+            guard newValue != showsDimensions else { return }
+            defaults.set(newValue, forKey: "screenshot.showsDimensions")
+            objectWillChange.send()
+        }
+    }
+
+    var overlayChrome: CaptureOverlayController.Chrome {
+        .init(showsCrosshair: showsCrosshair,
+              showsMagnifier: showsMagnifier,
+              showsDimensions: showsDimensions)
+    }
+
     var captureOptions: CaptureOptions {
         var options = CaptureOptions()
         options.hidesDesktopIcons = hidesDesktopIcons

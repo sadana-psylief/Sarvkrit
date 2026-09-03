@@ -26,7 +26,16 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
     var isPresenting: Bool { !panels.isEmpty }
 
     /// Shows the overlay over frozen bitmaps and calls back with the crop, or nil if cancelled.
+    /// How the overlay is drawn. Carried in rather than read from a feature so the controller
+    /// stays a UI object with no opinion about where settings live.
+    struct Chrome {
+        var showsCrosshair = true
+        var showsMagnifier = true
+        var showsDimensions = true
+    }
+
     func present(frames capturedFrames: [DisplayFrame],
+                 chrome: Chrome = Chrome(),
                  completion: @escaping (CGImage?, DisplaySnapshotGeometry?, CGRect?) -> Void) {
         dismiss()
         guard !capturedFrames.isEmpty else { completion(nil, nil, nil); return }
@@ -55,6 +64,9 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
             let view = SelectionView(display: frame.geometry, frozenImage: frame.image)
             view.delegate = self
+            view.showsCrosshair = chrome.showsCrosshair
+            view.showsMagnifier = chrome.showsMagnifier
+            view.showsDimensions = chrome.showsDimensions
             panel.contentView = view
             panel.setFrame(screenFrame, display: false)
             // `.ignoresCycle` so ⌘` doesn't cycle into a full-screen overlay panel.

@@ -116,7 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch mode {
             case .area:
                 result = try await CaptureSession.captureArea(using: feature.capturer,
-                                                              options: options)
+                                                              options: options,
+                                                              chrome: feature.overlayChrome)
             default:
                 result = try await CaptureSession.captureFullscreen(using: feature.capturer,
                                                                     options: options)

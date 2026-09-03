@@ -22,12 +22,14 @@ enum CaptureSession {
     /// Returns nil when the user cancelled — which is an ordinary outcome, not an error, and must
     /// not produce a "couldn't take a screenshot" toast.
     static func captureArea(using capturer: ScreenCapturing,
-                            options: CaptureOptions) async throws -> Result? {
+                            options: CaptureOptions,
+                            chrome: CaptureOverlayController.Chrome
+                                = CaptureOverlayController.Chrome()) async throws -> Result? {
         let frames = try await capturer.snapshotAllDisplays(options: options)
         guard !frames.isEmpty else { throw CaptureError.noDisplays }
 
         return await withCheckedContinuation { continuation in
-            CaptureOverlayController.shared.present(frames: frames) { image, display, rect in
+            CaptureOverlayController.shared.present(frames: frames, chrome: chrome) { image, display, rect in
                 guard let image else {
                     continuation.resume(returning: nil)
                     return

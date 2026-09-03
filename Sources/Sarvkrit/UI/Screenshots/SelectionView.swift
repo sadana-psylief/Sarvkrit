@@ -26,6 +26,12 @@ final class SelectionView: NSView {
 
     var showsCrosshair = true
     var showsDimensions = true
+    /// Disabled when the overlay is live rather than frozen: sampling a fresh capture per frame
+    /// gives a loupe that stutters, which is worse than not having one. The settings row says so.
+    var showsMagnifier = true
+
+    private static let magnifierTiles = 15
+    private static let magnifierTileSize: CGFloat = 8
 
     /// Pointer position in view coordinates, for the crosshair.
     private var pointer: CGPoint?
@@ -163,9 +169,61 @@ final class SelectionView: NSView {
             // straddling it and rendering as a soft 2px line.
             context.stroke(selection.insetBy(dx: 0.5, dy: 0.5))
             if showsDimensions { drawReadout(for: selection, in: context) }
-        } else if showsCrosshair, let pointer {
-            drawCrosshair(at: pointer, in: context)
         }
+
+        if let pointer, selection == nil || gesture.isActive {
+            if showsCrosshair { drawCrosshair(at: pointer, in: context) }
+            if showsMagnifier { drawMagnifier(at: pointer, in: context) }
+        }
+    }
+
+    /// The loupe, sampled straight out of the frozen bitmap.
+    ///
+    /// This is the payoff for freezing: it is a `cropping(to:)` on an image we already hold, drawn
+    /// with interpolation off so individual pixels stay square instead of being smeared into each
+    /// other by the resampler.
+    private func drawMagnifier(at point: CGPoint, in context: CGContext) {
+        guard let frozenImage else { return }
+        let global = globalPoint(point)
+        guard let source = MagnifierSampler.sourceRect(
+            around: global, tileCount: Self.magnifierTiles, in: display),
+              let patch = frozenImage.cropping(to: source) else { return }
+
+        let side = CGFloat(Self.magnifierTiles) * Self.magnifierTileSize
+        // Below-right of the pointer, flipping to the other side near an edge so the loupe never
+        // hangs off the screen — which is exactly where you need it.
+        var origin = CGPoint(x: point.x + 16, y: point.y - side - 16)
+        if origin.x + side > bounds.maxX { origin.x = point.x - side - 16 }
+        if origin.y < bounds.minY { origin.y = point.y + 16 }
+        let box = CGRect(origin: origin, size: CGSize(width: side, height: side))
+
+        context.saveGState()
+        let clip = CGPath(roundedRect: box, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        context.addPath(clip)
+        context.clip()
+        // The patch is in top-left pixel order and this view is bottom-left, so it goes in flipped.
+        context.translateBy(x: 0, y: box.maxY + box.minY)
+        context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .none
+        context.draw(patch, in: box)
+        context.restoreGState()
+
+        context.saveGState()
+        // Crosshair on the centre pixel, positioned from the sampler so it stays on the pointer's
+        // own pixel even when the sample window slid away from a screen edge.
+        let offset = MagnifierSampler.centreOffset(around: global, sourceRect: source, in: display)
+        let cell = CGRect(
+            x: box.minX + offset.x * Self.magnifierTileSize,
+            y: box.maxY - (offset.y + 1) * Self.magnifierTileSize,
+            width: Self.magnifierTileSize, height: Self.magnifierTileSize)
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(1)
+        context.stroke(cell.insetBy(dx: 0.5, dy: 0.5))
+
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.9).cgColor)
+        context.addPath(clip)
+        context.strokePath()
+        context.restoreGState()
     }
 
     private func drawCrosshair(at point: CGPoint, in context: CGContext) {

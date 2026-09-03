@@ -41,6 +41,27 @@ struct ScreenshotDetailView: View {
             }
 
             Section {
+                Toggle("Show crosshair", isOn: Binding(
+                    get: { feature.showsCrosshair }, set: { feature.showsCrosshair = $0 }))
+                Toggle("Show magnifier", isOn: Binding(
+                    get: { feature.showsMagnifier }, set: { feature.showsMagnifier = $0 }))
+                Toggle("Show dimensions", isOn: Binding(
+                    get: { feature.showsDimensions }, set: { feature.showsDimensions = $0 }))
+                Toggle("Hide desktop icons", isOn: Binding(
+                    get: { feature.hidesDesktopIcons }, set: { feature.hidesDesktopIcons = $0 }))
+            } header: {
+                Text("While choosing")
+            } footer: {
+                Text("""
+                    The magnifier reads pixels out of the frozen screen, so it costs nothing to \
+                    leave on. Desktop icons are left out of the capture itself rather than being \
+                    switched off in Finder, so nothing is disturbed if a capture is cancelled.
+                    """)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Picker("Keep captures for", selection: Binding(
                     get: { store.retention }, set: { store.retention = $0 })) {
                     ForEach(CaptureRetention.Window.allCases, id: \.self) { Text($0.title).tag($0) }
