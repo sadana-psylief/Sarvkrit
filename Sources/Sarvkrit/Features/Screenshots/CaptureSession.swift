@@ -125,10 +125,12 @@ enum CaptureSession {
                       display: frames.first { $0.geometry.frame.intersects(picked.frame) }?.geometry)
     }
 
-    /// A thumbnail per window, captured concurrently.
+    /// A thumbnail per window.
     ///
-    /// Bounded by the list filter, which leaves a handful of real windows rather than the dozens
-    /// of system panels the raw enumeration reports — so this is a few captures, not a few dozen.
+    /// One at a time, and bounded by the list filter — which leaves a handful of real windows
+    /// rather than the dozens of system panels the raw enumeration reports, so this is a few
+    /// captures before the list appears rather than a few dozen. Worth revisiting with a task
+    /// group if anybody turns out to keep twenty windows open.
     /// A window that will not render comes back missing and the row shows a placeholder; it is
     /// still capturable, so hiding it would be worse than showing it plain.
     private static func windowPreviews(for windows: [CapturableWindow],

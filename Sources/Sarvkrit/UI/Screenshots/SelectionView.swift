@@ -112,8 +112,16 @@ final class SelectionView: NSView {
     /// from one place, because the two drifting apart is exactly what went wrong — the pointer was
     /// hidden unconditionally while the crosshair was drawn in only one state, so window mode had
     /// nothing to point with and a settled selection could not have its handles grabbed.
-    var drawsCrosshair: Bool {
-        !isWindowMode && showsCrosshair && (gesture.settledRect == nil || gesture.isActive)
+    var drawsCrosshair: Bool { isAiming && showsCrosshair }
+
+    /// Whether the overlay is in the phase where aiming chrome belongs at all: an area-shaped
+    /// mode, with no settled rect or a drag in progress.
+    ///
+    /// Separate from `drawsCrosshair` because the crosshair and the magnifier are two settings
+    /// and folding them into one condition silently made the magnifier depend on the crosshair —
+    /// switch the crosshair off and the magnifier vanished too.
+    private var isAiming: Bool {
+        !isWindowMode && (gesture.settledRect == nil || gesture.isActive)
     }
 
     override func resetCursorRects() {
@@ -483,10 +491,10 @@ final class SelectionView: NSView {
 
         // No crosshair or loupe in window mode: there is nothing to line up to the pixel, and a
         // loupe over a highlighted window is only clutter.
-        // Same expression as `drawsCrosshair`, which is what decides whether the pointer is
-        // hidden. They must never disagree.
-        if let pointer, drawsCrosshair {
-            drawCrosshair(at: pointer, in: context, avoiding: selection)
+        // The crosshair's condition is `drawsCrosshair`, which is also what decides whether the
+        // pointer is hidden — those two must never disagree. The magnifier shares only the phase.
+        if let pointer, isAiming {
+            if showsCrosshair { drawCrosshair(at: pointer, in: context, avoiding: selection) }
             if showsMagnifier { drawMagnifier(at: pointer, in: context) }
         }
     }

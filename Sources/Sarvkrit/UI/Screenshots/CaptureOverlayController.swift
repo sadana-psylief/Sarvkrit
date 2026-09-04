@@ -94,6 +94,8 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
     /// The bar's live state, which is the chrome's copy plus whatever the user has since picked.
     private var actionBar: ActionBar?
+    /// The rect the confirm button would take if pressed right now.
+    private var settledRect: CGRect?
 
     func present(frames capturedFrames: [DisplayFrame],
                  chrome: Chrome = Chrome(),
@@ -222,6 +224,14 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
     func dismiss() {
         AllInOneController.shared.dismiss()
         actionBar = nil
+        settledRect = nil
+        // **A pending completion is answered, not abandoned.** Dismissing without it — which
+        // ⌃⇧⎋ and a second press of the shortcut both do — left the `withCheckedContinuation`
+        // in `captureInteractive` suspended for the life of the process, leaking its Task. Nilled
+        // first, so the `finish(with:)` path that already answered cannot fire twice.
+        let pending = completion
+        completion = nil
+        pending?(nil, nil, nil)
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         observers = []
@@ -235,6 +245,10 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
     // MARK: - SelectionViewDelegate
 
     func selectionView(_ view: SelectionView, didUpdateSettledRect rect: CGRect?) {
+        // Kept live, and read by the primary button when it is *pressed*. Capturing the rect in
+        // the closure meant every later resize moved the bar but not the rect it would take, so
+        // adjusting a selection and then pressing Capture photographed the rect as first drawn.
+        settledRect = rect
         guard var bar = actionBar else { return }
         guard let rect else {
             // Nothing to confirm — either a fresh drag is under way or the selection was cleared.
@@ -245,11 +259,16 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             ?? rect
         let anchor = AllInOneController.Anchor(selection: rect, display: display)
 
-        // Already up: move it rather than rebuild it, so a mouse-down in progress on the primary
-        // button survives a resize landing at the same moment.
-        guard !AllInOneController.shared.isPresenting else {
-            AllInOneController.shared.move(to: anchor)
-            return
+        // Already the confirm bar: move it rather than rebuild it, so a mouse-down in progress on
+        // the primary button survives a resize landing at the same moment. The *mode* bar that
+        // All-In-One opens with is a different thing and has to be replaced, not nudged — moving
+        // it would leave that shortcut with no Capture button at all.
+        if AllInOneController.shared.isPresenting {
+            guard !AllInOneController.shared.isConfirmBar else {
+                AllInOneController.shared.move(to: anchor)
+                return
+            }
+            AllInOneController.shared.dismiss()
         }
 
         AllInOneController.shared.present(
@@ -257,8 +276,9 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             timerSeconds: bar.timerSeconds,
             overFrozenScreen: true,
             primary: .init(title: bar.mode.confirmVerb) { [weak self, weak view] in
-                guard let self, let view else { return }
-                self.selectionView(view, didConfirm: rect)
+                // The rect as it is *now*, not as it was when the bar appeared.
+                guard let self, let view, let current = self.settledRect else { return }
+                self.selectionView(view, didConfirm: current)
             },
             anchor: anchor
         ) { [weak self] picked in

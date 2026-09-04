@@ -57,6 +57,9 @@ final class ScrollCaptureSession: NSObject {
     private var isCapturing = false
 
     private static let frameLimit = 40
+    /// Roughly one line of text. Only used to turn a wheel's line count into something comparable
+    /// with a trackpad's points; it does not need to be exact, only the right order of magnitude.
+    private static let pointsPerScrollLine: CGFloat = 16
     /// One set of thresholds, used both for the live warning and for the final stitch — a HUD
     /// that said "fine" and then failed would be worse than no HUD.
     private static let stitchOptions = ScrollStitcher.Options()
@@ -90,7 +93,14 @@ final class ScrollCaptureSession: NSObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.lastEventAt = Date()
-                self.scrolledSinceCapture += abs(event.scrollingDeltaY)
+                // **A wheel reports lines, a trackpad reports points.** Without the conversion the
+                // distance trigger effectively never fires for a mouse — three or so "units" per
+                // click against a budget of hundreds — so the guarantee this exists to provide
+                // would have quietly held for trackpads only.
+                let delta = abs(event.scrollingDeltaY)
+                self.scrolledSinceCapture += event.hasPreciseScrollingDeltas
+                    ? delta
+                    : delta * Self.pointsPerScrollLine
             }
         }
 

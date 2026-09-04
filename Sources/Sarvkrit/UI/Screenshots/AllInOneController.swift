@@ -11,6 +11,15 @@ final class AllInOneController: NSObject {
 
     var isPresenting: Bool { panel != nil }
 
+    /// Whether the bar currently up is the *confirm* one — anchored to a selection, with a primary
+    /// button — as opposed to the mode bar All-In-One opens with.
+    ///
+    /// The two look similar and are the same view, which is exactly why this is needed: without
+    /// it, a settled selection under an All-In-One bar merely moved that bar into place and never
+    /// grew a Capture button, leaving the invisible confirm step in the one shortcut whose whole
+    /// job is to be discoverable.
+    private(set) var isConfirmBar = false
+
     /// What the bar should sit under, when it belongs to a selection rather than to the screen.
     struct Anchor: Equatable {
         var selection: CGRect
@@ -110,6 +119,7 @@ final class AllInOneController: NSObject {
             panel.makeKeyAndOrderFront(nil)
         }
         self.panel = panel
+        self.isConfirmBar = primary != nil
 
         // Not installed over the frozen overlay: Escape there belongs to the selection view, which
         // cancels the whole capture. Two handlers would race for one key.
@@ -126,5 +136,6 @@ final class AllInOneController: NSObject {
         escapeMonitor = nil
         panel?.orderOut(nil)
         panel = nil
+        isConfirmBar = false
     }
 }

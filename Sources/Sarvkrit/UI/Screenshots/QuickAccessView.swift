@@ -24,8 +24,36 @@ struct QuickAccessView: View {
     var onSwipeAway: (() -> Void)?
     let onHoverChange: (Bool) -> Void
 
-    @State private var isHovering = false
+    /// Starts revealed, for rendering the hovered state in a test or a preview.
+    ///
+    /// The controls only exist on hover, and SwiftUI hover cannot be synthesised — so without a
+    /// seam the one state worth checking is the one state that cannot be looked at.
+    var startsHovered = false
+
+    @State private var isHovering: Bool
     @State private var hasAppeared = false
+
+    init(image: NSImage, fileURL: URL, dimensions: String,
+         onAnnotate: (() -> Void)? = nil, onPin: (() -> Void)? = nil,
+         onCopy: @escaping () -> Void, onSave: @escaping () -> Void,
+         onReveal: @escaping () -> Void, onClose: @escaping () -> Void,
+         onSwipeAway: (() -> Void)? = nil,
+         startsHovered: Bool = false,
+         onHoverChange: @escaping (Bool) -> Void) {
+        self.image = image
+        self.fileURL = fileURL
+        self.dimensions = dimensions
+        self.onAnnotate = onAnnotate
+        self.onPin = onPin
+        self.onCopy = onCopy
+        self.onSave = onSave
+        self.onReveal = onReveal
+        self.onClose = onClose
+        self.onSwipeAway = onSwipeAway
+        self.startsHovered = startsHovered
+        self.onHoverChange = onHoverChange
+        _isHovering = State(initialValue: startsHovered)
+    }
 
     private var width: CGFloat { CaptureChrome.Metrics.thumbnailWidth }
     /// The frame follows the capture's shape rather than forcing a box, so a tall screenshot isn't

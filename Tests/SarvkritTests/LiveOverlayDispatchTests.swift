@@ -351,8 +351,10 @@ final class SelectionActionBarTests: XCTestCase {
                                  onModeChanged: { picked, _ in box.changedTo = picked },
                                  onLeaveForMode: { box.leftFor = $0 })
         CaptureOverlayController.shared.present(frames: [try frame(for: screen)],
-                                                chrome: chrome) { image, _, _ in
+                                                chrome: chrome) { image, _, rect in
+            box.answered = true
             box.confirmed = image != nil
+            box.confirmedRect = rect
         }
         let panel = try XCTUnwrap(NSApp.windows.first { $0 is FloatingPanel && $0.isVisible })
         return (panel, box)
@@ -360,6 +362,8 @@ final class SelectionActionBarTests: XCTestCase {
 
     final class Box {
         var confirmed = false
+        var answered = false
+        var confirmedRect: CGRect?
         var changedTo: CaptureMode?
         var leftFor: CaptureMode?
     }
@@ -415,6 +419,60 @@ final class SelectionActionBarTests: XCTestCase {
         NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 620, y: height - 520), in: panel))
 
         XCTAssertNotEqual(bar.frame.origin, before, "the bar stayed put while its selection moved")
+    }
+
+    func testCaptureUsesTheResizedRectNotTheOneFirstDrawn() throws {
+        // The bar's primary button captured the rect in its closure, and every later resize went
+        // through `move(to:)` without touching it. So adjusting a selection and then pressing
+        // Capture photographed the rectangle as originally drawn — the exact flow the resize
+        // affordances were added to support.
+        let (panel, box) = try present()
+        let height = panel.frame.height
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 200, y: height - 200), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 400, y: height - 350), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 400, y: height - 350), in: panel))
+
+        // Pull the bottom-right corner out by 200 × 150.
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 400, y: height - 350), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 600, y: height - 500), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 600, y: height - 500), in: panel))
+
+        // Confirm the way the bar does, by the rect the controller believes is current.
+        let centre = CGPoint(x: 400, y: height - 350)
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: centre, in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: centre, in: panel))
+
+        let rect = try XCTUnwrap(box.confirmedRect)
+        XCTAssertEqual(rect.width, 400, accuracy: 2, "captured the pre-resize width")
+        XCTAssertEqual(rect.height, 300, accuracy: 2, "captured the pre-resize height")
+    }
+
+    func testAModeBarAlreadyUpIsReplacedByTheConfirmBarRatherThanMoved() throws {
+        // All-In-One opens with the mode bar — no primary button. When a selection then settles,
+        // nudging that bar into place leaves the shortcut whose whole job is discoverability with
+        // no Capture button at all.
+        let (panel, _) = try present()
+        AllInOneController.shared.present(
+            memory: CaptureModeMemory(mode: .area, pixelSize: nil, aspectLocked: false),
+            timerSeconds: 0, overFrozenScreen: true) { _ in }
+        XCTAssertTrue(AllInOneController.shared.isPresenting)
+        XCTAssertFalse(AllInOneController.shared.isConfirmBar, "the mode bar has no primary")
+
+        let height = panel.frame.height
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 200, y: height - 200), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 500, y: height - 400), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 500, y: height - 400), in: panel))
+
+        XCTAssertTrue(AllInOneController.shared.isConfirmBar,
+                      "⌃⇧5 still has no Capture button after drawing a selection")
+    }
+
+    func testDismissingAnsweredThePendingCaptureRatherThanAbandoningIt() throws {
+        // ⌃⇧⎋ and a second press of the shortcut both dismiss. Leaving the completion unanswered
+        // suspends the awaiting continuation for the life of the process.
+        let (_, box) = try present()
+        CaptureOverlayController.shared.dismiss()
+        XCTAssertTrue(box.answered, "the capture that was waiting was never told anything")
     }
 
     func testTheVerbSaysWhatTheModeWillDo() {

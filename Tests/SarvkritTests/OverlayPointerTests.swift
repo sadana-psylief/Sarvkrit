@@ -136,3 +136,29 @@ extension OverlayPointerTests {
         XCTAssertTrue(true, "reached without the gesture being thrown away")
     }
 }
+
+/// The crosshair and the magnifier are two settings, not one.
+@MainActor
+extension OverlayPointerTests {
+
+    func testTheMagnifierSurvivesTurningTheCrosshairOff() throws {
+        // Deriving the pointer rule from the drawing condition is right; deriving the *magnifier*
+        // from it as well quietly turned two switches into one.
+        let view = try view()
+        view.showsCrosshair = false
+        view.showsMagnifier = true
+        view.seedPointer(CGPoint(x: 200, y: 150))
+
+        XCTAssertFalse(view.drawsCrosshair, "no crosshair, so the pointer must be visible")
+
+        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        var drawn = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                if let colour = rep.colorAt(x: x, y: y), colour.alphaComponent > 0.05 { drawn += 1 }
+            }
+        }
+        XCTAssertGreaterThan(drawn, 100, "the magnifier went away with the crosshair")
+    }
+}
