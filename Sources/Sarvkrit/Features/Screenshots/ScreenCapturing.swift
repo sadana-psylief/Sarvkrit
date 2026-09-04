@@ -64,6 +64,28 @@ enum CaptureMode: String, Codable, CaseIterable, Equatable {
         }
     }
 
+    /// The verb on the button that confirms a drawn selection.
+    ///
+    /// A word rather than a generic "OK", because the whole complaint this answers is not knowing
+    /// what the next step *does* — "Capture" and "Start Scrolling" lead somewhere visibly
+    /// different, and a bar that said the same thing for both would answer nothing.
+    var confirmVerb: String {
+        switch self {
+        case .scrolling: return "Start Scrolling"
+        case .textRecognition: return "Copy Text"
+        case .area, .window, .fullscreen, .allDisplays: return "Capture"
+        }
+    }
+
+    /// Whether this mode is aimed by dragging a rectangle. The others never settle one, so the
+    /// action bar has nothing to attach to.
+    var aimsByDragging: Bool {
+        switch self {
+        case .area, .scrolling, .textRecognition: return true
+        case .window, .fullscreen, .allDisplays: return false
+        }
+    }
+
     var symbolName: String {
         switch self {
         case .area: return "selection.pin.in.out"

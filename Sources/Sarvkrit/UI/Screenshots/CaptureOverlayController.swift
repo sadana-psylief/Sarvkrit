@@ -61,6 +61,15 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
         /// for plain area capture, which needs no explaining.
         var hint: String?
 
+        /// Turns on the bar that appears under a settled selection, and says what it offers.
+        ///
+        /// Nil leaves the old behaviour — a selection you confirm by a click nothing mentions —
+        /// which is only wanted where there is no mode to speak of.
+        var actionBar: ActionBar?
+
+        /// A rect to open with already drawn — "retake the last selection".
+        var initialSelection: CGRect?
+
         /// The same chrome, carrying a hint. Keeps the mode's own settings — a user who turned
         /// the magnifier off does not get it back because they chose scrolling capture.
         func saying(_ hint: String?) -> Chrome {
@@ -69,6 +78,22 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             return copy
         }
     }
+
+    /// What the settled-selection bar should offer.
+    struct ActionBar {
+        var mode: CaptureMode
+        var memory: CaptureModeMemory
+        var timerSeconds: Int
+        /// The user picked another drag-aimed mode. The rect stands; only what happens to it
+        /// changes, so the session that is waiting has to be told.
+        var onModeChanged: (CaptureMode, Int) -> Void
+        /// The user picked a mode the overlay cannot serve from the rect it has — Fullscreen or
+        /// Window. The caller takes over; the overlay's job is done.
+        var onLeaveForMode: (CaptureMode) -> Void
+    }
+
+    /// The bar's live state, which is the chrome's copy plus whatever the user has since picked.
+    private var actionBar: ActionBar?
 
     func present(frames capturedFrames: [DisplayFrame],
                  chrome: Chrome = Chrome(),
@@ -80,6 +105,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
 
         self.completion = completion
         self.selectionMode = mode
+        self.actionBar = chrome.actionBar
         self.frames = Dictionary(uniqueKeysWithValues:
             capturedFrames.map { ($0.geometry.displayID, $0) })
 
@@ -107,6 +133,7 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             view.showsMagnifier = chrome.showsMagnifier
             view.showsDimensions = chrome.showsDimensions
             view.hint = chrome.hint
+            if let initial = chrome.initialSelection { view.settle(initial) }
             panel.contentView = view
             panel.setFrame(screenFrame, display: false)
             // `.ignoresCycle` so ⌘` doesn't cycle into a full-screen overlay panel.
@@ -193,6 +220,8 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
     }
 
     func dismiss() {
+        AllInOneController.shared.dismiss()
+        actionBar = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         observers = []
@@ -204,6 +233,59 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
     }
 
     // MARK: - SelectionViewDelegate
+
+    func selectionView(_ view: SelectionView, didUpdateSettledRect rect: CGRect?) {
+        guard var bar = actionBar else { return }
+        guard let rect else {
+            // Nothing to confirm — either a fresh drag is under way or the selection was cleared.
+            AllInOneController.shared.dismiss()
+            return
+        }
+        let display = frames.values.first { $0.geometry.frame.intersects(rect) }?.geometry.frame
+            ?? rect
+        let anchor = AllInOneController.Anchor(selection: rect, display: display)
+
+        // Already up: move it rather than rebuild it, so a mouse-down in progress on the primary
+        // button survives a resize landing at the same moment.
+        guard !AllInOneController.shared.isPresenting else {
+            AllInOneController.shared.move(to: anchor)
+            return
+        }
+
+        AllInOneController.shared.present(
+            memory: bar.memory,
+            timerSeconds: bar.timerSeconds,
+            overFrozenScreen: true,
+            primary: .init(title: bar.mode.confirmVerb) { [weak self, weak view] in
+                guard let self, let view else { return }
+                self.selectionView(view, didConfirm: rect)
+            },
+            anchor: anchor
+        ) { [weak self] picked in
+            guard let self else { return }
+            guard let (memory, seconds) = picked else {
+                // Cancel on the bar means cancel the capture, which is what the button says.
+                self.selectionViewDidCancel(view)
+                return
+            }
+            bar.memory = memory
+            bar.timerSeconds = seconds
+            bar.mode = memory.mode
+            self.actionBar = bar
+
+            guard memory.mode.aimsByDragging else {
+                // Fullscreen or Window cannot be served from this rect; hand back to the caller.
+                bar.onLeaveForMode(memory.mode)
+                return
+            }
+            // The rect stands; only the verb and the hint change. Re-present so the button says
+            // what it will now do.
+            bar.onModeChanged(memory.mode, seconds)
+            self.setHint(CaptureSession.hint(for: memory.mode, seconds))
+            AllInOneController.shared.dismiss()
+            self.selectionView(view, didUpdateSettledRect: rect)
+        }
+    }
 
     func selectionView(_ view: SelectionView, didConfirm rect: CGRect) {
         // Crop out of the bitmap that was on screen, not a fresh capture: the whole point of

@@ -19,6 +19,19 @@ struct AllInOnePickerView: View {
 
     let onPick: (CaptureModeMemory, Int) -> Void
     let onCancel: () -> Void
+    /// The confirming action, when there is already a selection to confirm.
+    ///
+    /// Nil for the bar that *starts* a capture — there is nothing to take yet, so a "Capture"
+    /// button would be a lie. Non-nil once a rect is drawn, and then it is the whole point of the
+    /// bar: the step that took the shot used to be a click inside the selection that nothing on
+    /// screen mentioned.
+    var primary: Primary?
+
+    struct Primary {
+        /// "Capture", "Start Scrolling", "Copy Text" — the verb for the mode in force.
+        var title: String
+        var action: () -> Void
+    }
 
     /// The modes this bar can start.
     ///
@@ -28,8 +41,10 @@ struct AllInOnePickerView: View {
 
     init(memory: CaptureModeMemory,
          timerSeconds: Int,
+         primary: Primary? = nil,
          onPick: @escaping (CaptureModeMemory, Int) -> Void,
          onCancel: @escaping () -> Void) {
+        self.primary = primary
         _memory = State(initialValue: memory)
         _widthText = State(initialValue: memory.pixelSize.map { String(Int($0.width)) } ?? "")
         _heightText = State(initialValue: memory.pixelSize.map { String(Int($0.height)) } ?? "")
@@ -41,7 +56,10 @@ struct AllInOnePickerView: View {
     var body: some View {
         HStack(alignment: .center, spacing: CaptureChrome.Metrics.barGap) {
             modeBar
-            sizeBar
+            // The size fields are for aiming a capture that has not happened yet. Once a rect is
+            // drawn, its size is already decided and shown by the overlay's own readout, so they
+            // would be a second, contradicting answer.
+            if primary == nil { sizeBar } else { confirmBar }
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 2)
@@ -144,6 +162,44 @@ struct AllInOnePickerView: View {
         .clickableCursor()
         .help("Count down before capturing")
         .accessibilityLabel(timerSeconds == 0 ? "No timer" : "\(timerSeconds) second timer")
+    }
+
+    // MARK: - Confirming
+
+    /// Cancel and the primary action, as the right-hand bar.
+    @ViewBuilder private var confirmBar: some View {
+        if let primary {
+            CaptureChrome.Bar {
+                HStack(spacing: 8) {
+                    Button(action: onCancel) {
+                        Text("Cancel")
+                            .font(CaptureChrome.Text.label)
+                            .foregroundStyle(CaptureChrome.Colours.label)
+                            .frame(height: 28)
+                            .padding(.horizontal, 10)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .clickableCursor()
+                    .accessibilityLabel("Cancel capture")
+
+                    Button(action: primary.action) {
+                        Text(primary.title)
+                            .font(CaptureChrome.Text.label.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(height: 28)
+                            .padding(.horizontal, 14)
+                            .background(Color.accentColor, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .clickableCursor()
+                    .help("\(primary.title) — or press Return")
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+            }
+        }
     }
 
     // MARK: - Size

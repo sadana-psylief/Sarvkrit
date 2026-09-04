@@ -109,6 +109,28 @@ final class ScreenshotFeature: Feature, ObservableObject {
         }
     }
 
+    /// The last area that was actually captured, for retaking it.
+    ///
+    /// Global AppKit points. Stored as four numbers rather than an archived rect so a future
+    /// change to how rects are persisted cannot make an old value decode as something plausible
+    /// but wrong — the failure mode there is a capture of the wrong part of the screen.
+    var lastSelection: CGRect? {
+        get {
+            guard let values = defaults.array(forKey: "screenshot.lastSelection") as? [Double],
+                  values.count == 4, values[2] > 0, values[3] > 0
+            else { return nil }
+            return CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+        }
+        set {
+            guard let newValue, newValue.width > 0, newValue.height > 0 else {
+                defaults.removeObject(forKey: "screenshot.lastSelection")
+                return
+            }
+            defaults.set([newValue.minX, newValue.minY, newValue.width, newValue.height],
+                         forKey: "screenshot.lastSelection")
+        }
+    }
+
     var overlayChrome: CaptureOverlayController.Chrome {
         .init(showsCrosshair: showsCrosshair,
               showsMagnifier: showsMagnifier,

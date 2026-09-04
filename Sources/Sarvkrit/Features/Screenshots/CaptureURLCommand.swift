@@ -29,6 +29,8 @@ enum CaptureURLCommand: Equatable {
     case captureRect(CGRect, displayIndex: Int?)
     /// Puts every overlay, panel, countdown and pinned window away. See `CaptureOverlayGuard`.
     case cancel
+    /// Reopens the overlay on the last area that was captured, ready to retake or adjust.
+    case capturePreviousArea
     /// Opens an image in the annotation editor. Nil means the most recent capture, which is the
     /// thing anybody binding this to a key actually wants — "annotate the one I just took".
     case openAnnotate(URL?)
@@ -43,6 +45,7 @@ enum CaptureURLCommand: Equatable {
     var name: String {
         switch self {
         case .cancel: return "cancel"
+        case .capturePreviousArea: return "capture-previous-area"
         case .openAnnotate: return "open-annotate"
         case .openFromClipboard: return "open-from-clipboard"
         case .openSettings: return "open-settings"
@@ -70,7 +73,8 @@ enum CaptureURLCommand: Equatable {
     /// and a settings row offering a URL with somebody else's coordinates in it would be noise.
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
-            + [.openAnnotate(nil), .openFromClipboard, .openSettings, .cancel]
+            + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
+               .cancel]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -123,6 +127,7 @@ enum CaptureURLCommand: Equatable {
         guard !name.isEmpty else { return nil }
 
         if name == "cancel" { return .cancel }
+        if name == "capture-previous-area" { return .capturePreviousArea }
         if name == "open-annotate" { return .openAnnotate(filepath(from: url)) }
         if name == "open-from-clipboard" { return .openFromClipboard }
         if name == "open-settings" { return .openSettings }

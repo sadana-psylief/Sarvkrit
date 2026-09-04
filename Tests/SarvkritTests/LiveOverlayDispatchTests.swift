@@ -302,3 +302,135 @@ final class OverlayHintTests: XCTestCase {
                           "removing the hint left it on screen")
     }
 }
+
+/// The bar that appears once a selection settles.
+///
+/// This is the answer to "when I capture an area, I do not know what to do next". The confirm step
+/// already existed — a click inside the rect, or Return — and nothing on screen said so.
+@MainActor
+final class SelectionActionBarTests: XCTestCase {
+
+    override func setUp() async throws {
+        try await super.setUp()
+        addTeardownBlock { @MainActor in
+            AllInOneController.shared.dismiss()
+            CaptureOverlayController.shared.dismiss()
+            CaptureOverlayGuard.shared.dismissEverything()
+        }
+    }
+
+    private func frame(for screen: NSScreen) throws -> DisplayFrame {
+        let scale = screen.backingScaleFactor
+        let pixels = CGSize(width: screen.frame.width * scale, height: screen.frame.height * scale)
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: Int(pixels.width), height: Int(pixels.height),
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        return DisplayFrame(geometry: .init(displayID: screen.displayID ?? CGMainDisplayID(),
+                                            frame: screen.frame, scale: scale, pixelSize: pixels),
+                            image: try XCTUnwrap(context.makeImage()))
+    }
+
+    private func mouse(_ type: NSEvent.EventType, at local: CGPoint,
+                       in panel: NSWindow) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.mouseEvent(
+            with: type, location: local, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: panel.windowNumber, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1))
+    }
+
+    private func present(mode: CaptureMode = .area) throws -> (NSWindow, Box) {
+        let screen = try XCTUnwrap(NSScreen.main)
+        let box = Box()
+        var chrome = CaptureOverlayController.Chrome()
+        chrome.actionBar = .init(mode: mode,
+                                 memory: CaptureModeMemory(mode: mode, pixelSize: nil, aspectLocked: false),
+                                 timerSeconds: 0,
+                                 onModeChanged: { picked, _ in box.changedTo = picked },
+                                 onLeaveForMode: { box.leftFor = $0 })
+        CaptureOverlayController.shared.present(frames: [try frame(for: screen)],
+                                                chrome: chrome) { image, _, _ in
+            box.confirmed = image != nil
+        }
+        let panel = try XCTUnwrap(NSApp.windows.first { $0 is FloatingPanel && $0.isVisible })
+        return (panel, box)
+    }
+
+    final class Box {
+        var confirmed = false
+        var changedTo: CaptureMode?
+        var leftFor: CaptureMode?
+    }
+
+    func testNoBarUntilThereIsSomethingToConfirm() throws {
+        _ = try present()
+        XCTAssertFalse(AllInOneController.shared.isPresenting,
+                       "a bar before a rect exists would be offering to capture nothing")
+    }
+
+    func testTheBarAppearsTheMomentTheDragSettles() throws {
+        let (panel, _) = try present()
+        let height = panel.frame.height
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 200, y: height - 200), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 500, y: height - 400), in: panel))
+        XCTAssertFalse(AllInOneController.shared.isPresenting, "not while the drag is still moving")
+
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 500, y: height - 400), in: panel))
+        XCTAssertTrue(AllInOneController.shared.isPresenting,
+                      "nothing told the user the selection was ready to take")
+    }
+
+    func testTheBarGoesAwayWhenTheSelectionDoes() throws {
+        let (panel, _) = try present()
+        let height = panel.frame.height
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 200, y: height - 200), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 500, y: height - 400), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 500, y: height - 400), in: panel))
+        XCTAssertTrue(AllInOneController.shared.isPresenting)
+
+        // Starting a fresh drag outside the settled rect clears it.
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 700, y: height - 600), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 760, y: height - 660), in: panel))
+        XCTAssertFalse(AllInOneController.shared.isPresenting,
+                       "the bar stayed behind pointing at a rect that no longer exists")
+    }
+
+    func testTheBarFollowsTheSelectionWhenItIsResized() throws {
+        let (panel, _) = try present()
+        let height = panel.frame.height
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 200, y: height - 200), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 500, y: height - 400), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 500, y: height - 400), in: panel))
+
+        let bar = try XCTUnwrap(NSApp.windows.first {
+            $0 is FloatingPanel && $0.isVisible && $0 !== panel
+        })
+        let before = bar.frame.origin
+
+        // Grab the corner and pull it, which moves the rect the bar is anchored to.
+        NSApp.sendEvent(try mouse(.leftMouseDown, at: CGPoint(x: 500, y: height - 400), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseDragged, at: CGPoint(x: 620, y: height - 520), in: panel))
+        NSApp.sendEvent(try mouse(.leftMouseUp, at: CGPoint(x: 620, y: height - 520), in: panel))
+
+        XCTAssertNotEqual(bar.frame.origin, before, "the bar stayed put while its selection moved")
+    }
+
+    func testTheVerbSaysWhatTheModeWillDo() {
+        // "Capture" and "Start Scrolling" lead somewhere visibly different; one word for both
+        // would answer nothing, which is the state this replaces.
+        XCTAssertEqual(CaptureMode.area.confirmVerb, "Capture")
+        XCTAssertEqual(CaptureMode.scrolling.confirmVerb, "Start Scrolling")
+        XCTAssertEqual(CaptureMode.textRecognition.confirmVerb, "Copy Text")
+    }
+
+    func testOnlyTheDragAimedModesGetABar() {
+        for mode in [CaptureMode.area, .scrolling, .textRecognition] {
+            XCTAssertTrue(mode.aimsByDragging, "\(mode) settles a rect")
+        }
+        for mode in [CaptureMode.window, .fullscreen, .allDisplays] {
+            XCTAssertFalse(mode.aimsByDragging, "\(mode) has no rect to attach a bar to")
+        }
+    }
+}

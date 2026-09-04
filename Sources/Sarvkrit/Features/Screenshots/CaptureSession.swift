@@ -172,35 +172,38 @@ enum CaptureSession {
         return Result(image: frame.image, sourceRect: frame.geometry.frame, display: frame.geometry)
     }
 
-    /// One shortcut, every mode: freeze once, then choose on top of the frozen screen.
+    /// The one interactive capture: freeze, aim, confirm.
     ///
-    /// **The point is that the screen is already frozen and already ready to drag.** The bar used
-    /// to float over the live desktop, and choosing a mode dismissed it and started the capture
-    /// from scratch — two freezes, and a menu you were trying to photograph got a whole round
-    /// trip in which to close itself. Here the overlay goes up first with Area live, so the common
-    /// case is press the shortcut and drag; the bar is for when you want one of the others.
+    /// **Every drag-aimed mode comes through here**, which is the point. Area, scrolling, text
+    /// recognition, the self-timer and All-In-One were five paths that each froze the screen,
+    /// each presented the overlay, and each did something different afterwards — so the step that
+    /// actually takes the shot was implemented five times and explained none. One path means one
+    /// place decides what the confirm button says and one place resolves the rect.
     ///
-    /// **The picker never resolves the capture for the area-shaped modes.** Scrolling, text and
-    /// the self-timer all aim with the selection that is already on screen, so choosing one only
-    /// changes the label and what happens to the rect afterwards. Resolving early there would
-    /// abandon the drag the user was in the middle of.
+    /// `showsBarImmediately` is the only difference All-In-One now has: its bar is up before
+    /// anything is drawn, because choosing the mode *is* the point of that shortcut. Every other
+    /// mode shows the same bar the moment a rect settles.
     ///
-    /// Window capture is the one mode that starts again, and has to: a window's shadow and its
-    /// transparent background do not exist in a frozen picture of the desktop. See `captureWindow`.
-    static func captureAllInOne(memory: CaptureModeMemory,
-                                timerSeconds: Int,
-                                using capturer: ScreenCapturing,
-                                options: CaptureOptions,
-                                chrome: CaptureOverlayController.Chrome,
-                                onChoice: @escaping (CaptureModeMemory, Int) -> Void)
+    /// Window capture is the one mode that starts again rather than using the frozen pixels: a
+    /// window's shadow and its transparent background do not exist in a photograph of the desktop.
+    static func captureInteractive(startingMode: CaptureMode,
+                                   memory: CaptureModeMemory,
+                                   timerSeconds: Int,
+                                   showsBarImmediately: Bool,
+                                   initialSelection: CGRect? = nil,
+                                   using capturer: ScreenCapturing,
+                                   options: CaptureOptions,
+                                   chrome: CaptureOverlayController.Chrome,
+                                   onChoice: @escaping (CaptureModeMemory, Int) -> Void)
         async throws -> (result: Result?, mode: CaptureMode) {
         let frames = try await capturer.snapshotAllDisplays(options: options)
         guard !frames.isEmpty else { throw CaptureError.noDisplays }
 
-        // What the bar settled on. Starts at what it opens on, so a straight drag with no visit
-        // to the bar is an ordinary area capture.
-        var mode = memory.mode
+        // Starts at what the shortcut asked for, so confirming without touching the bar does
+        // exactly what the shortcut said it would.
+        var mode = startingMode
         var seconds = timerSeconds
+        var memory = memory
 
         let choice: Choice = await withCheckedContinuation { continuation in
             var resumed = false
@@ -211,22 +214,52 @@ enum CaptureSession {
                 continuation.resume(returning: choice)
             }
 
-            CaptureOverlayController.shared.present(
-                frames: frames, chrome: chrome.saying(Self.hint(for: mode, seconds))
-            ) { image, display, rect in
+            var overlayChrome = chrome.saying(Self.hint(for: mode, seconds))
+            overlayChrome.initialSelection = initialSelection
+            overlayChrome.actionBar = .init(
+                mode: mode,
+                memory: memory,
+                timerSeconds: seconds,
+                onModeChanged: { picked, pickedSeconds in
+                    mode = picked
+                    seconds = pickedSeconds
+                    memory.mode = picked
+                    onChoice(memory, pickedSeconds)
+                },
+                onLeaveForMode: { picked in
+                    mode = picked
+                    memory.mode = picked
+                    onChoice(memory, seconds)
+                    switch picked {
+                    case .window:
+                        CaptureOverlayController.shared.dismiss()
+                        finish(.needsWindowPicker)
+                    default:
+                        guard let frame = CaptureOverlayController.shared.frameUnderPointer() else {
+                            finish(.cancelled); return
+                        }
+                        CaptureOverlayController.shared.dismiss()
+                        finish(.whole(frame))
+                    }
+                })
+
+            CaptureOverlayController.shared.present(frames: frames, chrome: overlayChrome) {
+                image, display, rect in
                 guard let image, let rect, let display else { finish(.cancelled); return }
                 finish(.region(image: image, rect: rect, display: display))
             }
 
-            AllInOneController.shared.present(memory: memory, timerSeconds: timerSeconds,
+            guard showsBarImmediately else { return }
+            AllInOneController.shared.present(memory: memory, timerSeconds: seconds,
                                               overFrozenScreen: true) { picked in
                 // Escape belongs to the overlay underneath, which cancels the whole capture.
                 guard let (picked, pickedSeconds) = picked else { return }
                 onChoice(picked, pickedSeconds)
                 mode = picked.mode
                 seconds = pickedSeconds
+                memory = picked
                 switch picked.mode {
-                case .fullscreen:
+                case .fullscreen, .allDisplays:
                     guard let frame = CaptureOverlayController.shared.frameUnderPointer() else {
                         finish(.cancelled); return
                     }
@@ -249,7 +282,7 @@ enum CaptureSession {
             return (nil, mode)
         case .whole(let frame):
             return (Result(image: frame.image, sourceRect: frame.geometry.frame,
-                           display: frame.geometry), .fullscreen)
+                           display: frame.geometry), mode)
         case .needsWindowPicker:
             return (try await captureWindow(using: capturer, options: options), .window)
         case .region(let image, let rect, let display):

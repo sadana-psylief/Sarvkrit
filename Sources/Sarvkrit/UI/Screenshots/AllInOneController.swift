@@ -11,6 +11,24 @@ final class AllInOneController: NSObject {
 
     var isPresenting: Bool { panel != nil }
 
+    /// What the bar should sit under, when it belongs to a selection rather than to the screen.
+    struct Anchor: Equatable {
+        var selection: CGRect
+        var display: CGRect
+    }
+
+    /// Moves an already-presented bar to follow its selection, without rebuilding it.
+    ///
+    /// Rebuilding would drop a mouse-down in progress on the primary button — the same fault the
+    /// scroll HUD has, where the view is thrown away on every captured frame.
+    func move(to anchor: Anchor) {
+        guard let panel else { return }
+        let origin = SelectionBarPlacement.place(selection: anchor.selection,
+                                                 barSize: panel.frame.size,
+                                                 display: anchor.display).origin
+        panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
+    }
+
     /// - Parameter completion: the chosen mode and timer, or nil if cancelled.
     /// - Parameter overFrozenScreen: true when the capture overlay is already up beneath this,
     ///   which is the All-In-One flow. The bar then has to outrank the shielding level the overlay
@@ -19,6 +37,8 @@ final class AllInOneController: NSObject {
     func present(memory: CaptureModeMemory,
                  timerSeconds: Int,
                  overFrozenScreen: Bool = false,
+                 primary: AllInOnePickerView.Primary? = nil,
+                 anchor: Anchor? = nil,
                  completion: @escaping ((CaptureModeMemory, Int)?) -> Void) {
         dismiss()
 
@@ -35,6 +55,7 @@ final class AllInOneController: NSObject {
         let content = AllInOnePickerView(
             memory: memory,
             timerSeconds: timerSeconds,
+            primary: primary,
             onPick: { finish(($0, $1)) },
             onCancel: { finish(nil) })
 
@@ -49,11 +70,21 @@ final class AllInOneController: NSObject {
 
         let visible = ScreenPlacement.screenUnderPointer()?.visibleFrame
             ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let origin: CGPoint
+        if let anchor {
+            // Anchored under the selection it belongs to. A bar pinned to the bottom of the screen
+            // while the selection is at the top reads as unrelated chrome, and the whole job of
+            // this bar is to be obviously *about* the rect you just drew.
+            origin = SelectionBarPlacement.place(selection: anchor.selection,
+                                                 barSize: size,
+                                                 display: anchor.display).origin
+        } else {
+            // Low on the screen, out of the way of what is being captured — a bar across the
+            // middle covers the thing you are aiming at.
+            origin = CGPoint(x: visible.midX - size.width / 2, y: visible.minY + 96)
+        }
         let panel = FloatingPanel(
-            contentRect: NSRect(x: visible.midX - size.width / 2,
-                                // Low on the screen, out of the way of what is being captured —
-                                // a bar across the middle covers the thing you are aiming at.
-                                y: visible.minY + 96,
+            contentRect: NSRect(x: origin.x, y: origin.y,
                                 width: size.width, height: size.height),
             style: .init(level: overFrozenScreen
                          ? NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)

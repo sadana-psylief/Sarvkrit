@@ -42,6 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch command {
             case .cancel:
                 CaptureOverlayGuard.shared.dismissEverything()
+            case .capturePreviousArea:
+                guard let screenshots = AppState.shared.features
+                    .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+                Task { @MainActor in
+                    await Self.capture(.area, with: screenshots,
+                                       reopeningLastSelection: true)
+                }
             case .openAnnotate(let file):
                 openEditor(with: file)
             case .openFromClipboard:
@@ -257,7 +264,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func capture(_ mode: CaptureMode,
                                 with feature: ScreenshotFeature,
                                 timerSeconds: Int = 0,
-                                memory: CaptureModeMemory? = nil) async {
+                                memory: CaptureModeMemory? = nil,
+                                showsBarImmediately: Bool = false,
+                                reopeningLastSelection: Bool = false) async {
         // Pressing the shortcut again while the overlay is up should dismiss it, not stack a
         // second full-screen overlay on top of the first.
         if CaptureOverlayController.shared.isPresenting {
@@ -273,31 +282,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             let options = feature.captureOptions
-            let result: CaptureSession.Result?
-            if timerSeconds > 0 {
-                result = try await CaptureSession.timedCapture(
-                    mode, seconds: timerSeconds, using: feature.capturer,
-                    options: options, chrome: feature.overlayChrome)
+
+            // The modes aimed by dragging all go down one path, which is also the path that puts
+            // the confirm bar on screen. `deliver` uses the mode that came *back*, not the one
+            // that went in: the bar can change it mid-capture, and delivering as the original
+            // would file a text lookup as a screenshot.
+            if mode.aimsByDragging {
+                var chosen = memory ?? feature.modeMemory
+                chosen.mode = mode
+                let (result, finalMode) = try await CaptureSession.captureInteractive(
+                    startingMode: mode,
+                    memory: chosen,
+                    timerSeconds: timerSeconds,
+                    showsBarImmediately: showsBarImmediately,
+                    initialSelection: reopeningLastSelection ? feature.lastSelection : nil,
+                    using: feature.capturer,
+                    options: options,
+                    chrome: feature.overlayChrome,
+                    onChoice: { memory, seconds in
+                        feature.modeMemory = memory
+                        feature.selfTimerSeconds = seconds
+                    })
                 guard let result else { return }
-                deliver(result, mode: mode, with: feature)
+                // Remembered so it can be retaken. Only a real capture updates it — a cancelled
+                // one must not overwrite the rect the user still wants back.
+                if let rect = result.sourceRect { feature.lastSelection = rect }
+                deliver(result, mode: finalMode, with: feature)
                 return
             }
+
+            let result: CaptureSession.Result?
             switch mode {
-            case .area:
-                result = try await CaptureSession.captureArea(using: feature.capturer,
-                                                              options: options,
-                                                              chrome: feature.overlayChrome)
             case .window:
                 result = try await CaptureSession.captureWindow(using: feature.capturer,
                                                                 options: options)
-            case .scrolling:
-                result = try await CaptureSession.captureScrolling(using: feature.capturer,
-                                                                   options: options,
-                                                                   chrome: feature.overlayChrome)
-            case .textRecognition:
-                result = try await CaptureSession.recognizeText(using: feature.capturer,
-                                                                options: options,
-                                                                chrome: feature.overlayChrome)
             default:
                 result = try await CaptureSession.captureFullscreen(using: feature.capturer,
                                                                     options: options)
@@ -402,7 +420,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// One shortcut, every mode — freezing once and choosing on top of the frozen screen.
+    /// One shortcut, every mode — the same interactive capture, with the bar up before anything
+    /// is drawn, because choosing the mode is the point of this one.
     private static func allInOne(with feature: ScreenshotFeature) async {
         // Pressing it again while it is up puts it away rather than stacking a second one.
         if CaptureOverlayController.shared.isPresenting || AllInOneController.shared.isPresenting {
@@ -410,24 +429,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CaptureOverlayController.shared.dismiss()
             return
         }
-        do {
-            let (result, mode) = try await CaptureSession.captureAllInOne(
-                memory: feature.modeMemory,
-                timerSeconds: feature.selfTimerSeconds,
-                using: feature.capturer,
-                options: feature.captureOptions,
-                chrome: feature.overlayChrome,
-                onChoice: { memory, seconds in
-                    feature.modeMemory = memory
-                    feature.selfTimerSeconds = seconds
-                })
-            // Cancelling is an ordinary outcome, not a failure — no toast.
-            guard let result else { return }
-            deliver(result, mode: mode, with: feature)
-        } catch {
-            captureLog.error("all-in-one failed: \(String(describing: error), privacy: .public)")
-            reportFailure()
-        }
+        let remembered = feature.modeMemory
+        await capture(remembered.mode.aimsByDragging ? remembered.mode : .area,
+                      with: feature,
+                      timerSeconds: feature.selfTimerSeconds,
+                      memory: remembered,
+                      showsBarImmediately: true)
     }
 
     private static func reportFailure() {

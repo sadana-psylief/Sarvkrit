@@ -6,6 +6,16 @@ protocol SelectionViewDelegate: AnyObject {
     func selectionView(_ view: SelectionView, didConfirm rect: CGRect)
     func selectionView(_ view: SelectionView, didConfirmWindow window: CapturableWindow)
     func selectionViewDidCancel(_ view: SelectionView)
+    /// The settled rect changed, or became nil while a new drag is under way.
+    ///
+    /// This is what puts the action bar on screen and keeps it under the selection while it is
+    /// resized or moved. Nil means "there is nothing to confirm yet", which is also the state
+    /// during a drag — a bar that followed the pointer mid-drag would be chasing it.
+    func selectionView(_ view: SelectionView, didUpdateSettledRect rect: CGRect?)
+}
+
+extension SelectionViewDelegate {
+    func selectionView(_ view: SelectionView, didUpdateSettledRect rect: CGRect?) {}
 }
 
 /// What the overlay is asking the user to pick.
@@ -163,7 +173,16 @@ final class SelectionView: NSView {
     private func redraw() {
         needsDisplay = true
         refreshCursor()
+        // Reported from here for the same reason the cursor is: the settled rect is a function of
+        // the state that makes the view dirty, so anything that redraws may have changed it.
+        let settled = gesture.settledRect
+        if settled != lastReportedSettledRect {
+            lastReportedSettledRect = settled
+            delegate?.selectionView(self, didUpdateSettledRect: settled)
+        }
     }
+
+    private var lastReportedSettledRect: CGRect?
 
     /// The cursor is decided by the gesture's phase, so every phase change has to re-ask.
     private func refreshCursor() {
@@ -190,6 +209,17 @@ final class SelectionView: NSView {
             rect: bounds,
             options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
             owner: self))
+    }
+
+    /// Opens with a rect already drawn, for retaking the last selection.
+    ///
+    /// Goes through the gesture rather than setting a rect on the view, so the reopened selection
+    /// is a real settled selection — handles, action bar, arrow-key nudging and all — instead of
+    /// a drawing that looks like one and cannot be adjusted.
+    func settle(_ globalRect: CGRect) {
+        guard display.frame.intersects(globalRect) else { return }
+        gesture.settle(globalRect)
+        redraw()
     }
 
     /// Places the pointer before any event has arrived, so the overlay opens already showing the
