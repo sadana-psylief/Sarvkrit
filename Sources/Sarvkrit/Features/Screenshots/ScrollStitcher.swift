@@ -69,12 +69,23 @@ enum ScrollStitcher {
         var best = (offset: 0, score: 0.0)
         var second = 0.0
 
-        // `shift` is how far b has moved down relative to a.
-        for shift in 0...max(0, a.count - 1) {
-            let overlap = min(a.count - shift, b.count)
-            guard overlap >= minimumOverlap else { break }
+        // `shift` is how far b has moved down relative to a — and it is **signed**, because a
+        // page can be scrolled either way.
+        //
+        // This used to start at zero. A capture scrolled *upward* therefore matched nothing,
+        // failed at the very first pair, and ended the session with one frame and a log line no
+        // user ever sees. The settings text said "scroll in one direction" without ever saying
+        // which one it had to be.
+        //
+        // Iterating rather than breaking out: overlap grows as the shift approaches zero and
+        // shrinks away from it, so an early `break` would stop before reaching the good ones.
+        for shift in -(b.count - 1)...(a.count - 1) {
+            let aStart = max(0, shift)
+            let bStart = max(0, -shift)
+            let overlap = min(a.count - aStart, b.count - bStart)
+            guard overlap >= minimumOverlap else { continue }
             var matches = 0
-            for index in 0..<overlap where a[shift + index] == b[index] { matches += 1 }
+            for index in 0..<overlap where a[aStart + index] == b[bStart + index] { matches += 1 }
             let score = Double(matches) / Double(overlap)
             if score > best.score {
                 second = best.score
@@ -89,7 +100,48 @@ enum ScrollStitcher {
     }
 
     /// Decides where every frame's lines go.
+    ///
+    /// **Direction is normalised here rather than handled twice.** A page scrolled up produces the
+    /// same tall image as the same frames scrolled down and read backwards, so if the first
+    /// matchable pair says the content moved upward, the sequence is reversed and the placement
+    /// logic below only ever deals with new content arriving at the bottom. The frame indices are
+    /// mapped back at the end, so `render` still addresses the caller's own array.
     static func plan(frames: [ScrollFrame], axis: ScrollAxis, options: Options) -> StitchPlan {
+        guard scrolledUpward(frames, options: options) else {
+            return planDownward(frames: frames, axis: axis, options: options)
+        }
+        let reversed = Array(frames.reversed())
+        let plan = planDownward(frames: reversed, axis: axis, options: options)
+        let last = frames.count - 1
+        return StitchPlan(
+            placements: plan.placements.map {
+                .init(frameIndex: last - $0.frameIndex,
+                      sourceRange: $0.sourceRange,
+                      destinationOffset: $0.destinationOffset)
+            },
+            totalLength: plan.totalLength,
+            stickyLeading: plan.stickyLeading,
+            stickyTrailing: plan.stickyTrailing,
+            endedBecause: plan.endedBecause)
+    }
+
+    /// Whether the first pair that matches at all says the content moved up.
+    ///
+    /// Only the first matchable pair is consulted: a capture is one gesture in one direction, and
+    /// asking every pair would let a single ambiguous frame in the middle flip the whole stitch.
+    private static func scrolledUpward(_ frames: [ScrollFrame], options: Options) -> Bool {
+        for index in 1..<max(1, frames.count) {
+            guard let match = offset(of: frames[index].lines, in: frames[index - 1].lines,
+                                     minimumOverlap: options.minimumOverlap),
+                  match.margin >= options.minimumMargin, match.offset != 0
+            else { continue }
+            return match.offset < 0
+        }
+        return false
+    }
+
+    private static func planDownward(frames: [ScrollFrame], axis: ScrollAxis,
+                                     options: Options) -> StitchPlan {
         guard let first = frames.first else {
             return StitchPlan(placements: [], totalLength: 0, stickyLeading: 0,
                               stickyTrailing: 0, endedBecause: .contentExhausted)

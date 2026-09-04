@@ -151,6 +151,7 @@ final class QuickAccessController: NSObject {
             MainActor.assumeIsolated {
                 guard let self,
                       let entry = self.entries.first(where: { $0.itemID == itemID }) else { return }
+                self.reconcileHover(entry)
                 if QuickAccessTimer.hasExpired(now: Date(), shownAt: entry.shownAt,
                                                duration: self.autoCloseAfter,
                                                hoveredSince: entry.hoveredSince) {
@@ -160,6 +161,19 @@ final class QuickAccessController: NSObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         entry.timer = timer
+    }
+
+    /// Re-derives whether the pointer is over this overlay, from where the pointer actually is.
+    ///
+    /// **Hovering pauses the countdown, so a hover that never ends pauses it forever** — and the
+    /// only source of "the pointer left" was SwiftUI's `.onHover`, one dropped event away from
+    /// stranding the overlay on screen with no auto-close and (until the drag source moved below
+    /// the controls) no working Discard button either. Asking the window server where the pointer
+    /// is cannot miss an event, so this corrects itself on the next tick whatever happened.
+    private func reconcileHover(_ entry: Entry) {
+        let inside = entry.panel.frame.contains(NSEvent.mouseLocation)
+        guard inside != (entry.hoveredSince != nil) else { return }
+        setHovering(inside, for: entry.itemID)
     }
 
     private func setHovering(_ hovering: Bool, for itemID: UUID) {

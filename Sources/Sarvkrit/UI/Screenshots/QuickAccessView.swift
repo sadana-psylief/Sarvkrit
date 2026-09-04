@@ -45,6 +45,13 @@ struct QuickAccessView: View {
                 .frame(width: width, height: height)
                 .clipped()
 
+            // **Inside the stack and *under* the controls, never as a trailing `.overlay`.**
+            // As an overlay this sat on top of everything, and `DragSourceView.mouseDown`
+            // swallows the event without forwarding it — so every button here, Discard
+            // included, was unclickable, and the overlay could not be put away at all.
+            // Below the hover layer, a drag anywhere that is not a button still starts one.
+            CaptureDragSource(url: fileURL, preview: image, onSwipeAway: onSwipeAway)
+
             if isHovering { hoverLayer }
         }
         .frame(width: width, height: height)
@@ -52,10 +59,10 @@ struct QuickAccessView: View {
         .overlay(
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
+                .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.5), radius: 16, y: 6)
-        // The whole thumbnail is the drag handle, which is what people reach for.
-        .overlay(CaptureDragSource(url: fileURL, preview: image, onSwipeAway: onSwipeAway))
+        .contextMenu { contextMenu }
         .scaleEffect(hasAppeared ? 1 : 0.92)
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
@@ -71,7 +78,9 @@ struct QuickAccessView: View {
 
     private var hoverLayer: some View {
         ZStack {
-            Color.black.opacity(0.35)
+            // Not hit-testable: it covers the drag source underneath, and a dimming wash that
+            // swallowed drags would trade one dead gesture for another.
+            Color.black.opacity(0.35).allowsHitTesting(false)
 
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
@@ -101,6 +110,21 @@ struct QuickAccessView: View {
             .padding(10)
         }
         .transition(.opacity)
+    }
+
+    /// The right-click menu, which the reference has and we did not.
+    ///
+    /// Worth having beyond parity: it is reachable without hovering the exact pixel a small
+    /// round button occupies, so it is the way out when the buttons are missed.
+    @ViewBuilder private var contextMenu: some View {
+        if let onAnnotate { Button("Open Annotation Tool…", action: onAnnotate) }
+        if let onPin { Button("Pin to the Screen", action: onPin) }
+        Divider()
+        Button("Copy", action: onCopy)
+        Button("Save", action: onSave)
+        Button("Show in Finder", action: onReveal)
+        Divider()
+        Button("Close", action: onClose)
     }
 
     private func pill(_ title: String, action: @escaping () -> Void) -> some View {

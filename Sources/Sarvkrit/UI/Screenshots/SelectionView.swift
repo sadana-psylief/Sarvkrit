@@ -38,7 +38,7 @@ final class SelectionView: NSView {
 
     var showsCrosshair = true
     /// See `CaptureOverlayController.Chrome.hint`.
-    var hint: String? { didSet { needsDisplay = true } }
+    var hint: String? { didSet { redraw() } }
     var showsDimensions = true
     /// Disabled when the overlay is live rather than frozen: sampling a fresh capture per frame
     /// gives a loupe that stutters, which is worse than not having one. The settings row says so.
@@ -97,16 +97,83 @@ final class SelectionView: NSView {
         return NSCursor(image: image, hotSpot: .zero)
     }()
 
+    /// **The one rule about the pointer: it may only be hidden while the crosshair is standing in
+    /// for it.** This is deliberately the same expression `draw(_:)` gates the crosshair on, read
+    /// from one place, because the two drifting apart is exactly what went wrong — the pointer was
+    /// hidden unconditionally while the crosshair was drawn in only one state, so window mode had
+    /// nothing to point with and a settled selection could not have its handles grabbed.
+    var drawsCrosshair: Bool {
+        !isWindowMode && showsCrosshair && (gesture.settledRect == nil || gesture.isActive)
+    }
+
     override func resetCursorRects() {
-        // Not in window mode: there the pointer is picking a window, and an invisible pointer with
-        // no crosshair drawn under it would leave nothing to aim with.
-        guard !isWindowMode else { super.resetCursorRects(); return }
+        guard drawsCrosshair else { super.resetCursorRects(); return }
         addCursorRect(bounds, cursor: Self.invisibleCursor)
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        guard !isWindowMode else { super.cursorUpdate(with: event); return }
-        Self.invisibleCursor.set()
+        if drawsCrosshair {
+            Self.invisibleCursor.set()
+            return
+        }
+        cursor(at: convert(event.locationInWindow, from: nil)).set()
+    }
+
+    /// What the pointer should look like at a point, once it is visible again.
+    ///
+    /// The handles are the reason this is more than `.arrow`: a settled selection can be resized,
+    /// and without the cursor changing shape over a handle there is nothing to tell you so.
+    private func cursor(at local: CGPoint) -> NSCursor {
+        guard let settled = gesture.settledRect else { return .arrow }
+        let rect = viewRect(settled)
+        if let handle = SelectionHandles.handle(at: local, bounds: rect,
+                                                size: Self.handleGrabSize) {
+            return Self.cursor(for: handle)
+        }
+        // Inside means "drag me somewhere else", which is what an open hand says.
+        return rect.contains(local) ? .openHand : .arrow
+    }
+
+    /// A bigger target than the handle that is drawn.
+    ///
+    /// Aiming at a 9pt square is pixel-hunting. Growing the *hit* rect and leaving the drawn one
+    /// alone is the standard trick and costs nothing visually.
+    static let handleGrabSize: CGFloat = SelectionHandles.defaultSize + 8
+
+    private static func cursor(for handle: SelectionHandles.Handle) -> NSCursor {
+        switch handle {
+        case .left, .right:
+            return .resizeLeftRight
+        case .top, .bottom:
+            return .resizeUpDown
+        // AppKit ships no diagonal resize cursor in its public API. The nearest honest thing is
+        // the axis the corner mostly moves in, rather than a private symbol that could vanish.
+        case .topLeft, .bottomRight, .topRight, .bottomLeft:
+            return .crosshair
+        case .start, .end, .curve:
+            return .openHand
+        }
+    }
+
+    /// Marks the view dirty **and** re-asks for the cursor.
+    ///
+    /// One call rather than two, because the cursor is a function of exactly the state that makes
+    /// the view dirty — the phase of the gesture. Keeping them separate meant the pointer kept
+    /// whatever shape it had when the selection settled.
+    private func redraw() {
+        needsDisplay = true
+        refreshCursor()
+    }
+
+    /// The cursor is decided by the gesture's phase, so every phase change has to re-ask.
+    private func refreshCursor() {
+        window?.invalidateCursorRects(for: self)
+        guard let pointer else { return }
+        if drawsCrosshair {
+            Self.invisibleCursor.set()
+        } else {
+            cursor(at: pointer).set()
+        }
     }
 
     override var acceptsFirstResponder: Bool { true }
@@ -131,12 +198,18 @@ final class SelectionView: NSView {
         guard display.frame.contains(globalPoint) else { return }
         pointer = CGPoint(x: globalPoint.x - display.frame.minX,
                           y: globalPoint.y - display.frame.minY)
-        needsDisplay = true
+        // The highlight is seeded too. It used to wait for the first `mouseMoved`, so window mode
+        // opened with nothing highlighted — and with the pointer hidden as well, that read as an
+        // overlay that had simply failed to appear.
+        if case .window(let windows) = mode {
+            hoveredWindow = WindowPicker.window(at: globalPoint, in: windows)
+        }
+        redraw()
     }
 
     override func mouseExited(with event: NSEvent) {
         pointer = nil
-        needsDisplay = true
+        redraw()
     }
 
     // MARK: - Coordinates
@@ -161,9 +234,12 @@ final class SelectionView: NSView {
             // A press on a handle adjusts the selection rather than starting a new one —
             // otherwise the only way to fix one that is slightly wrong is Escape and start the
             // whole capture again.
-            if let handle = SelectionHandles.handle(at: local, bounds: viewRect(settled)) {
+            // The same grown target the cursor promises. Using the drawn size here would show a
+            // resize cursor over a spot that then starts a new selection instead.
+            if let handle = SelectionHandles.handle(at: local, bounds: viewRect(settled),
+                                                    size: Self.handleGrabSize) {
                 activeHandle = handle
-                needsDisplay = true
+                redraw()
                 return
             }
             // A press *inside* waits for the mouse-up that takes the shot. Falling through here
@@ -179,7 +255,7 @@ final class SelectionView: NSView {
 
         gesture.began(at: globalPoint(local))
         applyModifiers(event)
-        needsDisplay = true
+        redraw()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -190,7 +266,7 @@ final class SelectionView: NSView {
         if let activeHandle {
             gesture.resize(handle: activeHandle, to: globalPoint(local),
                            constrainAspect: event.modifierFlags.contains(.shift))
-            needsDisplay = true
+            redraw()
             return
         }
 
@@ -206,20 +282,20 @@ final class SelectionView: NSView {
             isMovingSelection = true
             gesture.move(originTo: CGPoint(x: movePress.origin.x + delta.width,
                                            y: movePress.origin.y + delta.height))
-            needsDisplay = true
+            redraw()
             return
         }
 
         applyModifiers(event)
         gesture.moved(to: globalPoint(local))
-        needsDisplay = true
+        redraw()
     }
 
     override func mouseUp(with event: NSEvent) {
         if activeHandle != nil {
             // Adjusting, not finishing: the capture is taken on Return or a click inside.
             activeHandle = nil
-            needsDisplay = true
+            redraw()
             return
         }
 
@@ -230,7 +306,7 @@ final class SelectionView: NSView {
             // Having moved it, the release is the end of the move — not also the click that takes
             // the shot. A press that never travelled falls through and confirms, as it should.
             if wasMoving {
-                needsDisplay = true
+                redraw()
                 return
             }
         }
@@ -254,20 +330,20 @@ final class SelectionView: NSView {
             if viewRect(settled).contains(local) {
                 delegate?.selectionView(self, didConfirm: settled)
             }
-            needsDisplay = true
+            redraw()
             return
         }
 
         if gesture.ended() != nil {
             // Settled rather than confirmed, so it can be adjusted by its handles. Return or a
             // click inside takes the shot.
-            needsDisplay = true
+            redraw()
             return
         }
         // A click with no drag dismisses. Anything else would leave the user stuck behind a
         // full-screen overlay wondering which key closes it.
         delegate?.selectionViewDidCancel(self)
-        needsDisplay = true
+        redraw()
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -276,7 +352,7 @@ final class SelectionView: NSView {
         if case .window(let windows) = mode {
             hoveredWindow = WindowPicker.window(at: globalPoint(local), in: windows)
         }
-        needsDisplay = true
+        redraw()
     }
 
     private func applyModifiers(_ event: NSEvent) {
@@ -315,7 +391,7 @@ final class SelectionView: NSView {
             default:  delta = CGSize(width: 0, height: step)
             }
             gesture.nudge(by: delta)
-            needsDisplay = true
+            redraw()
         default:
             super.keyDown(with: event)
         }
@@ -377,8 +453,10 @@ final class SelectionView: NSView {
 
         // No crosshair or loupe in window mode: there is nothing to line up to the pixel, and a
         // loupe over a highlighted window is only clutter.
-        if !isWindowMode, let pointer, selection == nil || gesture.isActive {
-            if showsCrosshair { drawCrosshair(at: pointer, in: context, avoiding: selection) }
+        // Same expression as `drawsCrosshair`, which is what decides whether the pointer is
+        // hidden. They must never disagree.
+        if let pointer, drawsCrosshair {
+            drawCrosshair(at: pointer, in: context, avoiding: selection)
             if showsMagnifier { drawMagnifier(at: pointer, in: context) }
         }
     }

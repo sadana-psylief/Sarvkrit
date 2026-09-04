@@ -144,7 +144,12 @@ final class CaptureOverlayController: NSObject, SelectionViewDelegate {
             (panel.contentView as? SelectionView)?.seedPointer(NSEvent.mouseLocation)
         }
 
-        OverlayCursor.hide()
+        // **Deliberately not `OverlayCursor.hide()`.** It is app-scoped, so it does nothing when
+        // the overlay opens from the background — the hotkey path — and the wrong thing when the
+        // app happens to be active, hiding the pointer in window mode and over a settled
+        // selection where no crosshair replaces it. `SelectionView` owns the pointer now, through
+        // a cursor rect the window server honours whoever is frontmost. `OverlayCursor` remains
+        // as the restore path in `dismiss()` and in the escape hatch.
         installCancelObservers()
     }
 
