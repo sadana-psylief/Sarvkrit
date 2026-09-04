@@ -14,10 +14,30 @@ Keyboard  ·  Clipboard  ·  Windows  ·  Files  ·  Sound  ·  System
 ## Install
 
 1. Download the DMG and drag **Sarvkrit** to your Applications folder.
-2. **First launch:** right-click the app and choose **Open**, then confirm.
+2. **First launch:** double-click Sarvkrit, click **Done** on the warning, then open **System
+   Settings → Privacy & Security**, scroll down to **Security**, and click **Open Anyway** next to
+   Sarvkrit. Authenticate, open Sarvkrit again and choose **Open**.
 
 That second step is needed because Sarvkrit isn't notarized yet — notarization requires a paid Apple
 Developer account. macOS will otherwise refuse to open it. You only have to do this once.
+
+<!-- TODO(notarize): the whole of step 2 goes away once `make notarize` has run for real. -->
+
+Not *right-click → Open*: macOS 15 Sequoia removed that override, so on 15 and later it shows the
+same refusal with no Open button. Open Anyway works on 14 too, so it is the only route given here.
+
+Or skip the whole detour with one command:
+
+```sh
+curl -fsSL https://sarvkrit.com/install | sh
+```
+
+That works because macOS quarantines what a *browser* downloaded and curl sets no such attribute,
+so Gatekeeper's first-launch check never runs. Which is why the script does the equivalent check
+itself — signature intact, signed by this team — and installs nothing if either fails. Read it
+before you run it: <https://sarvkrit.com/install> is the script, served as plain text. If you
+already have the DMG, `xattr -dr com.apple.quarantine /Applications/Sarvkrit.app` is the same idea
+by hand.
 
 Sarvkrit lives in the menu bar and has no Dock icon until you open its window.
 
@@ -297,7 +317,14 @@ make test      # unit tests
 make install   # copy to /Applications
 make dmg       # dist/Sarvkrit.dmg
 make notarize  # needs a paid Apple Developer account — see below
+make release VERSION=1.0.1   # bump, build, notarize, then tag and publish to GitHub
 ```
+
+`make release` treats notarization as a gate: it bumps `MARKETING_VERSION`, builds, runs
+`make notarize`, and only if that verifies its own work does it commit, tag and create the GitHub
+release. There is no path through it that publishes a DMG users would be blocked by. Because
+`sarvkrit.com/download` and GitHub's own "latest" link both resolve through
+`releases/latest/download/Sarvkrit.dmg`, a new release is picked up with no change on the site.
 
 `Sarvkrit.xcodeproj` is generated from `project.yml` by XcodeGen and is **not** checked in. Run
 `make generate` (or any build target) before opening the project in Xcode.
@@ -311,6 +338,53 @@ gating all pick it up with no further edits.
 Put the decision logic in a pure `enum` or `struct` with no `CGEvent`, pasteboard or filesystem
 dependency — `CutPasteRewriter`, `RuleMatcher`, `ClipboardPrivacyFilter` and `KeepAwakeState` are the
 pattern — so it can be tested exhaustively without a live event tap or a real folder.
+
+### Notarizing, once there is a paid account
+
+`scripts/notarize.sh` is written and waiting; it exits with instructions until a **Developer ID
+Application** certificate is in the keychain, which only a paid Apple Developer Program membership
+can produce. Today's DMG is signed with the *Apple Development* cert and is not notarized, which is
+why the install section above has a step 2 at all.
+
+0. **Decide Individual vs Organization before enrolling.** The licence holder is Psylief
+   Technologies Pvt. Ltd., so Organization is the tidier fit — but it needs a D-U-N-S number and
+   legal-entity verification, which runs to weeks rather than days, and it is the company name that
+   then appears on the certificate and in every Gatekeeper dialog. Individual is approved in a day
+   or two and shows the personal name. This choice is not easy to change later.
+1. Enrol in the Apple Developer Program ($99/yr) as `tusharsadana@icloud.com`.
+2. Xcode → Settings → Accounts → Manage Certificates → **+ Developer ID Application**.
+3. Read the **new Team ID** off that certificate (Keychain Access shows it in the Organizational
+   Unit field) and put it in `project.yml`'s `DEVELOPMENT_TEAM` **and** in `EXPECTED_TEAM` in the
+   site repo's `public/install.sh`, which pins it. It is not `77A36893HP` — see below. A build
+   signed against the old ID will not notarize, and the installer will reject it.
+4. Create an app-specific password at appleid.apple.com, and store it for `notarytool`, once:
+
+   ```bash
+   xcrun notarytool store-credentials SarvkritNotary \
+     --apple-id tusharsadana@icloud.com --team-id <new team ID> --password <app-specific-password>
+   ```
+5. `make release VERSION=1.0.1`. It will not tag or publish anything unless notarization has
+   verified itself — `spctl` reporting `source=Notarized Developer ID` and `stapler validate`
+   passing on both the app and the DMG. Cut a new version rather than replacing the v1.0 asset:
+   the v1.0 notes publish that DMG's sha256 under *Verifying the download*, so clobbering the
+   asset in place would make the published hash a lie.
+6. Grep both repos for the marker `TODO` + `(notarize)` and delete what it finds: the install
+   step 2 above, step 2 of `INSTALL_STEPS`, the `OpenAnywayMock` illustration and its `.ctx-*`
+   rules in `index.css`. This runbook is a hit too and stays — it is the instruction, not the
+   thing being removed. Then fix step 2 of the v1.0 release notes, which still describes the
+   Gatekeeper detour.
+
+**The Team ID will almost certainly change.** `77A36893HP` is a *free personal team* — Xcode's own
+record says `isFreeProvisioningTeam = true`, `teamType = Personal Team`, named "Tushar Sadana
+(Personal Team)". A paid membership is a different team with its own ID; the personal team does not
+become it. So after enrolling, read the new Team ID off the certificate and update
+`DEVELOPMENT_TEAM` in `project.yml` and the `--team-id` in `scripts/notarize.sh`'s message. A build
+signed against the old ID will not notarize.
+
+**Expect one Accessibility re-prompt.** Re-signing from *Apple Development* to *Developer ID*
+changes the code signature, and macOS keys the Accessibility grant to bundle ID *and* signature — so
+the first notarized build asks every existing user, and this machine, to grant it once more. That is
+a one-time cost at the switch, not something that recurs.
 
 ### Two things to know before changing the build
 
