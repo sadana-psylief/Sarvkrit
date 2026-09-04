@@ -9,11 +9,20 @@ import SwiftUI
 final class PinnedShotController: NSObject {
     static let shared = PinnedShotController()
 
-    private final class Pin {
+    /// One pinned window's state.
+    ///
+    /// **`ObservableObject`, and that is the whole bug fixed.** It was a plain class whose values
+    /// the view read through `Binding(get:set:)` closures, so writing one changed the model and
+    /// nothing else: SwiftUI had no reason to re-run `body`. The opacity slider did nothing, the
+    /// lock chip never changed its symbol, and Lock Mode hid its own controls only in theory while
+    /// `ignoresMouseEvents` made them dead in fact — a window that looked interactive, wasn't, and
+    /// showed no sign of why. The only thing that ever redrew a pin was its own hover state, which
+    /// is why moving the pointer away appeared to apply the opacity all at once.
+    final class Pin: ObservableObject {
         let panel: FloatingPanel
         let id = UUID()
-        var opacity: Double = 1
-        var isLocked = false
+        @Published var opacity: Double = 1
+        @Published var isLocked = false
         init(panel: FloatingPanel) { self.panel = panel }
     }
 
@@ -38,17 +47,15 @@ final class PinnedShotController: NSObject {
         let pin = Pin(panel: panel)
 
         panel.contentView = NSHostingView(rootView: PinnedShotView(
+            pin: pin,
             image: image,
-            opacity: Binding(get: { pin.opacity },
-                             set: { [weak self] in
-                                 pin.opacity = PinnedShotGeometry.clampedOpacity($0)
-                                 self?.refresh(pin)
-                             }),
-            isLocked: Binding(get: { pin.isLocked },
-                              set: { [weak self] in
-                                  pin.isLocked = $0
-                                  self?.applyLock(pin)
-                              }),
+            onOpacityChange: { value in
+                pin.opacity = PinnedShotGeometry.clampedOpacity(value)
+            },
+            onLockChange: { [weak self] locked in
+                pin.isLocked = locked
+                self?.applyLock(pin)
+            },
             onClose: { [weak self] in self?.close(pin) },
             onCopy: {
                 guard let tiff = image.tiffRepresentation,
@@ -71,15 +78,20 @@ final class PinnedShotController: NSObject {
     /// the other direction: `ignoresMouseEvents` silently swallowing the interaction you needed.
     private func applyLock(_ pin: Pin) {
         pin.panel.ignoresMouseEvents = pin.isLocked
-        refresh(pin)
         if pin.isLocked {
             // Said at the moment it becomes true, because from then on the pin cannot be clicked
             // to ask. A locked window with no visible way out is the worst thing this feature can
             // leave behind.
-            ToastPresenter.shared.show(
-                "Locked — press ⌃⇧P to unlock, or \(CaptureOverlayGuard.shortcutDescription) "
-                + "to clear everything",
-                symbolName: "lock.fill")
+            // **Only routes that exist are named.** ⌃⇧P is registered inside
+            // `PinToScreenFeature.activate()`, so with that feature switched off the old wording
+            // sent people to a hotkey that was never claimed — while they were looking at a window
+            // that had just stopped accepting clicks. The guard's shortcut is installed
+            // unconditionally at launch and is always true.
+            let unlock = PinToScreenFeature.isUnlockShortcutRegistered
+                ? "press ⌃⇧P to unlock, or \(CaptureOverlayGuard.shortcutDescription) to clear "
+                    + "everything"
+                : "press \(CaptureOverlayGuard.shortcutDescription) to unlock and clear everything"
+            ToastPresenter.shared.show("Locked — \(unlock)", symbolName: "lock.fill")
         }
     }
 
@@ -89,7 +101,6 @@ final class PinnedShotController: NSObject {
         for pin in pins where pin.isLocked {
             pin.isLocked = false
             pin.panel.ignoresMouseEvents = false
-            refresh(pin)
         }
     }
 
@@ -105,15 +116,9 @@ final class PinnedShotController: NSObject {
 
     private func resize(_ pin: Pin, by delta: CGSize) {
         let resized = PinnedShotGeometry.resized(pin.panel.frame, by: delta,
-                                                 preservingAspect: true)
+                                                 preservingAspect: true,
+                                                 displays: NSScreen.screens.map(\.visibleFrame))
         pin.panel.setFrame(resized, display: true)
-    }
-
-    /// SwiftUI bindings into a class instance don't republish on their own; the hosting view has
-    /// to be told. Cheap here — a pinned shot is one image.
-    private func refresh(_ pin: Pin) {
-        (pin.panel.contentView as? NSHostingView<PinnedShotView>)?.needsLayout = true
-        pin.panel.contentView?.needsDisplay = true
     }
 
     // MARK: - Placement

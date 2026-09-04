@@ -205,6 +205,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         screenshots.showHistory = {
             MainActor.assumeIsolated { CaptureHistoryWindowController.shared.toggle() }
         }
+        screenshots.pinClipboardImage = {
+            MainActor.assumeIsolated { Self.pinClipboardOrUnlock() }
+        }
         screenshots.recognizeText = { [weak screenshots] in
             guard let screenshots else { return }
             Task { @MainActor in await Self.capture(.textRecognition, with: screenshots) }
@@ -438,6 +441,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       showsBarImmediately: true)
     }
 
+    /// Unlock everything if anything is locked; otherwise pin whatever image is on the clipboard.
+    ///
+    /// Unlocking comes first and must: a locked pin takes no clicks, so this is the way out, and
+    /// letting the pinning behaviour shadow it would leave someone with a dead window and a
+    /// shortcut that made another one.
+    ///
+    /// Lives here rather than on `PinToScreenFeature` because it has two callers now — that
+    /// feature's ⌃⇧P, and `sarvkrit://pin`, which has to work whether or not the feature is on.
+    @MainActor
+    static func pinClipboardOrUnlock() {
+        let controller = PinnedShotController.shared
+        if controller.count > 0 {
+            controller.unlockAll()
+        }
+        guard let image = NSPasteboard.general.readObjects(
+            forClasses: [NSImage.self], options: nil)?.first as? NSImage else {
+            if controller.count == 0 {
+                ToastPresenter.shared.show("No image on the clipboard to pin",
+                                           symbolName: "pin.slash")
+            }
+            return
+        }
+        controller.pin(image: image, sourceRect: nil)
+    }
+
     private static func reportFailure() {
         // A denied grant arrives as `noDisplays`, not as a permission error — there is no
         // permission error to catch. If the preflight disagrees, the grant landed after launch and
@@ -460,21 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .compactMap({ $0 as? PinToScreenFeature }).first else { return }
 
         pin.pinFromClipboardOrUnlock = {
-            MainActor.assumeIsolated {
-                let controller = PinnedShotController.shared
-                if controller.count > 0 {
-                    controller.unlockAll()
-                }
-                guard let image = NSPasteboard.general.readObjects(
-                    forClasses: [NSImage.self], options: nil)?.first as? NSImage else {
-                    if controller.count == 0 {
-                        ToastPresenter.shared.show("No image on the clipboard to pin",
-                                                   symbolName: "pin.slash")
-                    }
-                    return
-                }
-                controller.pin(image: image, sourceRect: nil)
-            }
+            MainActor.assumeIsolated { Self.pinClipboardOrUnlock() }
         }
     }
 

@@ -290,6 +290,9 @@ final class ScreenshotFeature: Feature, ObservableObject {
     var captureScrolling: (() -> Void)?
     var recognizeText: (() -> Void)?
     var showHistory: (() -> Void)?
+    /// Pins whatever image is on the clipboard. Wired by the delegate; see `handler(for:)` for
+    /// why this lives here rather than on the Pin feature.
+    var pinClipboardImage: (() -> Void)?
 
     private var hotkeys: [GlobalHotkey] = []
 
@@ -324,6 +327,9 @@ final class ScreenshotFeature: Feature, ObservableObject {
         failedRegistrations = []
 
         for action in ScreenshotAction.allCases {
+            // `pinClipboard` is runnable but not bindable here — `PinToScreenFeature` owns ⌃⇧P and
+            // registering it twice is a Carbon collision, which fails silently.
+            guard action != .pinClipboard else { continue }
             guard let handler = handler(for: action),
                   let shortcut = shortcuts.shortcut(for: action) else { continue }
             let hotkey = GlobalHotkey(id: action.hotkeyID)
@@ -373,8 +379,12 @@ final class ScreenshotFeature: Feature, ObservableObject {
         case .scrolling: return { [weak self] in self?.captureScrolling?() }
         case .textRecognition: return { [weak self] in self?.recognizeText?() }
         case .history: return { [weak self] in self?.showHistory?() }
-        // Owned by PinToScreenFeature, which registers it itself.
-        case .pinClipboard: return nil
+        // **Pinning works whether or not the Pin to Screen feature is switched on.** Putting a
+        // capture on top of everything is part of taking one — the overlay offers it, the history
+        // shelf offers it, and `sarvkrit://pin` asks for it. What the feature's toggle governs is
+        // the ⌃⇧P *shortcut*, which it registers itself; `rebindHotkeys` below therefore skips
+        // this action rather than racing it for the same key.
+        case .pinClipboard: return { [weak self] in self?.pinClipboardImage?() }
         }
     }
 

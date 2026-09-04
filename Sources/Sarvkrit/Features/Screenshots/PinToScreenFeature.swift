@@ -35,6 +35,14 @@ final class PinToScreenFeature: Feature, ObservableObject {
 
     private var hotkey: GlobalHotkey?
 
+    /// Whether ⌃⇧P is actually claimed right now.
+    ///
+    /// **Read before telling anyone to press it.** Registration happens in `activate()`, so with
+    /// this feature switched off the shortcut does not exist — and the lock toast used to name it
+    /// anyway, sending someone whose window had just stopped accepting clicks to a key that does
+    /// nothing.
+    static private(set) var isUnlockShortcutRegistered = false
+
     func activate() {
         let hotkey = GlobalHotkey(id: GlobalHotkey.ID.pinClipboardImage)
         let status = hotkey.register(keyCode: UInt32(kVK_ANSI_P),
@@ -45,12 +53,17 @@ final class PinToScreenFeature: Feature, ObservableObject {
             log.error("couldn't register the pin hotkey: \(status, privacy: .public)")
         }
         self.hotkey = hotkey
+        Self.isUnlockShortcutRegistered = status == noErr
     }
 
     func deactivate() {
         hotkey?.unregister()
         hotkey = nil
-        MainActor.assumeIsolated { PinnedShotController.shared.closeAll() }
+        Self.isUnlockShortcutRegistered = false
+        // **Pins outlive this feature being switched off.** Pinning is reachable from the capture
+        // overlay whether or not this toggle is on, so closing everything here would delete
+        // windows the user put up through a route that is still working. Only the shortcut
+        // belongs to this feature; the windows belong to the app.
     }
 
     /// ⌃⇧P does double duty: unlock everything if anything is locked, otherwise pin whatever
