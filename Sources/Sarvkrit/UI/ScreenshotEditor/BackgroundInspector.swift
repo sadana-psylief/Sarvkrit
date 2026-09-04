@@ -28,6 +28,7 @@ struct BackgroundInspector: View {
                 // that ticking the box was worth doing. Picking a swatch turns it on.
                 swatches
                 if model.document.background != nil {
+                    meshEditor
                     controls
                     presetControls
                 }
@@ -42,7 +43,7 @@ struct BackgroundInspector: View {
                   spacing: 6) {
             ForEach(BackgroundCatalogue.entries) { entry in
                 Button { update { $0.fill = .builtIn(id: entry.id) } } label: {
-                    GradientSwatch(spec: entry.spec)
+                    GradientSwatch(mesh: entry.mesh)
                         .frame(height: 30)
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -54,6 +55,54 @@ struct BackgroundInspector: View {
                 .help(entry.name)
             }
         }
+    }
+
+    /// The applied background's control grid, as editable colours.
+    ///
+    /// **A preset is a starting point, not a fixed choice.** Twenty gradients is a good catalogue
+    /// and still the wrong colour for someone's brand; without this the only way past them is to
+    /// leave. Editing any well turns a `.builtIn` into a `.mesh` carrying the same colours, so the
+    /// change is a continuation of the preset rather than a fresh start — and picking a swatch
+    /// again puts it back.
+    ///
+    /// Laid out as the mesh is: row 0 at the top, matching what the renderer draws, so a well sits
+    /// where its colour appears.
+    @ViewBuilder private var meshEditor: some View {
+        if let mesh = style.fill.editableMesh {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Colours").font(.caption).foregroundStyle(.secondary)
+                // Square cells, packed left: at three-to-a-row across the full panel the wells
+                // were letterboxed bars and read as a list. Square and tight, the grid is a
+                // low-resolution picture of the gradient above it, which is what it is.
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(0..<mesh.rows, id: \.self) { row in
+                        HStack(spacing: 4) {
+                            ForEach(0..<mesh.columns, id: \.self) { column in
+                                MeshColourWell(
+                                    colour: mesh.colour(column: column, row: row),
+                                    label: "Row \(row + 1), column \(column + 1)"
+                                ) { colour in
+                                    setColour(colour, column: column, row: row)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reads the *current* mesh rather than the one the row was built from.
+    ///
+    /// The system colour panel stays open across edits and holds this closure, so a captured mesh
+    /// would go stale: pick a colour on one cell with the panel still up, drag the panel's wheel,
+    /// and the drag would write its cell onto the mesh from before — reverting the other edit.
+    private func setColour(_ colour: RGBAColour, column: Int, row: Int) {
+        guard var next = style.fill.editableMesh else { return }
+        let index = row * next.columns + column
+        guard next.colours.indices.contains(index) else { return }
+        next.colours[index] = colour
+        update { $0.fill = .mesh(next) }
     }
 
     private func isSelected(_ entry: BackgroundCatalogue.Entry) -> Bool {
@@ -135,23 +184,95 @@ struct BackgroundInspector: View {
 /// A gradient preview, drawn from the same spec the compositor uses so the swatch cannot drift
 /// from the result.
 struct GradientSwatch: NSViewRepresentable {
-    let spec: GradientSpec
+    let mesh: MeshSpec
 
-    func makeNSView(context: Context) -> SwatchView { SwatchView(spec: spec) }
-    func updateNSView(_ view: SwatchView, context: Context) { view.spec = spec }
+    func makeNSView(context: Context) -> SwatchView { SwatchView(mesh: mesh) }
+    func updateNSView(_ view: SwatchView, context: Context) { view.mesh = mesh }
 
     final class SwatchView: NSView {
-        var spec: GradientSpec { didSet { needsDisplay = true } }
-        init(spec: GradientSpec) {
-            self.spec = spec
+        var mesh: MeshSpec { didSet { needsDisplay = true } }
+        init(mesh: MeshSpec) {
+            self.mesh = mesh
             super.init(frame: .zero)
         }
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError("not used from a nib") }
 
+        /// **Flipped, like every other consumer of the compositor.** The export context is turned
+        /// top-left and `AnnotationCanvasView` overrides this too; this view did not, so it drew
+        /// the same fill upside down. With two symmetric stops at 135° that was near-invisible,
+        /// which is how it survived — a mesh with distinct corners makes it obvious, and a swatch
+        /// that mirrors the result is a picker that lies.
+        override var isFlipped: Bool { true }
+
         override func draw(_ dirtyRect: NSRect) {
             guard let context = NSGraphicsContext.current?.cgContext else { return }
-            BackgroundCompositor.draw(spec, in: bounds, context: context)
+            BackgroundCompositor.draw(mesh, in: bounds, context: context)
+        }
+    }
+}
+
+
+/// One control point of a mesh, and the palette behind it.
+///
+/// Its own type rather than `ColourWell`, which reads and writes `EditorDocumentModel.colour` —
+/// the *annotation* colour — and so cannot address a cell of a grid. The palette itself is shared:
+/// the same `AnnotationPalette` and the same `NSColorPanel` bridge, so a background colour can be
+/// sampled off the screen with the eyedropper exactly like an arrow's can.
+struct MeshColourWell: View {
+    let colour: RGBAColour
+    let label: String
+    var onChange: (RGBAColour) -> Void
+
+    @State private var isShowingPalette = false
+
+    var body: some View {
+        Button { isShowingPalette.toggle() } label: {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .gray))
+                .frame(width: 34, height: 34)
+                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .clickableCursor()
+        .help(label)
+        .accessibilityLabel(label)
+        .popover(isPresented: $isShowingPalette, arrowEdge: .bottom) {
+            VStack(spacing: 10) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 8), count: 6),
+                          spacing: 8) {
+                    ForEach(Array(AnnotationPalette.colours.enumerated()), id: \.offset) { index, swatch in
+                        Button { onChange(swatch) } label: {
+                            Circle()
+                                .fill(Color(nsColor: NSColor(cgColor: swatch.cgColor) ?? .gray))
+                                .frame(width: 22, height: 22)
+                                .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor),
+                                                               lineWidth: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .clickableCursor()
+                        .help(AnnotationPalette.name(at: index))
+                    }
+                }
+                Divider()
+                Button {
+                    let panel = NSColorPanel.shared
+                    panel.showsAlpha = false
+                    panel.color = NSColor(cgColor: colour.cgColor) ?? .gray
+                    panel.setTarget(ColourPanelBridge.shared)
+                    panel.setAction(#selector(ColourPanelBridge.colourChanged(_:)))
+                    ColourPanelBridge.shared.onChange = onChange
+                    panel.makeKeyAndOrderFront(nil)
+                } label: {
+                    Label("Other Colour…", systemImage: "eyedropper.halffull")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+            }
+            .padding(12)
+            .frame(width: 214)
         }
     }
 }

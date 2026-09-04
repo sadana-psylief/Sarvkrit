@@ -10,12 +10,37 @@ final class BackgroundCatalogueTests: XCTestCase {
         XCTAssertEqual(Set(ids).count, ids.count)
     }
 
-    func testEveryEntryHasUsableStops() {
+    func testEveryEntryHasAUsableMesh() {
+        // Replaces the two-stop check. The presets are meshes now — a line through colour space
+        // could not hold what these do.
         for entry in BackgroundCatalogue.entries {
-            XCTAssertGreaterThanOrEqual(entry.spec.stops.count, 2, "\(entry.id)")
-            XCTAssertEqual(entry.spec.stops.first?.location, 0, "\(entry.id)")
-            XCTAssertEqual(entry.spec.stops.last?.location, 1, "\(entry.id)")
+            XCTAssertTrue(entry.mesh.isWellFormed, "\(entry.id)")
+            XCTAssertLessThanOrEqual(entry.lightnessRange.lowerBound,
+                                     entry.lightnessRange.upperBound, "\(entry.id)")
         }
+    }
+
+    func testANeutralPresetClaimsNoHueAndSoContrastsWithEverything() {
+        // Paper and Graphite are deliberately grey. Extracting a hue from a grey would be
+        // meaningless — the channel that happens to lead by a hair would decide it — so they
+        // report none, and `nearestHue` treats that as maximally distant. Which is right: a
+        // neutral background sits behind any colour of screenshot.
+        let paper = try! XCTUnwrap(BackgroundCatalogue.entry(id: "paper"))
+        XCTAssertTrue(paper.hues.isEmpty)
+
+        let vivid = try! XCTUnwrap(BackgroundCatalogue.entry(id: "ember"))
+        XCTAssertFalse(vivid.hues.isEmpty, "a coloured preset must expose its hues")
+    }
+
+    func testHuesAndLightnessAreDerivedFromTheColoursThemselves() {
+        // They used to be hand-typed scalars that nothing checked against the gradient, so an
+        // entry could advertise a colour it did not contain. Derived, they cannot drift.
+        let entry = try! XCTUnwrap(BackgroundCatalogue.entry(id: "ocean"))
+        let lightnesses = entry.mesh.colours.map { colour -> Double in
+            (max(colour.r, max(colour.g, colour.b)) + min(colour.r, min(colour.g, colour.b))) / 2
+        }
+        XCTAssertEqual(entry.lightnessRange.lowerBound, lightnesses.min()!, accuracy: 0.001)
+        XCTAssertEqual(entry.lightnessRange.upperBound, lightnesses.max()!, accuracy: 0.001)
     }
 
     func testTheCatalogueSpansLightAndDark() {
@@ -26,7 +51,7 @@ final class BackgroundCatalogueTests: XCTestCase {
 
     func testAnUnknownIdFallsBackRatherThanCrashing() {
         XCTAssertNil(BackgroundCatalogue.entry(id: "nope"))
-        XCTAssertFalse(BackgroundCatalogue.spec(for: "nope").stops.isEmpty)
+        XCTAssertTrue(BackgroundCatalogue.mesh(for: "nope").isWellFormed)
     }
 }
 
@@ -113,10 +138,25 @@ final class AutoBalanceTests: XCTestCase {
         XCTAssertLessThanOrEqual(entry.lightness, 0.45)
     }
 
-    func testTheChosenHueContrastsWithTheScreenshot() {
+    func testTheChosenBackgroundContainsNoHueCloseToTheScreenshots() {
+        // Restated for meshes, and it is a stronger claim than the old one. Scoring on a *mean*
+        // hue could pick a background that contains the screenshot's colour while averaging far
+        // from it — teal-to-indigo averages to a blue in neither lobe. Every hue in the chosen
+        // mesh has to be distant, not just the average of them.
         let entry = try! XCTUnwrap(AutoBalance.suggestedBackground(dominantHue: 0,
                                                                    imageLuma: 0.9))
-        XCTAssertGreaterThan(AutoBalance.circularDistance(entry.hue, 0), 60)
+        func nearest(_ candidate: BackgroundCatalogue.Entry) -> Double {
+            candidate.hues.map { AutoBalance.circularDistance($0, 0) }.min() ?? 180
+        }
+        // The claim is that it picks the best available, not that a distant one must exist — a
+        // catalogue of nothing but reds should still choose, and choose the least red.
+        let pool = BackgroundCatalogue.entries.filter { $0.lightnessRange.upperBound <= 0.5 }
+        XCTAssertFalse(pool.isEmpty, "no dark background exists to put a light screenshot on")
+        for candidate in pool {
+            XCTAssertLessThanOrEqual(nearest(candidate), nearest(entry) + 0.001,
+                                     "\(candidate.name) contrasts better than the chosen "
+                                     + "\(entry.name)")
+        }
     }
 
     func testPaddingIsClampedAtBothEnds() {

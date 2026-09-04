@@ -80,14 +80,37 @@ enum BackgroundCompositor {
             context.fill(rect)
         case .gradient(let spec):
             draw(spec, in: rect, context: context)
+        case .mesh(let spec):
+            draw(spec, in: rect, context: context)
         case .builtIn(let id):
-            draw(BackgroundCatalogue.spec(for: id), in: rect, context: context)
+            draw(BackgroundCatalogue.mesh(for: id), in: rect, context: context)
+        case .unknown:
+            // Written by a newer build and kept verbatim, but we cannot paint what we cannot read.
+            // Something neutral beats a transparent hole the user cannot see or explain.
+            draw(BackgroundCatalogue.mesh(for: "slate"), in: rect, context: context)
         case .image(let fileName):
             // Resolved by the caller and passed as a gradient when unavailable — a missing custom
             // background must not produce a transparent composite the user can't see.
             _ = fileName
-            draw(BackgroundCatalogue.spec(for: "slate"), in: rect, context: context)
+            draw(BackgroundCatalogue.mesh(for: "slate"), in: rect, context: context)
         }
+    }
+
+    /// Paints a mesh gradient.
+    ///
+    /// Rendered at the size it will occupy — see `MeshRenderer` for why the dither cannot be
+    /// applied to a small buffer and stretched — then blitted. `interpolationQuality` is `.none`
+    /// because the bitmap is already the right size; anything else would resample the dither and
+    /// undo it.
+    static func draw(_ spec: MeshSpec, in rect: CGRect, context: CGContext) {
+        guard let image = MeshRenderer.image(spec,
+                                             width: Int(rect.width.rounded()),
+                                             height: Int(rect.height.rounded()))
+        else { return }
+        context.saveGState()
+        context.interpolationQuality = image.width == Int(rect.width.rounded()) ? .none : .high
+        context.drawFlipped(image, in: rect)
+        context.restoreGState()
     }
 
     static func draw(_ spec: GradientSpec, in rect: CGRect, context: CGContext) {

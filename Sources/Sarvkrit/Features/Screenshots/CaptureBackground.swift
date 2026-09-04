@@ -21,21 +21,58 @@ struct GradientSpec: Codable, Equatable {
     var kind: Kind = .linear
 }
 
+/// A mesh gradient: a grid of colours blended between.
+///
+/// **Why a grid and not more stops on a line.** Every built-in used to be two stops at 135°, and
+/// a line through colour space cannot hold what the good ones do — one of the reference's runs
+/// blue through amber to peach, another purple through cyan to violet. Those need colour to vary
+/// in *two* directions, which is a grid.
+///
+/// Row-major, `columns × rows` entries. Not fixed at 3×3: the renderer interpolates whatever it
+/// is given, and a future preset wanting finer control should not need a new type.
+struct MeshSpec: Codable, Equatable {
+    var columns: Int
+    var rows: Int
+    var colours: [RGBAColour]
+
+    init(columns: Int, rows: Int, colours: [RGBAColour]) {
+        self.columns = max(2, columns)
+        self.rows = max(2, rows)
+        self.colours = colours
+    }
+
+    /// True when the grid actually holds the colours it claims to.
+    ///
+    /// Checked rather than trusted because a `Codable` value arrives from a file, and a short
+    /// array would otherwise be an index-out-of-range at draw time.
+    var isWellFormed: Bool { colours.count == columns * rows && columns >= 2 && rows >= 2 }
+
+    func colour(column: Int, row: Int) -> RGBAColour {
+        let c = min(max(column, 0), columns - 1)
+        let r = min(max(row, 0), rows - 1)
+        let index = r * columns + c
+        return colours.indices.contains(index) ? colours[index] : .white
+    }
+}
+
 /// What surrounds a screenshot.
 ///
 /// **Not `BackgroundStyle`, which is what this was called first.** SwiftUI ships a type of that
 /// name, so in any file importing SwiftUI the bare initialiser was ambiguous — it compiled
 /// wherever the contextual type happened to disambiguate it and failed the moment one didn't.
 struct CaptureBackground: Codable, Equatable {
-    enum Fill: Codable, Equatable {
+    enum Fill: Equatable {
         case none
         case solid(RGBAColour)
         case gradient(GradientSpec)
+        case mesh(MeshSpec)
         /// Resolved through `BackgroundCatalogue`. Stored by id so a catalogue tweak reaches
         /// existing documents.
         case builtIn(id: String)
         /// A user image, copied into the store — a filename, never a path that can move.
         case image(fileName: String)
+        /// A fill written by a newer build. Held verbatim and written back unchanged.
+        case unknown(type: String, raw: Data)
     }
 
     struct Shadow: Codable, Equatable {

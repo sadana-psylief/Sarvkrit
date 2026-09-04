@@ -2,6 +2,21 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+extension RGBAColour {
+    /// From `"RRGGBB"`. Used by the background catalogue, whose palettes were sampled as hex and
+    /// read far better that way than as forty triples of decimals.
+    ///
+    /// In an extension deliberately: an initialiser declared in the body would suppress the
+    /// memberwise one that the rest of the file is built on.
+    init(hex: String) {
+        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        let value = UInt32(digits, radix: 16) ?? 0
+        self.init(r: Double((value >> 16) & 0xFF) / 255,
+                  g: Double((value >> 8) & 0xFF) / 255,
+                  b: Double(value & 0xFF) / 255)
+    }
+}
+
 /// sRGB, 0…1.
 ///
 /// Not `NSColor`: a document has to decode identically on another Mac, and an archived `NSColor`

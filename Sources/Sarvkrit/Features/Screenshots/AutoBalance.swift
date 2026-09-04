@@ -122,8 +122,12 @@ enum AutoBalance {
         guard !catalogue.isEmpty else { return nil }
 
         let wantsLight = imageLuma < 0.5
+        // Filtered on the range, not a mean. A mesh with a near-white lobe and a near-black one
+        // averages to 0.5 and would pass as "neither too light nor too dark" when in truth it is
+        // both — the screenshot would land on the half that matches it and disappear.
         let candidates = catalogue.filter {
-            wantsLight ? $0.lightness >= 0.55 : $0.lightness <= 0.45
+            wantsLight ? $0.lightnessRange.lowerBound >= 0.5
+                       : $0.lightnessRange.upperBound <= 0.5
         }
         let pool = candidates.isEmpty ? catalogue : candidates
 
@@ -132,7 +136,14 @@ enum AutoBalance {
             return pool.min { abs($0.lightness - (wantsLight ? 0.85 : 0.2))
                             < abs($1.lightness - (wantsLight ? 0.85 : 0.2)) }
         }
-        return pool.max { circularDistance($0.hue, hue) < circularDistance($1.hue, hue) }
+        // Scored on the *closest* hue the mesh contains, then maximised. Averaging the hues of a
+        // multi-colour mesh gives a number the mesh may barely contain — teal-to-indigo averages
+        // to a blue that is in neither lobe — so "furthest from the screenshot" could pick a
+        // background holding the exact colour it was avoiding.
+        func nearestHue(_ entry: BackgroundCatalogue.Entry) -> Double {
+            entry.hues.map { circularDistance($0, hue) }.min() ?? 180
+        }
+        return pool.max { nearestHue($0) < nearestHue($1) }
     }
 
     static func circularDistance(_ a: Double, _ b: Double) -> Double {
