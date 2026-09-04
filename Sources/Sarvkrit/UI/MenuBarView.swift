@@ -110,8 +110,12 @@ struct MenuBarView: View {
         if let panel = panels.first(where: { $0.id == selection.wrappedValue }) {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 // The strip is icons only, so unlike the old labelled tabs it does not name what
-                // you are looking at. This is the only thing that does.
-                SectionHeader(panel.title)
+                // you are looking at. This is the only thing that does — except on Features, which
+                // is the one panel with headers of its own, and where this put FEATURES directly
+                // above KEYBOARD in the same style forty points apart.
+                if panel.id != TrayPanel.featuresID {
+                    SectionHeader(panel.title)
+                }
                 panel.content()
             }
         }
