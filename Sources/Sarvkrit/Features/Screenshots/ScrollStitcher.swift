@@ -54,6 +54,13 @@ enum ScrollStitcher {
         var minimumMargin = 0.15
         /// A runaway capture must not eat memory without bound.
         var frameLimit = 40
+        /// How many unmatchable frames in a row before giving up.
+        ///
+        /// **Not one.** A single flick in the middle of a long scroll used to discard every good
+        /// frame before it, which is how a thirty-frame capture came back as one viewport.
+        /// Skipping the frame and trying the next against the same anchor recovers from exactly
+        /// the mistake people actually make.
+        var failureTolerance = 3
     }
 
     /// Best offset of `b` within `a`, by normalised agreement over line hashes.
@@ -157,12 +164,21 @@ enum ScrollStitcher {
         var written = first.length - sticky.trailing
         var reason = EndReason.contentExhausted
 
+        // The last frame that was actually placed. A skipped frame must not become the anchor,
+        // or one bad frame drags the whole rest of the stitch out of alignment with it.
+        var anchorIndex = 0
+        var consecutiveFailures = 0
+        /// The first frame that could not be joined, if any. Kept so the end reason stays honest:
+        /// skipping a frame and then running out of frames is **not** "the content ended", and
+        /// reporting it as such would hide the one thing worth telling the user.
+        var firstFailure: Int?
+
         for index in 1..<max(1, frames.count) {
             if index >= options.frameLimit {
                 reason = .frameLimit
                 break
             }
-            let previous = frames[index - 1]
+            let previous = frames[anchorIndex]
             let current = frames[index]
 
             // Match on the body only: a sticky header is identical in every frame and would match
@@ -173,9 +189,13 @@ enum ScrollStitcher {
             guard let match = offset(of: currentBody, in: previousBody,
                                      minimumOverlap: options.minimumOverlap),
                   match.margin >= options.minimumMargin else {
+                consecutiveFailures += 1
+                if firstFailure == nil { firstFailure = index }
+                guard consecutiveFailures >= options.failureTolerance else { continue }
                 reason = .noOverlapFound(atFrame: index)
                 break
             }
+            consecutiveFailures = 0
 
             // Identical frames mean the page stopped moving: the end of the content.
             if match.offset == 0 {
@@ -194,6 +214,13 @@ enum ScrollStitcher {
                                     sourceRange: takeFrom..<bodyEnd,
                                     destinationOffset: written))
             written += newLines
+            anchorIndex = index
+        }
+
+        // A frame that would not join is the interesting outcome even when the loop then ended
+        // for an ordinary reason.
+        if case .contentExhausted = reason, let firstFailure {
+            reason = .noOverlapFound(atFrame: firstFailure)
         }
 
         // The sticky footer goes on once, at the very bottom.

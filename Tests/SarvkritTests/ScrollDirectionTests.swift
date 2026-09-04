@@ -113,3 +113,88 @@ final class ScrollDirectionTests: XCTestCase {
                      "20 rows of overlap is under the shipping minimum of 40")
     }
 }
+
+/// Surviving the mistakes people actually make while scrolling.
+final class ScrollRecoveryTests: XCTestCase {
+
+    private func page(rows: Int) -> [UInt64] {
+        (0..<rows).map { UInt64($0 &* 2_654_435_761 &+ 12_345) }
+    }
+
+    private func viewport(_ page: [UInt64], from row: Int, height: Int) -> ScrollFrame {
+        ScrollFrame(lines: Array(page[row..<row + height]), width: 100, height: height)
+    }
+
+    private let shipping = ScrollStitcher.Options()
+
+    func testOneBadFrameInTheMiddleNoLongerEndsTheCapture() {
+        // The recoverable case, and the common one: a single frame caught mid-render or mid
+        // animation, with the scroll carrying on from where it was. The old code broke out of the
+        // loop at the first unmatchable pair, so that one frame ended a thirty-frame capture.
+        let tall = page(rows: 1200)
+        var frames = [0, 60, 120].map { viewport(tall, from: $0, height: 160) }
+        frames.append(ScrollFrame(lines: (0..<160).map { UInt64($0 &* 999_983) },
+                                  width: 100, height: 160))     // a junk frame
+        frames.append(contentsOf: [180, 240].map { viewport(tall, from: $0, height: 160) })
+
+        let plan = ScrollStitcher.plan(frames: frames, axis: .vertical, options: shipping)
+        XCTAssertTrue(plan.placements.contains { $0.frameIndex == 5 },
+                      "the scroll did not resume after the bad frame")
+        XCTAssertFalse(plan.placements.contains { $0.frameIndex == 3 },
+                       "the junk frame should be skipped, not placed")
+        XCTAssertEqual(plan.totalLength, 400, "160 plus four lots of 60")
+    }
+
+    func testAFlickToSomewhereUnjoinableKeepsWhatCameBefore() {
+        // Landing somewhere with nothing in common is not recoverable — joining it would invent
+        // a page that never existed — but everything captured up to that point must survive.
+        let tall = page(rows: 1200)
+        let rows = [0, 60, 120, 180, 900, 960, 1020]
+        let frames = rows.map { viewport(tall, from: $0, height: 160) }
+
+        let plan = ScrollStitcher.plan(frames: frames, axis: .vertical, options: shipping)
+        XCTAssertEqual(plan.placements.count, 4, "the run before the flick")
+        XCTAssertEqual(plan.totalLength, 340)
+        guard case .noOverlapFound = plan.endedBecause else {
+            return XCTFail("a flick reported \(plan.endedBecause)")
+        }
+    }
+
+    func testItStillGivesUpWhenNothingJoinsAtAll() {
+        // Recovery must not become "never admit failure": a capture of unrelated frames has to
+        // stop rather than concatenate nonsense.
+        let frames = (0..<6).map { index in
+            ScrollFrame(lines: (0..<160).map { UInt64(($0 &+ index &* 7919) &* 104_729) },
+                        width: 100, height: 160)
+        }
+        let plan = ScrollStitcher.plan(frames: frames, axis: .vertical, options: shipping)
+        guard case .noOverlapFound = plan.endedBecause else {
+            return XCTFail("six unrelated frames reported \(plan.endedBecause)")
+        }
+        XCTAssertEqual(plan.placements.count, 1, "nothing but the first frame should be placed")
+    }
+
+    func testASkippedFrameIsReportedRatherThanCalledTheEndOfTheContent() {
+        // "Content exhausted" after skipping a frame would hide the one thing worth saying.
+        let tall = page(rows: 600)
+        let frames = [viewport(tall, from: 0, height: 160),
+                      viewport(tall, from: 440, height: 160)]
+        let plan = ScrollStitcher.plan(frames: frames, axis: .vertical, options: shipping)
+        guard case .noOverlapFound = plan.endedBecause else {
+            return XCTFail("a frame that would not join reported \(plan.endedBecause)")
+        }
+    }
+
+    func testTheAnchorDoesNotMoveToASkippedFrame() {
+        // If a skipped frame became the anchor, everything after it would be measured against a
+        // frame that was never placed, and the stitch would drift.
+        let tall = page(rows: 900)
+        let frames = [viewport(tall, from: 0, height: 200),
+                      viewport(tall, from: 700, height: 200),   // skipped
+                      viewport(tall, from: 100, height: 200)]   // joins the *first* frame
+        let plan = ScrollStitcher.plan(frames: frames, axis: .vertical, options: shipping)
+        XCTAssertTrue(plan.placements.contains { $0.frameIndex == 2 },
+                      "the frame that overlapped the anchor was not placed")
+        XCTAssertFalse(plan.placements.contains { $0.frameIndex == 1 })
+    }
+}
