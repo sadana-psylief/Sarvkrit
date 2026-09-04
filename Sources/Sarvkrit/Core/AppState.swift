@@ -143,9 +143,25 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// The tray's tabs: every populated category, then General.
-    var trayTabs: [TrayTab] {
-        TrayTab.tabs(for: populatedCategories)
+    /// The panels the switched-on features contribute to the menu bar, merged and in registry
+    /// order.
+    ///
+    /// The two panels the app always shows — Features and General — are *not* here: they have no
+    /// feature behind them and their content belongs to the view that draws them.
+    /// `TrayPanel.strip(contributed:features:general:)` puts the three together, and is where the
+    /// "General is always last" rule lives.
+    ///
+    /// Blocked features are excluded as well as disabled ones. A feature whose permission was
+    /// revoked is not running, so its panel would show a frozen last reading with nothing to say
+    /// why — the Features tab is where it explains itself, with the rest of the blocked list.
+    @MainActor
+    var contributedTrayPanels: [TrayPanel] {
+        features
+            .filter { feature in
+                guard !blockedFeatureIDs.contains(feature.id) else { return false }
+                return store.isEnabled(feature.id) || feature.panelIsItsOwnSwitch
+            }
+            .flatMap { $0.trayPanels() }
     }
 
     func features(in category: FeatureCategory) -> [Feature] {

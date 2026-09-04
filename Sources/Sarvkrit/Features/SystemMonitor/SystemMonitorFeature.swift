@@ -227,14 +227,19 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         AnyView(SystemMonitorDetailView(feature: self))
     }
 
-    /// Every reading, under the feature's own row in the Sarvkrit menu.
+    /// Every reading, as its own panel in the Sarvkrit menu.
     ///
     /// This is where the readings live. The monitor deliberately adds no status item of its own —
     /// Sarvkrit is one menu bar icon — so the dropdown is the place the full set is shown, and the
     /// menu bar text beside the icon is only ever a summary.
+    ///
+    /// One panel for now; it becomes System, Network, Disks and Power once there are cards to put
+    /// in them. Seven readings already do not fit one screen comfortably.
     @MainActor
-    func makeTrayView() -> AnyView? {
-        AnyView(SystemMonitorTrayView(feature: self))
+    func trayPanels() -> [TrayPanel] {
+        [TrayPanel(id: "system", title: "System", symbolName: "cpu") {
+            SystemMonitorTrayView(feature: self)
+        }]
     }
 
     // MARK: - Sampling

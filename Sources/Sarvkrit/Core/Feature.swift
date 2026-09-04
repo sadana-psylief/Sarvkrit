@@ -175,13 +175,32 @@ protocol Feature: AnyObject {
     /// substitute their own. Returning nil — the default — keeps the generic pane.
     @MainActor func makeDetailView() -> AnyView?
 
-    /// Extra content for the tray, shown under the feature's row while it is switched on.
+    /// The panels this feature puts in the menu bar, in strip order.
     ///
-    /// The tray is otherwise strictly one toggle row per feature, which is right for a feature you
-    /// turn on and forget. It is wrong for one you *operate* from the tray — picking an output
-    /// device, moving a volume slider — where the row is a switch for something you then need to
-    /// use. Returning nil, the default, keeps the plain row.
-    @MainActor func makeTrayView() -> AnyView?
+    /// This replaced `makeTrayView()`, which could only append content *underneath* the feature's
+    /// own switch. That was right while the panel was a switchboard and wrong once a feature had
+    /// something worth leading with: the volume mixer and the system monitor were the two things
+    /// people opened the menu for, and both were reachable only by first finding the switch that
+    /// turned them on.
+    ///
+    /// A feature may return several — the system monitor returns System, Network, Disks and Power,
+    /// because a 420pt window holds one card comfortably and four badly — or share one id with
+    /// other features, which `TrayPanel.merged(_:)` collapses into a single tab. Returning `[]`,
+    /// the default, means the feature appears only as a switch in the Features tab.
+    ///
+    /// Only called for features that are switched on and not blocked, so an implementation never
+    /// has to check either — unless `panelIsItsOwnSwitch` says otherwise.
+    @MainActor func trayPanels() -> [TrayPanel]
+
+    /// Whether this feature's panel should be shown even while the feature is switched off.
+    ///
+    /// False for almost everything: a mixer with no tap running, or a monitor with no samples, has
+    /// nothing to draw, and its panel would be an empty card inviting you to go elsewhere.
+    ///
+    /// True for Keep Awake alone, where switching the feature on *is* the thing the panel offers.
+    /// Hiding it while off would put "keep my Mac awake" behind a detour through Features — the
+    /// switch being the control is exactly why it must stay reachable.
+    var panelIsItsOwnSwitch: Bool { get }
 }
 
 extension Feature {
@@ -190,7 +209,8 @@ extension Feature {
     func activate() {}
     func deactivate() {}
     @MainActor func makeDetailView() -> AnyView? { nil }
-    @MainActor func makeTrayView() -> AnyView? { nil }
+    @MainActor func trayPanels() -> [TrayPanel] { [] }
+    var panelIsItsOwnSwitch: Bool { false }
 
     var requiresAccessibility: Bool { requirements.contains(.accessibility) }
 }
