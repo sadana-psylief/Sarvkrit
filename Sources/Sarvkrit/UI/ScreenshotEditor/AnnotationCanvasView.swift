@@ -124,6 +124,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             context.clip()
         }
         context.translateBy(x: composition.imageRect.minX, y: composition.imageRect.minY)
+        // Under the marks, not over them: the halo has to peek out around the arrow's silhouette
+        // the way a glow does, rather than wash a translucent blue across the arrow's own colour.
+        if let selection = model.selection,
+           let element = model.document.elements.first(where: { $0.id == selection }),
+           case .arrow(let arrow) = element.kind {
+            drawArrowHalo(arrow, in: context)
+        }
         AnnotationRenderer.draw(shown, base: model.base, in: context,
                                 filterCache: model.filterCache, quality: .interactive)
         context.restoreGState()
@@ -133,6 +140,39 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
            let element = model.document.elements.first(where: { $0.id == selection }) {
             drawHandles(for: element, in: context)
         }
+    }
+
+    /// A glow tracing the selected arrow's outline.
+    ///
+    /// An arrow gets no dashed box — a rectangle implies a resize it does not have — which left
+    /// nothing at all saying it was selected except three small handles. This traces the actual
+    /// silhouette instead, head included.
+    ///
+    /// Drawn by stroking the *fill* path: a centred stroke puts half the width outside the
+    /// silhouette and half inside, and the arrow then paints over the inside half. So the visible
+    /// glow is half the line width, and the line width is in image pixels — hence the division by
+    /// zoom, which keeps the glow a constant size on screen however far the canvas is zoomed.
+    private func drawArrowHalo(_ arrow: ArrowElement, in context: CGContext) {
+        let glow: CGFloat = 5                       // view points, each side
+        let path: CGPath
+        switch ArrowGeometry.shape(from: arrow.start, to: arrow.end,
+                                   curvature: arrow.curvature,
+                                   head: arrow.head, strokeWidth: arrow.stroke.width) {
+        case .fill(let filled):
+            path = filled
+        case .stroke(let stroked, let lineWidth):
+            // The open style is a thin chevron, so its halo has to clear its own stroke too.
+            path = stroked.copy(strokingWithWidth: lineWidth, lineCap: .round,
+                                lineJoin: .round, miterLimit: 10)
+        }
+        context.saveGState()
+        context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.45).cgColor)
+        context.setLineWidth(glow * 2 / max(transform.zoom, 0.01))
+        context.setLineJoin(.round)
+        context.setLineCap(.round)
+        context.addPath(path)
+        context.strokePath()
+        context.restoreGState()
     }
 
     /// Handles are drawn in **view** space so they stay a constant physical size at any zoom.
@@ -175,17 +215,26 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             context.setLineDash(phase: 0, lengths: [])
         }
 
+        let isArrow: Bool
+        if case .arrow = element.kind { isArrow = true } else { isArrow = false }
+
         for (handle, rect) in viewHandles(for: element, bounds: bounds) {
-            context.setFillColor(NSColor.white.cgColor)
-            // The bow reads as round, so it is obviously not one of the square resize grips —
-            // it bends the arrow rather than resizing anything.
-            if handle == .curve {
+            // An arrow's handles move points; a box's handles resize. Round says the first,
+            // square says the second, and an arrow has no square handles at all.
+            //
+            // The bow is a different colour again, because it is the only handle whose job you
+            // cannot guess: the two ends obviously move the ends, and nothing about a third grip
+            // sitting on the line says "drag me sideways and the arrow bends".
+            let round = isArrow || handle == .curve
+            context.setFillColor(handle == .curve
+                                 ? NSColor.systemPink.cgColor : NSColor.white.cgColor)
+            context.setStrokeColor(handle == .curve
+                                   ? NSColor.white.cgColor : NSColor.controlAccentColor.cgColor)
+            if round {
                 context.fillEllipse(in: rect)
-                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
                 context.strokeEllipse(in: rect)
             } else {
                 context.fill(rect)
-                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
                 context.stroke(rect)
             }
         }

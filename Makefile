@@ -9,7 +9,7 @@ DIST_DIR   := dist
 DEST       := -destination 'platform=macOS,arch=arm64'
 RELEASE_APP := $(BUILD_DIR)/Build/Products/Release/$(APP).app
 
-.PHONY: all generate build debug test run dmg notarize release install uninstall clean
+.PHONY: all generate build debug test preview run dmg notarize release install uninstall clean
 
 all: build
 
@@ -34,6 +34,19 @@ test: generate
 	@## And leave none running afterwards. A surviving Debug test host makes the single-instance
 	@## guard silently exit the copy in /Applications, so you end up testing stale code.
 	@pkill -f "Sarvkrit.app/Contents/MacOS/Sarvkrit" 2>/dev/null && echo "stopped leftover test host" || true
+
+## Render the snapshot suites' PNGs so a visual change can actually be looked at.
+## The variable reaches the test host through the scheme (see project.yml): xcodebuild does not
+## pass its own environment down, so exporting it in the shell does nothing.
+PREVIEW_DIR ?= $(BUILD_DIR)/preview
+preview: generate
+	@pkill -f "Sarvkrit.app/Contents/MacOS/Sarvkrit" 2>/dev/null && sleep 1 || true
+	@mkdir -p $(PREVIEW_DIR)
+	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Debug \
+		$(DEST) -derivedDataPath $(BUILD_DIR) \
+		SARVKRIT_PREVIEW_DIR=$(abspath $(PREVIEW_DIR)) test
+	@echo "previews written to $(abspath $(PREVIEW_DIR))"
+	@pkill -f "Sarvkrit.app/Contents/MacOS/Sarvkrit" 2>/dev/null || true
 
 ## Launch the release build. Note the Accessibility grant follows the app's *location*, so
 ## running from build/ and running from /Applications are two separate grants.

@@ -68,5 +68,13 @@ schemes:
       config: Debug
       targets:
         - SarvkritTests
+      # The snapshot suites write PNGs when SARVKRIT_PREVIEW_DIR is set, and xcodebuild does not
+      # hand its own environment to the test host — so without this the variable never arrived and
+      # every one of those writers was dead code that silently skipped. Passed through as a build
+      # setting instead: `make preview` sets it, a plain `make test` leaves it empty and they skip.
+      environmentVariables:
+        - variable: SARVKRIT_PREVIEW_DIR
+          value: "$(SARVKRIT_PREVIEW_DIR)"
+          isEnabled: true
     archive:
       config: Release

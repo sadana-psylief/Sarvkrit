@@ -414,8 +414,12 @@ struct ArrowStyleSwatch: NSViewRepresentable {
                 : NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
             let start = CGPoint(x: bounds.minX + 5, y: bounds.midY)
             let end = CGPoint(x: bounds.maxX - 5, y: bounds.midY)
+            // The Curved swatch used to pass zero here like the rest, so it drew the Solid arrow
+            // exactly — two identical buttons, one of which claimed to be different.
+            let curvature = head == .curved
+                ? ArrowGeometry.defaultCurvature(from: start, to: end) : 0
 
-            switch ArrowGeometry.shape(from: start, to: end, curvature: 0,
+            switch ArrowGeometry.shape(from: start, to: end, curvature: curvature,
                                        head: head, strokeWidth: 3.2) {
             case .fill(let path):
                 context.setFillColor(colour.cgColor)
