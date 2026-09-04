@@ -57,6 +57,9 @@ final class ScrollCaptureSession: NSObject {
     private var isCapturing = false
 
     private static let frameLimit = 40
+    /// One set of thresholds, used both for the live warning and for the final stitch — a HUD
+    /// that said "fine" and then failed would be worse than no HUD.
+    private static let stitchOptions = ScrollStitcher.Options()
 
     var isRunning: Bool { hud != nil }
 
@@ -141,9 +144,20 @@ final class ScrollCaptureSession: NSObject {
                 return
             }
             images.append(cropped)
-            frames.append(ScrollFrame(
+            let frame = ScrollFrame(
                 lines: ImageLineSignature.signatures(of: cropped, axis: .vertical),
-                width: cropped.width, height: cropped.height))
+                width: cropped.width, height: cropped.height)
+            // Checked as it arrives, not at the end. Telling someone their frames did not join
+            // *after* they have finished scrolling is telling them too late to do anything about
+            // it; the whole value of the warning is that it appears while they can still slow
+            // down. One offset search over line hashes is cheap enough to run per frame.
+            if let previous = frames.last {
+                let match = ScrollStitcher.offset(of: frame.lines, in: previous.lines,
+                                                  minimumOverlap: Self.stitchOptions.minimumOverlap)
+                hudModel.missedAFrame = match == nil
+                    || match!.margin < Self.stitchOptions.minimumMargin
+            }
+            frames.append(frame)
             hudModel.frameCount = images.count
         } catch {
             log.error("scroll frame failed: \(error.localizedDescription, privacy: .public)")
@@ -169,7 +183,7 @@ final class ScrollCaptureSession: NSObject {
         }
 
         let plan = ScrollStitcher.plan(frames: signatures, axis: .vertical,
-                                       options: ScrollStitcher.Options())
+                                       options: Self.stitchOptions)
         if case .noOverlapFound(let index) = plan.endedBecause {
             log.error("scroll stitch stopped: no overlap at frame \(index, privacy: .public)")
         }
