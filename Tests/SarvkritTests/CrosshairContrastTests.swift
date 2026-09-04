@@ -28,7 +28,11 @@ final class CrosshairContrastTests: XCTestCase {
 
     /// Renders the overlay with *only* the crosshair on it, so nothing else can account for the
     /// pixels this counts.
-    private func render(over white: CGFloat) throws -> NSBitmapImageRep {
+    ///
+    /// At an explicit scale: a 1-point guide is one device pixel on a 1× screen and two on a 2×
+    /// one, so a raw pixel count is meaningless unless the test fixes the scale. Every case below
+    /// runs at both.
+    private func render(over white: CGFloat, scale: Int) throws -> NSBitmapImageRep {
         let view = SelectionView(display: display, frozenImage: try frozen(white: white),
                                  mode: .area)
         view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
@@ -40,16 +44,16 @@ final class CrosshairContrastTests: XCTestCase {
         view.seedPointer(CGPoint(x: 200, y: 150))
         view.layoutSubtreeIfNeeded()
 
-        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        return rep
+        return try renderPixels(view, scale: scale)
     }
 
     /// Pixels differing from the backdrop by more than a third of the range.
     private func contrasting(_ rep: NSBitmapImageRep, against backdrop: CGFloat) -> Int {
         var count = 0
-        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
-            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+        // Every pixel. Striding skipped whichever guide happened to land on an odd row, which is
+        // how a 1× render came back with one of the two lines apparently missing.
+        for y in 0..<rep.pixelsHigh {
+            for x in 0..<rep.pixelsWide {
                 guard let colour = rep.colorAt(x: x, y: y) else { continue }
                 if abs(colour.brightnessComponent - backdrop) > 0.33 { count += 1 }
             }
@@ -57,28 +61,39 @@ final class CrosshairContrastTests: XCTestCase {
         return count
     }
 
+    /// Half the length of the two guides. A 1-point core is `scale` pixels wide, so the visible
+    /// count is about `scale × (width + height)` — stated against the rep rather than as a number,
+    /// so it means the same thing on a 1× runner and a 2× desk.
+    private func floor(_ rep: NSBitmapImageRep) -> Int { (rep.pixelsWide + rep.pixelsHigh) / 2 }
+
     func testTheCrosshairIsVisibleOnABlackScreen() throws {
         // The reported case: a dark editor behind the overlay, where the old dark hairline showed
         // up only where it happened to cross white text.
-        let rep = try render(over: 0)
-        XCTAssertGreaterThan(contrasting(rep, against: 0), 200,
-                             "the crosshair cannot be seen against black")
+        for scale in [1, 2] {
+            let rep = try render(over: 0, scale: scale)
+            XCTAssertGreaterThan(contrasting(rep, against: 0), floor(rep),
+                                 "the crosshair cannot be seen against black at \(scale)×")
+        }
     }
 
     func testTheCrosshairIsVisibleOnAWhiteScreen() throws {
         // And the other extreme, which a plain white line would fail — the reason the bright core
         // carries a dark edge rather than standing alone.
-        let rep = try render(over: 1)
-        XCTAssertGreaterThan(contrasting(rep, against: 1), 200,
-                             "the crosshair cannot be seen against white")
+        for scale in [1, 2] {
+            let rep = try render(over: 1, scale: scale)
+            XCTAssertGreaterThan(contrasting(rep, against: 1), floor(rep),
+                                 "the crosshair cannot be seen against white at \(scale)×")
+        }
     }
 
     func testItIsVisibleOnMidGreyToo() throws {
         // The case both a plain white line and a plain dark one can survive, and a grey one — the
         // colour originally asked for — cannot.
-        let rep = try render(over: 0.5)
-        XCTAssertGreaterThan(contrasting(rep, against: 0.5), 200,
-                             "the crosshair cannot be seen against grey")
+        for scale in [1, 2] {
+            let rep = try render(over: 0.5, scale: scale)
+            XCTAssertGreaterThan(contrasting(rep, against: 0.5), floor(rep),
+                                 "the crosshair cannot be seen against grey at \(scale)×")
+        }
     }
 
     func testTurningItOffLeavesTheScreenAlone() throws {
@@ -94,9 +109,8 @@ final class CrosshairContrastTests: XCTestCase {
         view.seedPointer(CGPoint(x: 200, y: 150))
         view.layoutSubtreeIfNeeded()
 
-        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        XCTAssertLessThan(contrasting(rep, against: 0), 50,
+        let rep = try renderPixels(view, scale: 2)
+        XCTAssertLessThan(contrasting(rep, against: 0), floor(rep) / 4,
                           "something is still drawn with the crosshair switched off")
     }
 
@@ -112,3 +126,4 @@ final class CrosshairContrastTests: XCTestCase {
                              "the edge must be wider than the core or it never shows")
     }
 }
+

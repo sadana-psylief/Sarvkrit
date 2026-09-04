@@ -85,17 +85,22 @@ final class OverlayPointerTests: XCTestCase {
         let view = try view(mode: .window([target]))
         view.seedPointer(CGPoint(x: 150, y: 100))
 
-        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        var lit = 0
-        for y in stride(from: 0, to: rep.pixelsHigh, by: 3) {
-            for x in stride(from: 0, to: rep.pixelsWide, by: 3) {
-                if let colour = rep.colorAt(x: x, y: y), colour.brightnessComponent > 0.85 {
-                    lit += 1
+        // At an explicit scale, and at both. A count taken through
+        // `bitmapImageRepForCachingDisplay` is four times smaller on a 1× runner than on a 2×
+        // desk, so an absolute floor here is really an assertion about the machine.
+        for scale in [1, 2] {
+            let rep = try renderPixels(view, scale: scale)
+            var lit = 0
+            for y in 0..<rep.pixelsHigh {
+                for x in 0..<rep.pixelsWide {
+                    if let colour = rep.colorAt(x: x, y: y), colour.brightnessComponent > 0.85 {
+                        lit += 1
+                    }
                 }
             }
+            XCTAssertGreaterThan(lit, 200 * scale * scale,
+                                 "no window highlight was drawn before the mouse moved at \(scale)×")
         }
-        XCTAssertGreaterThan(lit, 50, "no window highlight was drawn before the mouse moved")
     }
 
     func testAHandleCanBeGrabbedWithoutPixelHunting() throws {
@@ -151,14 +156,17 @@ extension OverlayPointerTests {
 
         XCTAssertFalse(view.drawsCrosshair, "no crosshair, so the pointer must be visible")
 
-        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        var drawn = 0
-        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
-            for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
-                if let colour = rep.colorAt(x: x, y: y), colour.alphaComponent > 0.05 { drawn += 1 }
+        for scale in [1, 2] {
+            let rep = try renderPixels(view, scale: scale)
+            var drawn = 0
+            for y in 0..<rep.pixelsHigh {
+                for x in 0..<rep.pixelsWide
+                where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.05 {
+                    drawn += 1
+                }
             }
+            XCTAssertGreaterThan(drawn, 400 * scale * scale,
+                                 "the magnifier went away with the crosshair at \(scale)×")
         }
-        XCTAssertGreaterThan(drawn, 100, "the magnifier went away with the crosshair")
     }
 }

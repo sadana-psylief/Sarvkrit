@@ -258,10 +258,17 @@ final class OverlayHintTests: XCTestCase {
         XCTAssertFalse(hinted.showsCrosshair)
     }
 
-    func testTheHintIsDrawnAndThenGoesAwayOnceThereIsASelection() throws {
-        let screen = try XCTUnwrap(NSScreen.main)
-        let scale = screen.backingScaleFactor
-        let pixels = CGSize(width: screen.frame.width * scale, height: screen.frame.height * scale)
+    /// A synthetic display, and an explicit pixel scale.
+    ///
+    /// This used to render at `NSScreen.main`'s size *and* backing scale, so the number it counted
+    /// depended on the machine twice over — it was tuned on a 2× laptop and came back at under a
+    /// quarter on CI's 1× runner, reading as "the hint chip was never drawn" when the chip was
+    /// there all along.
+    private let HINT = "Scrolling Capture — draw the area, then scroll it"
+
+    private func hintView(hint: String?) throws -> SelectionView {
+        let frame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let pixels = CGSize(width: 2400, height: 1600)
         let context = try XCTUnwrap(CGContext(
             data: nil, width: Int(pixels.width), height: Int(pixels.height),
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -269,44 +276,49 @@ final class OverlayHintTests: XCTestCase {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         context.setFillColor(CGColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1))
         context.fill(CGRect(origin: .zero, size: pixels))
-        let image = try XCTUnwrap(context.makeImage())
-        let geometry = DisplaySnapshotGeometry(
-            displayID: screen.displayID ?? CGMainDisplayID(),
-            frame: screen.frame, scale: scale, pixelSize: pixels)
+        let geometry = DisplaySnapshotGeometry(displayID: 1, frame: frame, scale: 2,
+                                               pixelSize: pixels)
 
-        let view = SelectionView(display: geometry, frozenImage: image, mode: .area)
-        view.frame = CGRect(origin: .zero, size: screen.frame.size)
-        view.hint = "Scrolling Capture — draw the area, then scroll it"
-        view.seedPointer(CGPoint(x: screen.frame.midX, y: screen.frame.midY))
+        let view = SelectionView(display: geometry,
+                                 frozenImage: try XCTUnwrap(context.makeImage()), mode: .area)
+        view.frame = frame
+        view.hint = hint
+        view.seedPointer(CGPoint(x: frame.midX, y: frame.midY))
+        return view
+    }
 
-        func darkPixelsNearTheTop() throws -> Int {
-            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            view.cacheDisplay(in: view.bounds, to: rep)
-            var count = 0
-            let band = max(0, rep.pixelsHigh / 12)
-            // The chip is centred, and the crosshair's vertical guide runs down the middle of the
-            // screen straight through this band. Counting the whole width would let an unrelated
-            // change to the guides move a number this test bounds from above — it is measuring
-            // the chip, so it looks only where the chip is and skips the centre column.
-            let centre = rep.pixelsWide / 2
-            let guideGap = 8
-            for y in stride(from: 0, to: band, by: 2) {
-                for x in stride(from: rep.pixelsWide / 4, to: rep.pixelsWide * 3 / 4, by: 4)
-                where abs(x - centre) > guideGap {
-                    if let colour = rep.colorAt(x: x, y: y), colour.brightnessComponent < 0.2 {
-                        count += 1
-                    }
+    /// Dark pixels in the band the chip occupies, skipping the centre column where the crosshair's
+    /// vertical guide runs — this is measuring the chip, not the guides.
+    private func darkPixelsNearTheTop(_ view: SelectionView, scale: Int) throws -> Int {
+        let rep = try renderPixels(view, scale: scale)
+        var count = 0
+        let centre = rep.pixelsWide / 2
+        let guideGap = 8 * scale
+        for y in 0..<max(0, rep.pixelsHigh / 12) {
+            for x in (rep.pixelsWide / 4)..<(rep.pixelsWide * 3 / 4)
+            where abs(x - centre) > guideGap {
+                if let colour = rep.colorAt(x: x, y: y), colour.brightnessComponent < 0.2 {
+                    count += 1
                 }
             }
-            return count
         }
+        return count
+    }
 
-        let withHint = try darkPixelsNearTheTop()
-        XCTAssertGreaterThan(withHint, 100, "the hint chip was never drawn")
-
-        view.hint = nil
-        XCTAssertLessThan(try darkPixelsNearTheTop(), withHint / 4,
-                          "removing the hint left it on screen")
+    func testTheHintIsDrawnAndThenGoesAwayOnceThereIsASelection() throws {
+        for scale in [1, 2] {
+            let withHint = try darkPixelsNearTheTop(try hintView(hint: HINT), scale: scale)
+            let without = try darkPixelsNearTheTop(try hintView(hint: nil), scale: scale)
+            if ProcessInfo.processInfo.environment["SARVKRIT_PROBE"] != nil {
+                print("PROBE hint scale=\(scale) with=\(withHint) without=\(without)")
+            }
+            // A chip is a filled rounded rect a few hundred points across; the floor is stated
+            // against the scale so it means the same thing at either.
+            XCTAssertGreaterThan(withHint, 400 * scale * scale,
+                                 "the hint chip was never drawn at \(scale)×")
+            XCTAssertLessThan(without, withHint / 4,
+                              "removing the hint left it on screen at \(scale)×")
+        }
     }
 }
 

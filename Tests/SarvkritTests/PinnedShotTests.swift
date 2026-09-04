@@ -36,6 +36,24 @@ final class PinnedShotRenderTests: XCTestCase {
         return try XCTUnwrap(rep.representation(using: .png, properties: [:]))
     }
 
+    /// Waits for SwiftUI to actually re-run `body`.
+    ///
+    /// `NSHostingView` updates from a main-run-loop observer, not synchronously when a `@Published`
+    /// value changes, so `layoutSubtreeIfNeeded()` alone does not flush it. Locally something else
+    /// pumped the loop and the redraw landed before the next render; on CI nothing did, and two
+    /// byte-identical PNGs read as "the change never reached the screen". Polling until it changes
+    /// — rather than sleeping a fixed amount — keeps the pass fast and the failure honest.
+    private func redraws(_ host: NSView, from before: Data,
+                         timeout: TimeInterval = 5) throws -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            host.layoutSubtreeIfNeeded()
+            if try pixels(host) != before { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        } while Date() < deadline
+        return false
+    }
+
     private func makePin() -> PinnedShotController.Pin {
         PinnedShotController.Pin(panel: FloatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 140), style: .init()))
@@ -52,9 +70,8 @@ final class PinnedShotRenderTests: XCTestCase {
         let before = try pixels(host)
 
         pin.opacity = 0.3
-        host.layoutSubtreeIfNeeded()
-        XCTAssertNotEqual(try pixels(host), before,
-                          "the opacity change never reached the screen")
+        XCTAssertTrue(try redraws(host, from: before),
+                      "the opacity change never reached the screen")
     }
 
     func testLockingRedrawsSoTheIconAndBorderSayItIsLocked() throws {
@@ -66,8 +83,8 @@ final class PinnedShotRenderTests: XCTestCase {
         let before = try pixels(host)
 
         pin.isLocked = true
-        host.layoutSubtreeIfNeeded()
-        XCTAssertNotEqual(try pixels(host), before, "locking left the window looking unlocked")
+        XCTAssertTrue(try redraws(host, from: before),
+                      "locking left the window looking unlocked")
     }
 
     func testOpacityIsClampedSoAPinCannotBecomeAnInvisibleClickTrap() {
