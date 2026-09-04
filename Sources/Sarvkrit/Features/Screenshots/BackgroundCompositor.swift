@@ -9,6 +9,25 @@ import Foundation
 /// follows the corner radius instead of tracing the bitmap's square edges.
 enum BackgroundCompositor {
 
+    /// What a fill needs from outside itself.
+    ///
+    /// Two of the fills cannot be painted from their own stored value: a blurred backdrop is
+    /// derived from the capture, and a wallpaper is a filename that somebody has to turn into
+    /// pixels. **Resolved by the caller and handed in**, rather than reaching into a store from
+    /// here — `WallpaperStore` is main-actor and the export path is not, and a compositor that
+    /// touches the filesystem is a compositor that cannot be tested with a bitmap.
+    struct Sources {
+        /// The capture itself, for `.blurred`.
+        var base: CGImage?
+        /// The already-loaded wallpaper, for `.image`. Nil means the file has gone.
+        var wallpaper: CGImage?
+
+        init(base: CGImage? = nil, wallpaper: CGImage? = nil) {
+            self.base = base
+            self.wallpaper = wallpaper
+        }
+    }
+
     /// Everything behind and around the screenshot: the fill, and the shadow that sits under it.
     ///
     /// Split out of `render` so the live canvas can draw the same surround without flattening the
@@ -17,8 +36,9 @@ enum BackgroundCompositor {
     static func drawSurround(style: CaptureBackground,
                              canvas: CGRect,
                              imageRect: CGRect,
-                             in context: CGContext) {
-        drawFill(style.fill, in: canvas, context: context)
+                             in context: CGContext,
+                             sources: Sources = Sources()) {
+        drawFill(style.fill, in: canvas, context: context, sources: sources)
 
         guard let shadow = style.shadow else { return }
         context.saveGState()
@@ -40,7 +60,8 @@ enum BackgroundCompositor {
                cornerHeight: style.cornerRadius, transform: nil)
     }
 
-    static func render(_ image: CGImage, style: CaptureBackground) -> CGImage? {
+    static func render(_ image: CGImage, style: CaptureBackground,
+                       sources: Sources = Sources()) -> CGImage? {
         let imageSize = CGSize(width: image.width, height: image.height)
         let (canvas, imageRect) = BackgroundLayout.compute(imageSize: imageSize, style: style)
         guard canvas.width >= 1, canvas.height >= 1 else { return nil }
@@ -55,8 +76,12 @@ enum BackgroundCompositor {
         context.translateBy(x: 0, y: canvas.height)
         context.scaleBy(x: 1, y: -1)
 
+        // The blurred fill derives its backdrop from the capture, so if the caller did not name
+        // one, the capture being composited is the obvious answer.
+        var sources = sources
+        if sources.base == nil { sources.base = image }
         drawSurround(style: style, canvas: CGRect(origin: .zero, size: canvas),
-                     imageRect: imageRect, in: context)
+                     imageRect: imageRect, in: context, sources: sources)
         let clip = clipPath(imageRect: imageRect, style: style)
 
         context.saveGState()
@@ -71,7 +96,7 @@ enum BackgroundCompositor {
     }
 
     static func drawFill(_ fill: CaptureBackground.Fill, in rect: CGRect,
-                                 context: CGContext) {
+                         context: CGContext, sources: Sources = Sources()) {
         switch fill {
         case .none:
             break
@@ -88,11 +113,29 @@ enum BackgroundCompositor {
             // Written by a newer build and kept verbatim, but we cannot paint what we cannot read.
             // Something neutral beats a transparent hole the user cannot see or explain.
             draw(BackgroundCatalogue.mesh(for: "slate"), in: rect, context: context)
-        case .image(let fileName):
-            // Resolved by the caller and passed as a gradient when unavailable — a missing custom
-            // background must not produce a transparent composite the user can't see.
-            _ = fileName
-            draw(BackgroundCatalogue.mesh(for: "slate"), in: rect, context: context)
+        case .image:
+            // A wallpaper the caller has already loaded. A missing file falls back to a mesh
+            // rather than a transparent hole: the document still points at a wallpaper, so the
+            // user can put the file back, but they must be able to *see* the composite meanwhile.
+            guard let wallpaper = sources.wallpaper else {
+                draw(BackgroundCatalogue.mesh(for: "slate"), in: rect, context: context)
+                return
+            }
+            context.saveGState()
+            context.clip(to: rect)
+            context.interpolationQuality = .high
+            context.drawFlipped(wallpaper,
+                                in: BlurredBackdrop.fill(
+                                    CGSize(width: wallpaper.width, height: wallpaper.height),
+                                    into: rect.size))
+            context.restoreGState()
+        case .blurred(let blur):
+            guard let base = sources.base,
+                  let backdrop = BlurredBackdrop.render(base, size: rect.size, blur: blur) else {
+                draw(BackgroundCatalogue.mesh(for: "slate"), in: rect, context: context)
+                return
+            }
+            context.drawFlipped(backdrop, in: rect)
         }
     }
 

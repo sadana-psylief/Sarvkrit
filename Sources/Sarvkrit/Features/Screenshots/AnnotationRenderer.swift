@@ -52,12 +52,14 @@ enum AnnotationRenderer {
     static func drawBackground(_ document: AnnotationDocument,
                                canvasSize: CGSize,
                                imageRect: CGRect,
-                               in context: CGContext) {
+                               in context: CGContext,
+                               sources: BackgroundCompositor.Sources
+                                   = BackgroundCompositor.Sources()) {
         guard let style = document.background else { return }
         BackgroundCompositor.drawSurround(style: style,
                                           canvas: CGRect(origin: .zero, size: canvasSize),
                                           imageRect: imageRect,
-                                          in: context)
+                                          in: context, sources: sources)
     }
 
     /// Flattens to a new image, honouring the crop.

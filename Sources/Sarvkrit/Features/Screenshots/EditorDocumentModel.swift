@@ -216,6 +216,19 @@ final class EditorDocumentModel: ObservableObject {
         zoom = Self.zoomSteps.last { $0 < current - 0.001 } ?? Self.zoomSteps.first
     }
 
+    /// What the background fills need from outside themselves.
+    ///
+    /// One place, used by the live canvas and the export both, because the two disagreeing about
+    /// a background is the failure this feature already had once — the surround was visible in
+    /// the file and not on the canvas.
+    var backgroundSources: BackgroundCompositor.Sources {
+        var wallpaper: CGImage?
+        if case .image(let fileName) = document.background?.fill {
+            wallpaper = WallpaperStore.shared.image(named: fileName)
+        }
+        return BackgroundCompositor.Sources(base: base, wallpaper: wallpaper)
+    }
+
     /// The finished image, annotations only.
     func flatten() -> CGImage? {
         AnnotationRenderer.flatten(document, base: base)
@@ -229,7 +242,11 @@ final class EditorDocumentModel: ObservableObject {
     func flattenWithBackground() -> CGImage? {
         guard let flattened = flatten() else { return nil }
         guard let background = document.background else { return flattened }
-        return BackgroundCompositor.render(flattened, style: background) ?? flattened
+        // `base:` is the *unflattened* capture on purpose: a blurred backdrop should be blurred
+        // from the screenshot, not from the screenshot with the annotations already on it — a
+        // giant smeared arrow behind the shot is not what anybody means by "blurred".
+        return BackgroundCompositor.render(flattened, style: background,
+                                           sources: backgroundSources) ?? flattened
     }
 
     func markSaved() { isDirty = false }

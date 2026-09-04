@@ -21,6 +21,7 @@ extension CaptureBackground.Fill: Codable {
         static let mesh = "mesh"
         static let builtIn = "builtIn"
         static let image = "image"
+        static let blurred = "blurred"
     }
 
     private struct CaseKey: CodingKey {
@@ -63,6 +64,9 @@ extension CaptureBackground.Fill: Codable {
         case Name.image:
             let inner = try container.nestedContainer(keyedBy: Payload.self, forKey: key)
             self = .image(fileName: try inner.decode(String.self, forKey: .fileName))
+        case Name.blurred:
+            let inner = try container.nestedContainer(keyedBy: Payload.self, forKey: key)
+            self = .blurred(try inner.decode(CaptureBackground.Blur.self, forKey: .unlabelled))
         default:
             let blob = try container.decode(AnyCodableValue.self, forKey: key)
             self = .unknown(type: key.stringValue,
@@ -96,6 +100,10 @@ extension CaptureBackground.Fill: Codable {
             var inner = container.nestedContainer(keyedBy: Payload.self,
                                                   forKey: CaseKey(Name.image))
             try inner.encode(fileName, forKey: .fileName)
+        case .blurred(let blur):
+            var inner = container.nestedContainer(keyedBy: Payload.self,
+                                                  forKey: CaseKey(Name.blurred))
+            try inner.encode(blur, forKey: .unlabelled)
         case .unknown(let type, let raw):
             // Re-emitted exactly as it arrived. Anything less loses the newer build's work.
             try container.encode(try JSONDecoder().decode(AnyCodableValue.self, from: raw),
@@ -116,7 +124,8 @@ extension CaptureBackground.Fill: Codable {
 /// stays synthesised; only reading is forgiving.
 extension CaptureBackground {
     enum CodingKeys: String, CodingKey {
-        case fill, padding, cornerRadius, shadow, aspect, spacing, isAutoBalanced
+        case fill, padding, cornerRadius, shadow, aspect, spacing, inset, alignment
+        case isAutoBalanced
     }
 
     init(from decoder: Decoder) throws {
@@ -134,6 +143,9 @@ extension CaptureBackground {
             : fallback.shadow
         aspect = try container.decodeIfPresent(AspectRatio.self, forKey: .aspect) ?? fallback.aspect
         spacing = try container.decodeIfPresent(CGFloat.self, forKey: .spacing) ?? fallback.spacing
+        inset = try container.decodeIfPresent(CGFloat.self, forKey: .inset) ?? fallback.inset
+        alignment = try container.decodeIfPresent(Alignment.self, forKey: .alignment)
+            ?? fallback.alignment
         isAutoBalanced = try container.decodeIfPresent(Bool.self, forKey: .isAutoBalanced)
             ?? fallback.isAutoBalanced
     }

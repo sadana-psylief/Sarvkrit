@@ -67,7 +67,10 @@ struct ColourWell: View {
                         Circle()
                             .fill(Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .red))
                             .frame(width: 22, height: 22)
-                            .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                            // The white swatch sits on a near-white popover; a half-point
+                            // separator hairline does not survive that.
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.18),
+                                                           lineWidth: 1))
                             .overlay(
                                 Circle()
                                     .strokeBorder(model.colour == colour

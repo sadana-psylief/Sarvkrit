@@ -1,6 +1,58 @@
 import CoreGraphics
 import Foundation
 
+/// Flat colours for a background, in two tiers.
+///
+/// **This is where pastels belong.** The annotation palette deliberately is not pastel — a mark
+/// has to carry on a white screenshot, and a pale arrow is decoration you have to hunt for. A
+/// background is the opposite case: it sits *behind* the shot, its whole job is to stay back, and
+/// low contrast is the point rather than a defect. So the same soft shades that would be wrong on
+/// an arrow are exactly right here.
+///
+/// Two rows rather than one long list, because they are two different decisions: which colour,
+/// and how loud.
+enum BackgroundPalette {
+    /// Saturated. The same family as the annotation palette, so a deck built from both agrees
+    /// with itself.
+    static let solid: [RGBAColour] = [
+        RGBAColour(hex: "17171A"),      // ink
+        RGBAColour(hex: "FFFFFF"),      // paper
+        RGBAColour(hex: "E5484D"),      // crimson
+        RGBAColour(hex: "F76B15"),      // ember
+        RGBAColour(hex: "FFC53D"),      // amber
+        RGBAColour(hex: "30A46C"),      // jade
+        RGBAColour(hex: "0B7FE0"),      // azure
+        RGBAColour(hex: "8E4EC6"),      // violet
+    ]
+
+    /// The quiet tier.
+    static let pastel: [RGBAColour] = [
+        RGBAColour(hex: "3E3E44"),      // charcoal
+        RGBAColour(hex: "ECECEF"),      // mist
+        RGBAColour(hex: "F7C8CA"),      // blush
+        RGBAColour(hex: "F9D4B4"),      // peach
+        RGBAColour(hex: "FBE7B0"),      // straw
+        RGBAColour(hex: "BFE3CE"),      // sage
+        RGBAColour(hex: "BFD9F5"),      // sky
+        RGBAColour(hex: "DACCF2"),      // lilac
+    ]
+
+    static let solidNames = ["Ink", "Paper", "Crimson", "Ember", "Amber", "Jade", "Azure", "Violet"]
+    static let pastelNames = ["Charcoal", "Mist", "Blush", "Peach", "Straw", "Sage", "Sky", "Lilac"]
+}
+
+/// The blurred-from-the-screenshot backdrops offered in the picker.
+///
+/// Three, matching the reference: the blur as it comes, and two darkened — which is what makes a
+/// pale screenshot read against its own colours instead of dissolving into them.
+enum BlurredBackdropPresets {
+    static let all: [(name: String, blur: CaptureBackground.Blur)] = [
+        ("Blurred", CaptureBackground.Blur(amount: 0.06, tint: 0)),
+        ("Blurred, dark", CaptureBackground.Blur(amount: 0.06, tint: -0.4)),
+        ("Blurred, darker", CaptureBackground.Blur(amount: 0.06, tint: -0.68)),
+    ]
+}
+
 /// The built-in backgrounds.
 ///
 /// **Twenty gradients as data, not twenty PNGs.** Images large enough for a 6K canvas would add
@@ -167,7 +219,7 @@ extension CaptureBackground.Fill {
         switch self {
         case .mesh(let spec): return spec.isWellFormed ? spec : nil
         case .builtIn(let id): return BackgroundCatalogue.mesh(for: id)
-        case .none, .solid, .gradient, .image, .unknown: return nil
+        case .none, .solid, .gradient, .image, .blurred, .unknown: return nil
         }
     }
 }

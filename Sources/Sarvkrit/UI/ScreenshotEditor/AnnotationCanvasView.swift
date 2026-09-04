@@ -111,7 +111,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         AnnotationRenderer.drawBackground(model.document,
                                           canvasSize: composition.canvasSize,
                                           imageRect: composition.imageRect,
-                                          in: context)
+                                          in: context,
+                                          sources: model.backgroundSources)
 
         var shown = model.document
         // The in-progress mark is drawn but never stored, so an abandoned drag leaves nothing.
