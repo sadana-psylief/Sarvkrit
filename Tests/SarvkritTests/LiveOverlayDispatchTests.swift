@@ -284,8 +284,15 @@ final class OverlayHintTests: XCTestCase {
             view.cacheDisplay(in: view.bounds, to: rep)
             var count = 0
             let band = max(0, rep.pixelsHigh / 12)
+            // The chip is centred, and the crosshair's vertical guide runs down the middle of the
+            // screen straight through this band. Counting the whole width would let an unrelated
+            // change to the guides move a number this test bounds from above — it is measuring
+            // the chip, so it looks only where the chip is and skips the centre column.
+            let centre = rep.pixelsWide / 2
+            let guideGap = 8
             for y in stride(from: 0, to: band, by: 2) {
-                for x in stride(from: 0, to: rep.pixelsWide, by: 4) {
+                for x in stride(from: rep.pixelsWide / 4, to: rep.pixelsWide * 3 / 4, by: 4)
+                where abs(x - centre) > guideGap {
                     if let colour = rep.colorAt(x: x, y: y), colour.brightnessComponent < 0.2 {
                         count += 1
                     }

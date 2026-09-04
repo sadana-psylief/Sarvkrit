@@ -66,6 +66,27 @@ enum CaptureChrome {
         static let selectionDim = Color.black.opacity(0.5)
     }
 
+    /// Colours for the things drawn straight onto the frozen screen.
+    ///
+    /// Separate from `Colours` because these are `NSColor` — the selection overlay draws into a
+    /// `CGContext`, not SwiftUI — and because they answer a question the panel colours never face:
+    /// **the backdrop is the user's own screen and can be any colour at all.** Every one of these
+    /// is therefore a *pair*, a light core with a dark edge, which is the only thing that stays
+    /// legible on both a black terminal and a white page. A single tone always loses somewhere;
+    /// grey loses on grey.
+    enum Overlay {
+        /// The bright part of a guide line or a marker.
+        static let guideCore = NSColor(white: 1, alpha: 0.95)
+        /// The darker line just outside it, so the core survives pale content.
+        ///
+        /// Moderate on purpose. Heavier reads as a drop shadow rather than an instrument, and it
+        /// would swamp the dim the selection already lays down.
+        static let guideEdge = NSColor(white: 0, alpha: 0.45)
+        /// Width of the core stroke, and of the edge that carries it.
+        static let guideWidth: CGFloat = 1
+        static let guideEdgeWidth: CGFloat = 3
+    }
+
     enum Text {
         static let label = Font.system(size: 13, weight: .regular)
         static let value = Font.system(size: 14, weight: .regular).monospacedDigit()

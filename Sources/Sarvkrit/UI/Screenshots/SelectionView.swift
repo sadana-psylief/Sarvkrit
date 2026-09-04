@@ -587,6 +587,15 @@ final class SelectionView: NSView {
         }
         context.restoreGState()
 
+        // A bright outline round the target cell. The tinted row and column above are dark, and
+        // over dark magnified pixels a dark tint marks nothing — the same fault the full-screen
+        // guides had. The light ring is what makes the target readable on any content.
+        context.saveGState()
+        context.setStrokeColor(CaptureChrome.Overlay.guideCore.cgColor)
+        context.setLineWidth(CaptureChrome.Overlay.guideWidth)
+        context.stroke(cell.insetBy(dx: -0.5, dy: -0.5))
+        context.restoreGState()
+
         context.saveGState()
         context.setStrokeColor(NSColor(white: 0.24, alpha: 1).cgColor)
         context.setLineWidth(2)
@@ -688,8 +697,15 @@ final class SelectionView: NSView {
 
     /// Full-width guides through the pointer.
     ///
-    /// Dark and thin. Bright white lines across a frozen screen read as part of the picture; a
-    /// 40% black hairline reads as an instrument laid over it.
+    /// **A light core with a dark edge, not one flat stroke.** This used to be a single 40% black
+    /// hairline, on the argument that a dark line reads as an instrument where a white one reads
+    /// as part of the picture. That argument is wrong for the same reason `drawSelectionBorder`
+    /// gives twenty lines up, about the very same backdrop: one tone always loses somewhere. Over
+    /// a dark editor the guides were visible only where they happened to cross white text, and no
+    /// amount of alpha fixes that — nor does grey, which loses on grey.
+    ///
+    /// The reference draws its guides pure white; the dark edge here is what keeps them on pale
+    /// content too.
     private func drawCrosshair(at point: CGPoint, in context: CGContext,
                                avoiding selection: CGRect?) {
         context.saveGState()
@@ -702,12 +718,21 @@ final class SelectionView: NSView {
             context.addPath(path)
             context.clip(using: .evenOdd)
         }
-        context.setStrokeColor(NSColor.black.withAlphaComponent(0.4).cgColor)
-        context.setLineWidth(1)
-        context.move(to: CGPoint(x: 0, y: point.y + 0.5))
-        context.addLine(to: CGPoint(x: bounds.maxX, y: point.y + 0.5))
-        context.move(to: CGPoint(x: point.x + 0.5, y: 0))
-        context.addLine(to: CGPoint(x: point.x + 0.5, y: bounds.maxY))
+        // The same path twice: the wider dark line first, the bright core over it.
+        func addGuides() {
+            context.move(to: CGPoint(x: 0, y: point.y + 0.5))
+            context.addLine(to: CGPoint(x: bounds.maxX, y: point.y + 0.5))
+            context.move(to: CGPoint(x: point.x + 0.5, y: 0))
+            context.addLine(to: CGPoint(x: point.x + 0.5, y: bounds.maxY))
+        }
+        context.setStrokeColor(CaptureChrome.Overlay.guideEdge.cgColor)
+        context.setLineWidth(CaptureChrome.Overlay.guideEdgeWidth)
+        addGuides()
+        context.strokePath()
+
+        context.setStrokeColor(CaptureChrome.Overlay.guideCore.cgColor)
+        context.setLineWidth(CaptureChrome.Overlay.guideWidth)
+        addGuides()
         context.strokePath()
         context.restoreGState()
     }
