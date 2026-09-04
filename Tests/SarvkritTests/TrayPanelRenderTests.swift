@@ -203,6 +203,27 @@ final class TrayPanelRenderTests: XCTestCase {
         }
     }
 
+    func testTheDisplaysPanelRendersTheRealDisplays() throws {
+        // The feature lists nothing until it is switched on, so a panel rendered against a fresh
+        // one says only that the empty state lays out. This is the populated path.
+        let feature = DisplaysFeature()
+        feature.activate()
+        defer { feature.deactivate() }
+        XCTAssertFalse(feature.displays.isEmpty, "this Mac has at least one display")
+
+        for scheme in [ColorScheme.light, .dark] {
+            let rep = try snapshot(
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    SectionHeader("Displays")
+                    DisplaysPanelView(feature: feature)
+                }
+                .padding(Theme.Space.md),
+                scheme: scheme)
+            XCTAssertGreaterThan(rep.pixelsHigh, 0)
+            try write(rep, named: "live-displays-\(scheme == .dark ? "dark" : "light")")
+        }
+    }
+
     func testEveryMonitorPanelSurvivesAHistoryThatIsEntirelyGaps() throws {
         // The NaN-shaped case `SystemMonitorPaneRenderTests` pins for the window's pane: an all-gap
         // window is an empty y-domain, and a chart handed one draws nothing or crashes. All four

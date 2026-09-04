@@ -9,6 +9,12 @@ import SwiftUI
 struct VolumeMixerTrayView: View {
     @ObservedObject var feature: VolumeMixerFeature
 
+    /// What each app was at before it was muted, so unmuting restores it rather than guessing at
+    /// full volume. Panel-lifetime only: mute is a level of zero and persists as one, and
+    /// remembering the pre-mute level across launches would be a second kind of state for a
+    /// button.
+    @State private var levelBeforeMute: [String: Float] = [:]
+
     var body: some View {
         SettingsModule {
             if feature.permissionLooksDenied {
@@ -29,7 +35,7 @@ struct VolumeMixerTrayView: View {
                 // panel's top edge now, so the cap was buying nothing. The `ScrollView` stays: it
                 // costs nothing and is the only thing standing between an implausible number of
                 // apps playing at once and a panel taller than the screen.
-                .frame(height: CGFloat(feature.processes.count) * 34)
+                .frame(height: CGFloat(feature.processes.count) * Theme.Metrics.panelRowHeight)
             }
         }
     }
@@ -57,36 +63,85 @@ struct VolumeMixerTrayView: View {
     }
 
     private func row(_ process: AudioProcess) -> some View {
-        HStack(spacing: Theme.Space.sm) {
-            if let icon = NSWorkspace.shared
-                .urlForApplication(withBundleIdentifier: process.bundleID)
-                .map({ NSWorkspace.shared.icon(forFile: $0.path) }) {
-                Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-            } else {
-                Image(systemName: "app").frame(width: 16)
-            }
+        let level = feature.level(for: process.bundleID)
+        let isBoosted = level > 1
+
+        return HStack(spacing: Theme.Space.sm) {
+            icon(for: process)
 
             Text(process.name)
-                .font(.system(size: 11))
+                .font(.system(size: Theme.Typography.body))
                 .lineLimit(1)
-                .frame(width: 84, alignment: .leading)
+                .frame(width: 92, alignment: .leading)
 
             Slider(
                 value: Binding(
                     get: { Double(feature.level(for: process.bundleID)) },
                     set: { feature.setLevel(Float($0), for: process.bundleID) }
                 ),
-                in: 0...1
+                in: Double(MixerLevels.minimum)...Double(MixerLevels.maximum)
             )
             .controlSize(.mini)
+            // Orange past unity, the one place in the app where the accent colour marks a state
+            // rather than a selection: everything above 100% is Sarvkrit adding gain that was not
+            // in the original, and the slider should say so without a label.
+            .tint(isBoosted ? .orange : .accentColor)
 
-            Text("\(Int(feature.level(for: process.bundleID) * 100))")
-                .font(.system(size: 10))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .trailing)
+            percentage(level, isBoosted: isBoosted)
+            muteButton(for: process, level: level)
         }
         .padding(.horizontal, Theme.Metrics.rowInset)
-        .frame(height: 34)
+        .frame(height: Theme.Metrics.panelRowHeight)
+    }
+
+    private func icon(for process: AudioProcess) -> some View {
+        Group {
+            if let icon = NSWorkspace.shared
+                .urlForApplication(withBundleIdentifier: process.bundleID)
+                .map({ NSWorkspace.shared.icon(forFile: $0.path) }) {
+                Image(nsImage: icon).resizable()
+            } else {
+                Image(systemName: "app").resizable().foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 18, height: 18)
+    }
+
+    private func percentage(_ level: Float, isBoosted: Bool) -> some View {
+        HStack(spacing: 1) {
+            if isBoosted {
+                Image(systemName: "bolt.fill").font(.system(size: 9))
+            }
+            Text("\(Int((level * 100).rounded()))%")
+                .font(.system(size: Theme.Typography.caption, weight: .medium))
+                .monospacedDigit()
+        }
+        .foregroundStyle(isBoosted ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+        // Wide enough for "⚡200%", so the slider doesn't shorten as an app is boosted.
+        .frame(width: 46, alignment: .trailing)
+    }
+
+    /// Mute is a level of zero, so there is nothing extra to persist — but the level it came *from*
+    /// is worth keeping for the length of the panel, or unmuting would have to guess and would
+    /// throw away a carefully set 40%.
+    private func muteButton(for process: AudioProcess, level: Float) -> some View {
+        Button {
+            if level == 0 {
+                feature.setLevel(levelBeforeMute[process.bundleID] ?? 1, for: process.bundleID)
+                levelBeforeMute[process.bundleID] = nil
+            } else {
+                levelBeforeMute[process.bundleID] = level
+                feature.setLevel(0, for: process.bundleID)
+            }
+        } label: {
+            Image(systemName: level == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(level == 0 ? AnyShapeStyle(Color.orange)
+                                            : AnyShapeStyle(.secondary))
+                .frame(width: 18)
+        }
+        .buttonStyle(.plain)
+        .clickableCursor()
+        .accessibilityLabel(level == 0 ? "Unmute \(process.name)" : "Mute \(process.name)")
     }
 }

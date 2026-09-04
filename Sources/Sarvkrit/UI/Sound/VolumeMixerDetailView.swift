@@ -52,7 +52,7 @@ struct VolumeMixerDetailView: View {
                                         get: { Double(feature.level(for: process.bundleID)) },
                                         set: { feature.setLevel(Float($0), for: process.bundleID) }
                                     ),
-                                    in: 0...1
+                                    in: Double(MixerLevels.minimum)...Double(MixerLevels.maximum)
                                 )
                                 .frame(width: 140)
                                 Text("\(Int(feature.level(for: process.bundleID) * 100))%")

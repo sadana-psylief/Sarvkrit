@@ -18,6 +18,7 @@ import os
 ///
 /// - The render callback is real-time audio. No allocation, no locks, no logging — the level is read
 ///   through an atomic-ish plain float precisely so the callback never waits for anything.
+///   `SoftClip` is a free function over `Float` for the same reason.
 /// - Permission failure is **silent**. Every call here returns `noErr` when system-audio recording
 ///   is denied; the only evidence is that the buffers are all zeros. `silentRenderCount` exists so
 ///   the feature can notice and say so, rather than appearing to work while doing nothing.
@@ -47,8 +48,10 @@ final class AudioProcessTap {
         guard start() else { return nil }
     }
 
+    /// Clamped to `MixerLevels.range`, which now runs past unity — see there for why the ceiling
+    /// is 2 and not higher.
     func setLevel(_ level: Float) {
-        self.level = max(0, min(1, level))
+        self.level = min(MixerLevels.maximum, max(MixerLevels.minimum, level))
     }
 
     // MARK: - Setting up
@@ -139,7 +142,11 @@ final class AudioProcessTap {
             for frame in 0..<frames {
                 let sample = from[frame]
                 if sample != 0 { sawAnything = true }
-                to[frame] = sample * gain
+                // `SoftClip.apply` is plain multiplication at or below unity gain, so nothing
+                // changes for an app that has only ever been turned down. Above it, the curve is
+                // what stops a boosted signal from clipping into broadband distortion on exactly
+                // the transients you notice.
+                to[frame] = SoftClip.apply(sample, gain: gain)
             }
         }
 

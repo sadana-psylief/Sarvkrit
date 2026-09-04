@@ -32,12 +32,15 @@ final class MixerLevelsTests: XCTestCase {
     }
 
     func testLevelsAreClamped() {
+        // The ceiling is 2, not 1: an app can be boosted past full volume. See `MixerLevels.maximum`
+        // for why it stops there, and `BrightnessAndBoostTests` for what the clipper does with it.
         var l = levels()
         l.setLevel(-0.5, for: "a")
-        XCTAssertEqual(l.level(for: "a"), 0)
+        XCTAssertEqual(l.level(for: "a"), MixerLevels.minimum)
         l.setLevel(3, for: "b")
-        XCTAssertEqual(l.level(for: "b"), 1)
-        XCTAssertFalse(l.hasCustomLevel(for: "b"), "clamped to full, so not a custom level")
+        XCTAssertEqual(l.level(for: "b"), MixerLevels.maximum)
+        XCTAssertTrue(l.hasCustomLevel(for: "b"),
+                      "a boost is a setting; only exactly full volume is the absence of one")
     }
 
     func testZeroIsARealSetting() {

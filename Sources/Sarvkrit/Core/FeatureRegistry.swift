@@ -23,6 +23,7 @@ enum FeatureRegistry {
             MusicBlockerFeature(),
             VolumeMixerFeature(),
             PrivacyGuardFeature(),
+            DisplaysFeature(),
             KeepAwakeFeature(),
             SystemMonitorFeature(),
         ]
