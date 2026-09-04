@@ -61,6 +61,13 @@ struct ShortcutRecorderView<Owner: ShortcutOwner>: View {
         }
         // A monitor that outlives its view eats keystrokes for the rest of the session.
         .onDisappear(perform: stop)
+        // …and one that outlives the *window losing focus* does the same without the view ever
+        // disappearing. Click a pill, click elsewhere without pressing a key, and every keyDown
+        // in the app was being swallowed — typing went dead everywhere, including in this pane's
+        // own text fields.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            stop()
+        }
     }
 
     private var label: String {

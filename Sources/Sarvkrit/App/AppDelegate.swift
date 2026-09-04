@@ -296,6 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     timerSeconds: timerSeconds,
                     showsBarImmediately: showsBarImmediately,
                     initialSelection: reopeningLastSelection ? feature.lastSelection : nil,
+                    choosesWindowFromList: feature.choosesWindowFromList,
                     using: feature.capturer,
                     options: options,
                     chrome: feature.overlayChrome,
@@ -314,8 +315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let result: CaptureSession.Result?
             switch mode {
             case .window:
-                result = try await CaptureSession.captureWindow(using: feature.capturer,
-                                                                options: options)
+                result = try await CaptureSession.captureWindow(
+                    using: feature.capturer, options: options,
+                    fromList: feature.choosesWindowFromList)
             default:
                 result = try await CaptureSession.captureFullscreen(using: feature.capturer,
                                                                     options: options)
@@ -384,9 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !text.isEmpty {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            let lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }.count
-            ToastPresenter.shared.show("Copied \(lines) line\(lines == 1 ? "" : "s")",
-                                       symbolName: "text.viewfinder")
+            TextResultController.shared.show(text: text, isBarcode: false)
             return
         }
 
@@ -394,8 +394,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(code.payload, forType: .string)
             // The payload goes to the pasteboard and stops there. Opening a URL scanned off the
-            // screen automatically is a phishing vector — a person has to choose to follow it.
-            ToastPresenter.shared.show("QR code copied", symbolName: "qrcode")
+            // screen automatically is a phishing vector — a person has to choose to follow it,
+            // which is what the panel's "Open Link" button is and why it is only ever an offer.
+            TextResultController.shared.show(text: code.payload, isBarcode: true)
             return
         }
 

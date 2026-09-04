@@ -23,7 +23,10 @@ final class CaptureHistoryStore: ObservableObject {
 
     @Published private(set) var items: [CaptureHistoryItem] = []
 
-    var retention: CaptureRetention.Window {
+    /// Published, because it is a control the user changes and watches. It was a plain `var`,
+    /// so the picker wrote through, pruned, and then snapped back to its old value — a setting
+    /// that visibly refuses the change, which is the one behind "keep captures for a month".
+    @Published var retention: CaptureRetention.Window {
         didSet {
             guard retention != oldValue else { return }
             pruneExpired()

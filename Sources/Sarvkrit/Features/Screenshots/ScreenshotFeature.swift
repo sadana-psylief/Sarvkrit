@@ -114,6 +114,19 @@ final class ScreenshotFeature: Feature, ObservableObject {
     /// Global AppKit points. Stored as four numbers rather than an archived rect so a future
     /// change to how rects are persisted cannot make an old value decode as something plausible
     /// but wrong — the failure mode there is a capture of the wrong part of the screen.
+    /// Whether ⌃⇧W opens a list of windows instead of hover-picking one on the frozen screen.
+    ///
+    /// Both work. A list reaches a window that is behind something else and can be driven from
+    /// the keyboard; pointing is faster when the window is already in front of you.
+    var choosesWindowFromList: Bool {
+        get { defaults.object(forKey: "screenshot.windowList") as? Bool ?? false }
+        set {
+            guard newValue != choosesWindowFromList else { return }
+            defaults.set(newValue, forKey: "screenshot.windowList")
+            objectWillChange.send()
+        }
+    }
+
     var lastSelection: CGRect? {
         get {
             guard let values = defaults.array(forKey: "screenshot.lastSelection") as? [Double],
@@ -337,7 +350,7 @@ final class ScreenshotFeature: Feature, ObservableObject {
     }
 
     /// Actions whose registration was refused, so settings can report it honestly.
-    private(set) var failedRegistrations: Set<ScreenshotAction> = []
+    @Published private(set) var failedRegistrations: Set<ScreenshotAction> = []
 
     /// Runs an action, whatever asked for it.
     ///

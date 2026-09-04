@@ -22,6 +22,13 @@ struct CaptureAutomationSection: View {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(url(for: command), forType: .string)
                         copied = command.name
+                        // Cleared, or the tick stays on the last-copied row for ever and a second
+                        // copy of the same one gives no sign it worked.
+                        let name = command.name
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(1500))
+                            if copied == name { copied = nil }
+                        }
                     } label: {
                         HStack(spacing: Theme.Space.xs) {
                             Text(url(for: command))

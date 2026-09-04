@@ -148,6 +148,9 @@ struct ScreenshotDetailView: View {
             }
 
             Section {
+                Toggle("Choose windows from a list", isOn: Binding(
+                    get: { feature.choosesWindowFromList },
+                    set: { feature.choosesWindowFromList = $0 }))
                 Toggle("Keep the window's shadow", isOn: Binding(
                     get: { feature.includesWindowShadow },
                     set: { feature.includesWindowShadow = $0 }))
@@ -158,6 +161,9 @@ struct ScreenshotDetailView: View {
                 Text("Window captures")
             } footer: {
                 Text("""
+                    A list reaches a window that is behind something else and can be driven from \
+                    the keyboard; leave it off to point at the window you can already see.
+
                     A window capture is taken on its own rather than cut out of the screen, so the \
                     corners can be genuinely transparent instead of showing whatever was behind it.
                     """)
@@ -253,90 +259,3 @@ struct ScreenshotDetailView: View {
 }
 
 /// Recent captures, newest first.
-struct CaptureHistoryStrip: View {
-    @ObservedObject var store: CaptureHistoryStore
-    @State private var filter: CaptureMode?
-
-    private var visible: [CaptureHistoryItem] {
-        guard let filter else { return store.items }
-        return store.items.filter { $0.mode == filter }
-    }
-
-    /// Only the modes actually present. Offering a filter that can only ever return nothing is a
-    /// dead end the user has to discover by trying it.
-    private var availableModes: [CaptureMode] {
-        CaptureMode.allCases.filter { mode in store.items.contains { $0.mode == mode } }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            if availableModes.count > 1 {
-                Picker("Show", selection: $filter) {
-                    Text("All").tag(CaptureMode?.none)
-                    ForEach(availableModes, id: \.self) { Text($0.title).tag(CaptureMode?.some($0)) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Space.sm) {
-                    ForEach(visible) { item in
-                        CaptureHistoryTile(store: store, item: item)
-                    }
-                }
-                .padding(.vertical, 2)
-            }
-        }
-    }
-}
-
-private struct CaptureHistoryTile: View {
-    @ObservedObject var store: CaptureHistoryStore
-    let item: CaptureHistoryItem
-    @State private var isHovering = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ZStack(alignment: .topTrailing) {
-                Group {
-                    if let thumbnail = store.thumbnail(for: item, height: 72) {
-                        Image(nsImage: thumbnail).resizable().scaledToFit()
-                    } else {
-                        // A capture whose file has gone: greyed rather than blank, so it reads as
-                        // "this is missing" instead of "this is still loading".
-                        Image(systemName: "photo").font(.title2).foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(height: 72)
-                .frame(minWidth: 72)
-                .background(.quaternary.opacity(0.4),
-                            in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-
-                if isHovering {
-                    Button {
-                        store.remove(id: item.id)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .symbolRenderingMode(.palette)
-                            .foregroundStyle(.white, .black.opacity(0.6))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(3)
-                    .clickableCursor()
-                    .help("Delete this capture")
-                }
-            }
-
-            Text(item.dimensionText)
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .onHover { isHovering = $0 }
-        .onTapGesture(count: 2) {
-            NSWorkspace.shared.open(store.url(for: item))
-        }
-        .help("\(item.mode.title) · \(item.dimensionText)")
-    }
-}

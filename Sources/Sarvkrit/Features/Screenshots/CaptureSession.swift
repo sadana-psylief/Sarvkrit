@@ -83,7 +83,8 @@ enum CaptureSession {
     /// never drop the drop shadow. Those are both options here, so the result has to come from
     /// `SCContentFilter(desktopIndependentWindow:)`.
     static func captureWindow(using capturer: ScreenCapturing,
-                              options: CaptureOptions) async throws -> Result? {
+                              options: CaptureOptions,
+                              fromList: Bool = false) async throws -> Result? {
         let frames = try await capturer.snapshotAllDisplays(options: options)
         guard !frames.isEmpty else { throw CaptureError.noDisplays }
 
@@ -93,9 +94,28 @@ enum CaptureSession {
             excludingBundleIDs: options.excludedBundleIDs,
             desktopIconLayer: iconLayer)
 
-        let picked: CapturableWindow? = await withCheckedContinuation { continuation in
-            CaptureOverlayController.shared.presentWindowPicker(
-                frames: frames, windows: windows) { continuation.resume(returning: $0) }
+        // Falls back to pointing when there is nothing to list — an empty picker is a dead end,
+        // where the frozen screen at least shows what is there.
+        let picked: CapturableWindow?
+        let listed = WindowListFilter.presentable(windows)
+        if fromList, !listed.isEmpty {
+            // **Each window captured on its own, not cut out of the frozen desktop.** A crop shows
+            // whatever is in *front* of the window, so two overlapping windows produced two
+            // identical thumbnails — a picker that cannot tell its rows apart. A
+            // desktop-independent capture is the window's own content whether or not anything
+            // covers it, which is the whole reason `captureWindow` exists.
+            let previews = await windowPreviews(for: listed, using: capturer, options: options)
+            picked = await withCheckedContinuation { continuation in
+                WindowPickerListController.shared.present(
+                    windows: listed,
+                    thumbnail: { previews[$0.id] },
+                    completion: { continuation.resume(returning: $0) })
+            }
+        } else {
+            picked = await withCheckedContinuation { continuation in
+                CaptureOverlayController.shared.presentWindowPicker(
+                    frames: frames, windows: windows) { continuation.resume(returning: $0) }
+            }
         }
         guard let picked else { return nil }
 
@@ -103,6 +123,27 @@ enum CaptureSession {
         return Result(image: capture.image,
                       sourceRect: picked.frame,
                       display: frames.first { $0.geometry.frame.intersects(picked.frame) }?.geometry)
+    }
+
+    /// A thumbnail per window, captured concurrently.
+    ///
+    /// Bounded by the list filter, which leaves a handful of real windows rather than the dozens
+    /// of system panels the raw enumeration reports — so this is a few captures, not a few dozen.
+    /// A window that will not render comes back missing and the row shows a placeholder; it is
+    /// still capturable, so hiding it would be worse than showing it plain.
+    private static func windowPreviews(for windows: [CapturableWindow],
+                                       using capturer: ScreenCapturing,
+                                       options: CaptureOptions) async -> [CGWindowID: NSImage] {
+        var previews: [CGWindowID: NSImage] = [:]
+        for window in windows {
+            guard let capture = try? await capturer.captureWindow(window, options: options) else {
+                continue
+            }
+            previews[window.id] = NSImage(cgImage: capture.image,
+                                          size: NSSize(width: capture.image.width / 2,
+                                                       height: capture.image.height / 2))
+        }
+        return previews
     }
 
     /// The one interactive capture: freeze, aim, confirm.
@@ -124,6 +165,7 @@ enum CaptureSession {
                                    timerSeconds: Int,
                                    showsBarImmediately: Bool,
                                    initialSelection: CGRect? = nil,
+                                   choosesWindowFromList: Bool = false,
                                    using capturer: ScreenCapturing,
                                    options: CaptureOptions,
                                    chrome: CaptureOverlayController.Chrome,
@@ -217,7 +259,8 @@ enum CaptureSession {
             return (Result(image: frame.image, sourceRect: frame.geometry.frame,
                            display: frame.geometry), mode)
         case .needsWindowPicker:
-            return (try await captureWindow(using: capturer, options: options), .window)
+            return (try await captureWindow(using: capturer, options: options,
+                                            fromList: choosesWindowFromList), .window)
         case .region(let image, let rect, let display):
             let result = try await resolve(mode: mode, seconds: seconds,
                                            image: image, rect: rect, display: display,
