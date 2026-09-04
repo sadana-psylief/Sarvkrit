@@ -9,7 +9,7 @@ DIST_DIR   := dist
 DEST       := -destination 'platform=macOS,arch=arm64'
 RELEASE_APP := $(BUILD_DIR)/Build/Products/Release/$(APP).app
 
-.PHONY: all generate build debug test run dmg notarize install uninstall clean
+.PHONY: all generate build debug test run dmg notarize release install uninstall clean
 
 all: build
 
@@ -45,6 +45,12 @@ dmg: build
 
 notarize:
 	./scripts/notarize.sh $(DIST_DIR)/$(APP).dmg
+
+## Cuts a notarized GitHub release: bump, build, notarize, and only then tag and publish.
+## Notarization is the gate — nothing is tagged or uploaded if Gatekeeper would still block it.
+##   make release VERSION=1.0.1
+release:
+	./scripts/release.sh $(VERSION)
 
 ## Install to /Applications, which is where Launch at Login actually wants the app to live.
 install: build
