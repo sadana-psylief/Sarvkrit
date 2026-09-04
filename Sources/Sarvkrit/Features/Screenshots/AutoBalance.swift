@@ -151,7 +151,13 @@ enum AutoBalance {
         return min(raw, 360 - raw)
     }
 
-    /// Padding, in image pixels, adjusted per side by how much whitespace the shot already has.
+    /// Padding, in image pixels, scaled by how much whitespace the shot already has.
+    ///
+    /// **One number for all four sides, not one per side** — which is what this comment used to
+    /// claim. `contentBounds` is read for its *area* only, as a measure of how full the capture
+    /// is: a sparse shot brings its own margin and needs less added. Per-side padding would need
+    /// `CaptureBackground.padding` to be four numbers and the layout to place an off-centre image,
+    /// which is a larger change than the comment made it sound.
     static func padding(contentBounds: CGRect, imageSize: CGSize) -> CGFloat {
         let base = min(max(0.08 * min(imageSize.width, imageSize.height), 24), 160)
         // A shot that is mostly margin already needs less added.

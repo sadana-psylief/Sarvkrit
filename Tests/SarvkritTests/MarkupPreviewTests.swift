@@ -100,6 +100,56 @@ final class MarkupPreviewTests: XCTestCase {
                           "and subtly — past this it reads as a glossy button")
     }
 
+    /// A finished composite: annotations, a blurred backdrop, corners, shadow and an inset.
+    ///
+    /// Everything below this line is exercised somewhere in isolation. This is the one picture
+    /// that shows them agreeing — and the export path specifically, which assembles the background
+    /// through a different function from the live canvas.
+    func testTheFinishedCompositeRenders() throws {
+        let size = CGSize(width: 640, height: 400)
+        let shot = try XCTUnwrap(CGContext(
+            data: nil, width: Int(size.width), height: Int(size.height),
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        // Something with colour in it, so a blurred backdrop has something to be made of.
+        shot.setFillColor(CGColor(srgbRed: 0.98, green: 0.97, blue: 0.99, alpha: 1))
+        shot.fill(CGRect(origin: .zero, size: size))
+        shot.setFillColor(CGColor(srgbRed: 0.35, green: 0.30, blue: 0.85, alpha: 1))
+        shot.fill(CGRect(x: 0, y: 300, width: 640, height: 100))
+        shot.setFillColor(CGColor(srgbRed: 0.95, green: 0.55, blue: 0.25, alpha: 1))
+        shot.fill(CGRect(x: 420, y: 60, width: 180, height: 180))
+        let base = try XCTUnwrap(shot.makeImage())
+
+        var document = AnnotationDocument(imageSize: size)
+        document.elements.append(AnnotationElement(kind: .arrow(ArrowElement(
+            start: CGPoint(x: 120, y: 250), end: CGPoint(x: 400, y: 130),
+            curvature: ArrowGeometry.defaultCurvature(from: CGPoint(x: 120, y: 250),
+                                                      to: CGPoint(x: 400, y: 130)),
+            head: .curved, stroke: StrokeStyle(colour: .red, width: 14)))))
+        document.elements.append(AnnotationElement(kind: .counter(CounterElement(
+            centre: CGPoint(x: 470, y: 300), radius: 26, number: 1,
+            fill: .blue, textColour: RGBAColour.blue.readableForeground))))
+
+        var background = CaptureBackground()
+        background.fill = .blurred(CaptureBackground.Blur(amount: 0.06, tint: -0.4))
+        background.padding = 70
+        background.inset = 20
+        background.cornerRadius = 18
+        background.alignment = .centre
+        background.aspect = .sixteenNine
+        document.background = background
+
+        let flat = try XCTUnwrap(AnnotationRenderer.flatten(document, base: base))
+        let composite = try XCTUnwrap(BackgroundCompositor.render(
+            flat, style: background, sources: .init(base: base)))
+        try write(composite, "markup-composite")
+
+        let (canvas, imageRect) = BackgroundLayout.compute(imageSize: size, style: background)
+        XCTAssertEqual(CGFloat(composite.width), canvas.width.rounded(), accuracy: 1)
+        XCTAssertGreaterThanOrEqual(imageRect.minX, background.padding,
+                                    "the padding is a guarantee, not slack to be spent")
+    }
+
     /// The drawn arrow measures what `ArrowGeometry` says it should.
     ///
     /// Rendering it and measuring the pixels back is the check the proportion tests cannot make:
