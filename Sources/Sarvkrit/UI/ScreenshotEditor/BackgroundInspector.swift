@@ -17,18 +17,21 @@ struct BackgroundInspector: View {
     private func update(_ change: (inout CaptureBackground) -> Void) {
         var next = style
         change(&next)
-        // Auto Balance is a standing preference, not a past click: with it on, changing anything
-        // re-derives the fill and padding from the capture rather than leaving a stale choice.
-        if next.isAutoBalanced {
-            next = BackgroundCompositor.autoBalanced(model.base, base: next)
-        }
         remembered = next
         model.edit { $0.background = next }
     }
 
     /// Applies a fill, turning the background on if it was off.
+    ///
+    /// **Clears Auto Balance**, because picking a background by hand is the user taking over — the
+    /// same convention as nudging the brightness slider on a Mac with auto-brightness on. Without
+    /// this the balance ran on every edit and wrote its own choice straight back over the one just
+    /// made, so with the checkbox ticked every swatch in the panel appeared to do nothing at all.
     private func choose(_ fill: CaptureBackground.Fill) {
-        update { $0.fill = fill }
+        update {
+            $0.fill = fill
+            $0.isAutoBalanced = false
+        }
     }
 
     var body: some View {
@@ -80,6 +83,11 @@ struct BackgroundInspector: View {
             // border with a shadow round it is a third state nobody asked for. The frame itself
             // is remembered, so picking a fill again brings back the padding and corners rather
             // than resetting them — which is the actual complaint about the old checkbox.
+            //
+            // Remembered *here*, not only on edit: a document opened with padding 120 and then
+            // sent straight to None had never been through `update`, so it came back at the
+            // default 64.
+            remembered = style
             model.edit { $0.background = nil }
         } label: {
             Text("None").frame(maxWidth: .infinity)
@@ -303,7 +311,10 @@ struct BackgroundInspector: View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             labelled("Padding", value: "\(Int(style.padding))") {
                 Slider(value: Binding(get: { style.padding },
-                                      set: { value in update { $0.padding = value } }),
+                                      set: { value in
+                                          // The other thing Auto Balance chooses — see `choose`.
+                                          update { $0.padding = value; $0.isAutoBalanced = false }
+                                      }),
                        in: 0...240)
             }
             labelled("Inset", value: "\(Int(style.inset))") {
@@ -316,8 +327,9 @@ struct BackgroundInspector: View {
             Toggle("Auto balance", isOn: Binding(
                 get: { style.isAutoBalanced },
                 set: { on in
-                    // Written straight rather than through `update`, which would re-balance on
-                    // the way *out* as well and make turning it off do nothing visible.
+                    // The only place the balance actually runs. Turning it off leaves the fill and
+                    // padding it chose in place — undoing them would throw away a choice the user
+                    // may well have been keeping.
                     var next = style
                     next.isAutoBalanced = on
                     if on { next = BackgroundCompositor.autoBalanced(model.base, base: next) }
@@ -361,16 +373,21 @@ struct BackgroundInspector: View {
     /// here because they are one perceptual thing — "how much shadow" — and separate sliders for
     /// them is a lighting rig, not a screenshot tool. Zero means off, so the toggle is still in
     /// there at the end of the track.
-    private var shadowAmount: Double {
-        guard let shadow = style.shadow else { return 0 }
+    private var shadowAmount: Double { Self.shadowAmount(for: style.shadow) }
+
+    static func shadowAmount(for shadow: CaptureBackground.Shadow?) -> Double {
+        guard let shadow else { return 0 }
         return min(shadow.radius / 0.8, 100)
     }
 
-    private static func shadow(_ amount: Double) -> CaptureBackground.Shadow? {
+    /// The curve is set so the *default* shadow round-trips: `Shadow()` reads as 50, and 50 gives
+    /// back `Shadow()`. Without that, opening the panel and nudging the slider back to where it
+    /// started would leave a different picture than the one you opened.
+    static func shadow(_ amount: Double) -> CaptureBackground.Shadow? {
         guard amount > 0.5 else { return nil }
         return CaptureBackground.Shadow(radius: amount * 0.8,
                                         offsetY: amount * 0.4,
-                                        opacity: 0.12 + amount / 100 * 0.33)
+                                        opacity: 0.12 + amount / 100 * 0.46)
     }
 
     /// Nine anchors, laid out as the thing they describe.

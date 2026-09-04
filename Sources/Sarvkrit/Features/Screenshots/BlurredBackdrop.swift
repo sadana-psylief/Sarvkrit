@@ -18,11 +18,17 @@ enum BlurredBackdrop {
     private static let cache = NSCache<Key, CGImage>()
 
     private final class Key: NSObject {
+        /// **Held strongly, and that is the point.** Keyed on the identity alone, a freed capture
+        /// leaves its address free for the next one — and a new capture allocated there at the
+        /// same canvas size and blur would be served the previous shot's backdrop. Retaining it
+        /// makes the address unreusable while the entry lives; `NSCache` bounds what that costs.
+        let image: CGImage
         let source: ObjectIdentifier
         let width: Int, height: Int
         let amount: Double, tint: Double
 
         init(source: CGImage, size: CGSize, blur: CaptureBackground.Blur) {
+            self.image = source
             self.source = ObjectIdentifier(source)
             self.width = Int(size.width.rounded())
             self.height = Int(size.height.rounded())

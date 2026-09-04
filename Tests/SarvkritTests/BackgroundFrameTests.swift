@@ -166,6 +166,35 @@ final class AutoBalanceAsAPreferenceTests: XCTestCase {
     }
 }
 
+/// The shadow slider's single number.
+final class ShadowAmountTests: XCTestCase {
+
+    /// Opening the panel, nudging the shadow and putting it back must leave the picture it
+    /// started with. It did not: the default read as 50 and 50 gave back a lighter shadow, so a
+    /// round trip quietly changed the export.
+    func testTheDefaultShadowSurvivesARoundTrip() {
+        let original = CaptureBackground.Shadow()
+        let amount = BackgroundInspector.shadowAmount(for: original)
+        let restored = BackgroundInspector.shadow(amount)
+        XCTAssertEqual(amount, 50, accuracy: 0.5)
+        XCTAssertEqual(restored?.radius ?? 0, original.radius, accuracy: 0.5)
+        XCTAssertEqual(restored?.offsetY ?? 0, original.offsetY, accuracy: 0.5)
+        XCTAssertEqual(restored?.opacity ?? 0, original.opacity, accuracy: 0.01)
+    }
+
+    func testZeroMeansNoShadow() {
+        XCTAssertNil(BackgroundInspector.shadow(0))
+        XCTAssertEqual(BackgroundInspector.shadowAmount(for: nil), 0)
+    }
+
+    func testMoreIsMore() {
+        let light = BackgroundInspector.shadow(20)
+        let heavy = BackgroundInspector.shadow(90)
+        XCTAssertLessThan(light?.radius ?? 0, heavy?.radius ?? 0)
+        XCTAssertLessThan(light?.opacity ?? 0, heavy?.opacity ?? 0)
+    }
+}
+
 /// The blurred-from-the-screenshot backdrop.
 final class BlurredBackdropTests: XCTestCase {
 
