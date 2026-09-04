@@ -44,17 +44,19 @@ jobs:
             -configuration Release $DEST -derivedDataPath build build $SIGNING_OFF
 
   test:
-    # Not a required check. The suite very nearly passes on a runner — 845 of 846 — and the
-    # one failure is CameraMonitorSmokeTests.testTheMachineReportsAtLeastOneCamera, which
-    # asserts the machine has a camera. A runner has none, and that test cannot tell "no
-    # camera" from "enumeration is broken", which is the bug it exists to catch. So it is
-    # only meaningful on real hardware: this job reports, and nothing is gated on it.
+    # The whole suite runs here, including the smoke tests that touch real hardware.
     #
-    # Pull requests only. On `push: main` it would fail on that same test every time and
-    # leave a permanent red X against the default branch, which reads as "broken" to anyone
-    # arriving at the repo.
-    if: github.event_name == 'pull_request'
-    name: test (advisory)
+    # This used to be advisory and pull-request-only, because
+    # CameraMonitorSmokeTests.testTheMachineReportsAtLeastOneCamera asserted the machine has
+    # a camera and a runner has none — so it failed every time and would have left a
+    # permanent red X on main. That test now asks `system_profiler` whether a camera exists
+    # before asserting anything, which is a source independent of the CoreMediaIO
+    # enumeration under test: on hardware it still catches a broken enumeration, and on a
+    # runner it skips instead of failing. The reason for the caveat is gone, so the job runs
+    # on main too and reports honestly.
+    #
+    # Still not in the required checks — that is a repo ruleset setting, not this file.
+    name: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
