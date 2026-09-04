@@ -113,10 +113,8 @@ enum AnnotationRenderer {
             let path = CGPath(roundedRect: shape.rect,
                               cornerWidth: shape.cornerRadius, cornerHeight: shape.cornerRadius,
                               transform: nil)
-            if let fill = shape.fill {
-                context.setFillColor(fill.cgColor)
-                context.addPath(path)
-                context.fillPath()
+            if let colour = shape.fill {
+                fill(path, with: colour, in: context)
             }
             context.setStrokeColor(shape.stroke.colour.cgColor)
             context.setLineWidth(shape.stroke.width)
@@ -124,9 +122,8 @@ enum AnnotationRenderer {
             context.strokePath()
 
         case .ellipse(let shape):
-            if let fill = shape.fill {
-                context.setFillColor(fill.cgColor)
-                context.fillEllipse(in: shape.rect)
+            if let colour = shape.fill {
+                fill(CGPath(ellipseIn: shape.rect, transform: nil), with: colour, in: context)
             }
             context.setStrokeColor(shape.stroke.colour.cgColor)
             context.setLineWidth(shape.stroke.width)
@@ -163,6 +160,48 @@ enum AnnotationRenderer {
         }
     }
 
+    /// How much lighter the top of a filled mark is than its bottom.
+    ///
+    /// Deliberately small. The point is that a mark stops looking like a flat sticker without
+    /// anyone being able to say why — past about a tenth it starts reading as a glossy 2008
+    /// button, which is a different and worse look than the flat one it replaced.
+    private static let fillLift = 0.08
+
+    /// Fills a path with a top-to-bottom gradient from the colour lifted toward white to the
+    /// colour itself.
+    ///
+    /// **Paint only — nothing about this is stored on the element.** `CounterElement` and the
+    /// shape elements have synthesised `Codable`s, whose decoders throw on a missing key, so any
+    /// field added here would make every previously-saved document fail to open unless its
+    /// decoder were hand-written first (which is why `TextElement` has one). A gradient computed
+    /// at paint time costs nothing and cannot break a document.
+    ///
+    /// Device RGB and `CGGradient`, matching `BackgroundCompositor` and `MeshRenderer` — see the
+    /// note in the latter on why this pipeline does not go through Core Image.
+    ///
+    /// The context is in top-left document space, so the *smaller* y is the top.
+    private static func fill(_ path: CGPath, with colour: RGBAColour, in context: CGContext) {
+        let box = path.boundingBox
+        guard !box.isNull, box.height > 0,
+              let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [colour.lightened(fillLift).cgColor, colour.cgColor] as CFArray,
+                locations: [0, 1]) else {
+            context.setFillColor(colour.cgColor)
+            context.addPath(path)
+            context.fillPath()
+            return
+        }
+        context.saveGState()
+        context.addPath(path)
+        context.clip()
+        context.drawLinearGradient(gradient,
+                                   start: CGPoint(x: box.midX, y: box.minY),
+                                   end: CGPoint(x: box.midX, y: box.maxY),
+                                   options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        context.restoreGState()
+    }
+
     private static func drawArrow(_ arrow: ArrowElement, in context: CGContext) {
         // A filled outline for the tapered styles and a stroked chevron for the open one — see
         // `ArrowGeometry`, which is built to measurements rather than to taste.
@@ -171,9 +210,9 @@ enum AnnotationRenderer {
                                    head: arrow.head,
                                    strokeWidth: arrow.stroke.width) {
         case .fill(let path):
-            context.setFillColor(arrow.stroke.colour.cgColor)
-            context.addPath(path)
-            context.fillPath()
+            // The open style falls to the stroke branch and stays flat: a chevron is a line, and
+            // a line has no interior to grade.
+            fill(path, with: arrow.stroke.colour, in: context)
         case .stroke(let path, let lineWidth):
             context.setStrokeColor(arrow.stroke.colour.cgColor)
             context.setLineWidth(lineWidth)
@@ -270,8 +309,14 @@ enum AnnotationRenderer {
         let rect = CGRect(x: counter.centre.x - counter.radius,
                           y: counter.centre.y - counter.radius,
                           width: counter.radius * 2, height: counter.radius * 2)
-        context.setFillColor(counter.fill.cgColor)
-        context.fillEllipse(in: rect)
+        // The shadow goes on its own gState, or it lands under the number too and the digit
+        // grows a grey ghost.
+        context.saveGState()
+        context.setShadow(offset: CGSize(width: 0, height: -counter.radius * 0.06),
+                          blur: counter.radius * 0.14,
+                          color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.18))
+        fill(CGPath(ellipseIn: rect, transform: nil), with: counter.fill, in: context)
+        context.restoreGState()
 
         let font = NSFont.systemFont(ofSize: counter.radius * 1.1, weight: .semibold)
         let string = NSAttributedString(string: "\(counter.number)", attributes: [
@@ -327,5 +372,12 @@ enum AnnotationRenderer {
 extension RGBAColour {
     var cgColor: CGColor {
         CGColor(srgbRed: r, green: g, blue: b, alpha: a)
+    }
+
+    /// This colour, lifted toward white. Used for the top of a filled mark's gradient.
+    func lightened(_ amount: Double) -> RGBAColour {
+        RGBAColour(r: r + (1 - r) * amount,
+                   g: g + (1 - g) * amount,
+                   b: b + (1 - b) * amount, a: a)
     }
 }

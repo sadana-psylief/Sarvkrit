@@ -75,6 +75,31 @@ final class MarkupPreviewTests: XCTestCase {
         XCTAssertEqual(image.width, Int(size.width))
     }
 
+    /// A filled mark is lit from the top, and only just.
+    ///
+    /// Two failure modes, and the gap between them is narrow: no gradient at all reads as a flat
+    /// sticker, and too much reads as a glossy 2008 button. So this pins both ends — the top must
+    /// actually be lighter than the bottom, and not by much.
+    func testAFilledMarkIsLitFromTheTopAndOnlyJust() throws {
+        let size = CGSize(width: 200, height: 200)
+        var document = AnnotationDocument(imageSize: size)
+        document.elements.append(AnnotationElement(kind: .counter(CounterElement(
+            centre: CGPoint(x: 100, y: 100), radius: 70, number: 8,
+            fill: .blue, textColour: .white))))
+        let image = try XCTUnwrap(AnnotationRenderer.flatten(document, base: white(size)))
+        let rep = NSBitmapImageRep(cgImage: image)
+
+        // Sampled off the number, near the disc's top and bottom edges.
+        let top = try XCTUnwrap(rep.colorAt(x: 100, y: 42))
+        let bottom = try XCTUnwrap(rep.colorAt(x: 100, y: 158))
+        func luma(_ c: NSColor) -> CGFloat {
+            0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+        }
+        XCTAssertGreaterThan(luma(top), luma(bottom), "the disc should be lit from the top")
+        XCTAssertLessThan(luma(top) - luma(bottom), 0.12,
+                          "and subtly — past this it reads as a glossy button")
+    }
+
     /// The drawn arrow measures what `ArrowGeometry` says it should.
     ///
     /// Rendering it and measuring the pixels back is the check the proportion tests cannot make:
