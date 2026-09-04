@@ -137,6 +137,22 @@ final class EditorCanvasLiveTests: XCTestCase {
         }
     }
 
+    /// A selected arrow shows its two ends and a bow, not a bounding box.
+    func testASelectedArrowShowsThreeHandles() throws {
+        let model = EditorDocumentModel(base: try base())
+        var arrow = ArrowElement(start: CGPoint(x: 120, y: 300), end: CGPoint(x: 470, y: 130))
+        arrow.head = .curved
+        arrow.curvature = ArrowGeometry.defaultCurvature(from: arrow.start, to: arrow.end)
+        arrow.stroke.colour = RGBAColour(r: 0.95, g: 0.24, b: 0.20)
+        arrow.stroke.width = 9
+        model.edit { $0.add(.arrow(arrow)) }
+        model.selection = model.document.elements.last?.id
+
+        let rep = try draw(model)
+        try write(rep, named: "arrow-handles")
+        XCTAssertGreaterThan(distinctColours(rep).count, 3)
+    }
+
     /// Redaction has to cover what it covers *on the canvas*, not only in the export — the whole
     /// risk of this feature is somebody believing a password is hidden when it is not.
     func testASecureRedactionCoversWhatItIsOver() throws {

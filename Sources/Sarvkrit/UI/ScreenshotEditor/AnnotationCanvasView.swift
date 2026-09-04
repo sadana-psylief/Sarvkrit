@@ -136,6 +136,29 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     }
 
     /// Handles are drawn in **view** space so they stay a constant physical size at any zoom.
+    /// The handles for an element, in view coordinates.
+    ///
+    /// An arrow gets its two ends and a bow; everything else gets the eight around its box. An
+    /// arrow given box handles could be stretched but never bent, and neither end could be moved
+    /// without moving the other.
+    private func viewHandles(for element: AnnotationElement,
+                             bounds: CGRect) -> [SelectionHandles.Handle: CGRect] {
+        guard case .arrow(let arrow) = element.kind else {
+            return SelectionHandles.rects(for: bounds)
+        }
+        func toView(_ point: CGPoint) -> CGPoint {
+            transform.toView(CGPoint(x: point.x + imageRect.minX, y: point.y + imageRect.minY))
+        }
+        let bow = SelectionHandles.bowPoint(start: arrow.start, end: arrow.end,
+                                            curvature: arrow.curvature)
+        return SelectionHandles.arrowHandles(start: toView(arrow.start), end: toView(arrow.end),
+                                             curvature: 0)
+            .merging([.curve: CGRect(x: toView(bow).x - SelectionHandles.defaultSize / 2,
+                                     y: toView(bow).y - SelectionHandles.defaultSize / 2,
+                                     width: SelectionHandles.defaultSize,
+                                     height: SelectionHandles.defaultSize)]) { _, new in new }
+    }
+
     private func drawHandles(for element: AnnotationElement, in context: CGContext) {
         let inImage = AnnotationGeometry.bounds(of: element)
         let bounds = transform.toView(inImage.offsetBy(dx: imageRect.minX, dy: imageRect.minY))
@@ -144,15 +167,27 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         context.saveGState()
         context.setStrokeColor(NSColor.controlAccentColor.cgColor)
         context.setLineWidth(1)
-        context.setLineDash(phase: 0, lengths: [4, 3])
-        context.stroke(bounds)
-        context.setLineDash(phase: 0, lengths: [])
+        // No dashed box round an arrow: the three handles say what is selected, and a rectangle
+        // implies a resize behaviour it does not have.
+        if case .arrow = element.kind {} else {
+            context.setLineDash(phase: 0, lengths: [4, 3])
+            context.stroke(bounds)
+            context.setLineDash(phase: 0, lengths: [])
+        }
 
-        for rect in SelectionHandles.rects(for: bounds).values {
+        for (handle, rect) in viewHandles(for: element, bounds: bounds) {
             context.setFillColor(NSColor.white.cgColor)
-            context.fill(rect)
-            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-            context.stroke(rect)
+            // The bow reads as round, so it is obviously not one of the square resize grips —
+            // it bends the arrow rather than resizing anything.
+            if handle == .curve {
+                context.fillEllipse(in: rect)
+                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+                context.strokeEllipse(in: rect)
+            } else {
+                context.fill(rect)
+                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+                context.stroke(rect)
+            }
         }
         context.restoreGState()
     }
@@ -213,8 +248,12 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             let viewBounds = transform.toView(
                 AnnotationGeometry.bounds(of: element)
                     .offsetBy(dx: imageRect.minX, dy: imageRect.minY))
-            if let handle = SelectionHandles.handle(at: viewPoint, bounds: viewBounds) {
-                activeHandle = handle
+            let handles = viewHandles(for: element, bounds: viewBounds)
+            // Corners first, as `SelectionHandles.handle` does — at a small selection they overlap
+            // the edges, and the corner is the one being reached for.
+            if let hit = handles.first(where: { $0.key.isCorner && $0.value.contains(viewPoint) })
+                ?? handles.first(where: { $0.value.contains(viewPoint) }) {
+                activeHandle = hit.key
                 model.beginGesture()
                 return
             }
@@ -243,8 +282,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
         switch model.tool {
         case .arrow:
-            draft = .arrow(ArrowElement(start: start, end: point,
-                                        head: model.arrowHead, stroke: stroke))
+            // The curved style's bow is written here, once, rather than substituted on every
+            // read — that is what lets the bow handle drag it back to straight.
+            draft = .arrow(ArrowElement(
+                start: start, end: point,
+                curvature: model.arrowHead == .curved
+                    ? ArrowGeometry.defaultCurvature(from: start, to: point) : 0,
+                head: model.arrowHead, stroke: stroke))
         case .line:
             draft = .line(LineElement(start: start, end: point, stroke: stroke))
         case .rectangle:
@@ -280,6 +324,31 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         guard let selection = model.selection,
               let index = model.document.elements.firstIndex(where: { $0.id == selection })
         else { return }
+
+        // An arrow's handles move points, not a bounding box, so they are applied before the
+        // box path — `SelectionHandles.resize` returns the bounds unchanged for these.
+        if let handle = activeHandle,
+           case .arrow(let arrow) = model.document.elements[index].kind,
+           handle == .start || handle == .end || handle == .curve {
+            model.updateLive { document in
+                guard case .arrow(var value) = document.elements[index].kind else { return }
+                switch handle {
+                case .start: value.start = point
+                case .end: value.end = point
+                default:
+                    // The only place in the app that writes curvature. Projected onto the chord's
+                    // normal, so dragging along the arrow does nothing and dragging onto the chord
+                    // gives exactly zero — which is how a curve is taken back to straight.
+                    value.curvature = SelectionHandles.curvature(forBowAt: point,
+                                                                 start: value.start,
+                                                                 end: value.end)
+                }
+                document.elements[index].kind = .arrow(value)
+            }
+            _ = arrow
+            needsDisplay = true
+            return
+        }
 
         if let handle = activeHandle {
             let current = AnnotationGeometry.bounds(of: model.document.elements[index])

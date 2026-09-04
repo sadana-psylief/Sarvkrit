@@ -81,16 +81,25 @@ enum ArrowGeometry {
         return metrics
     }
 
-    /// The bow a `.curved` arrow gets when the user hasn't dragged one in.
+    /// The bow a freshly drawn `.curved` arrow starts with.
     ///
-    /// **Without this, "curved" is not a style at all** — it would render identically to `.filled`
-    /// until the curve handle was touched, so the button would appear to do nothing. A sagitta of
-    /// about 7% of the chord matches the reference; a quadratic reaches half its control offset,
-    /// hence the doubling.
-    static func effectiveCurvature(_ curvature: CGFloat, head: ArrowElement.Head,
-                                   from start: CGPoint, to end: CGPoint) -> CGFloat {
-        guard head == .curved, abs(curvature) < 0.01 else { return curvature }
-        return hypot(end.x - start.x, end.y - start.y) * 0.14
+    /// **Applied once, when the arrow is created — not computed on every read.** It used to be a
+    /// fallback inside `effectiveCurvature`: any stored value under 0.01 became this default, so
+    /// stored zero did not mean straight and a curved arrow could never be dragged flat. Now the
+    /// creator writes it and the stored number is the only truth, which is what makes the bow
+    /// handle able to take it back to nothing.
+    ///
+    /// A sagitta of about 7% of the chord matches the reference; a quadratic reaches half its
+    /// control offset, hence the doubling.
+    static func defaultCurvature(from start: CGPoint, to end: CGPoint) -> CGFloat {
+        hypot(end.x - start.x, end.y - start.y) * 0.14
+    }
+
+    /// Below this a curvature is treated as none. One threshold, shared by everything that asks.
+    static let straightThreshold: CGFloat = 0.01
+
+    static func isStraight(_ curvature: CGFloat) -> Bool {
+        abs(curvature) < straightThreshold
     }
 
     /// The arrow, ready to paint.
@@ -98,7 +107,7 @@ enum ArrowGeometry {
                       curvature: CGFloat,
                       head: ArrowElement.Head,
                       strokeWidth: CGFloat) -> Shape {
-        let bow = effectiveCurvature(curvature, head: head, from: start, to: end)
+        let bow = curvature
         if head == .open {
             return .stroke(chevronPath(from: start, to: end, curvature: bow,
                                        strokeWidth: strokeWidth),
@@ -113,7 +122,7 @@ enum ArrowGeometry {
                      curvature: CGFloat,
                      head: ArrowElement.Head,
                      strokeWidth: CGFloat) -> CGPath {
-        let bow = effectiveCurvature(curvature, head: head, from: start, to: end)
+        let bow = curvature
         let spine = spinePoints(from: start, to: end, curvature: bow)
         let length = polylineLength(spine)
         guard length > 0.001 else { return CGMutablePath() }

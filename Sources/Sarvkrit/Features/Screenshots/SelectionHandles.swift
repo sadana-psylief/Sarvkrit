@@ -41,6 +41,52 @@ enum SelectionHandles {
     static let minimumSide: CGFloat = 8
 
     /// The eight box handles.
+    /// The three handles an arrow gets: its two ends and the bow in the middle.
+    ///
+    /// **An arrow is not a box.** It was given the eight handles of its bounding rectangle, which
+    /// could stretch it but could never move one end without moving the other, and offered no way
+    /// at all to bend it — `curvature` was stored, encoded, rendered and hit-tested, and nothing
+    /// in the app ever wrote to it.
+    ///
+    /// The bow sits at the curve's midpoint, which is *half* the control offset: a quadratic
+    /// reaches half of it at t = 0.5. `curvature(forBowAt:)` is the exact inverse, so dragging the
+    /// handle onto the chord gives zero and the arrow comes back straight.
+    static func arrowHandles(start: CGPoint, end: CGPoint, curvature: CGFloat,
+                             size: CGFloat = defaultSize) -> [Handle: CGRect] {
+        let half = size / 2
+        func rect(_ point: CGPoint) -> CGRect {
+            CGRect(x: point.x - half, y: point.y - half, width: size, height: size)
+        }
+        return [.start: rect(start),
+                .end: rect(end),
+                .curve: rect(bowPoint(start: start, end: end, curvature: curvature))]
+    }
+
+    /// Where the bow handle sits for a given curvature.
+    static func bowPoint(start: CGPoint, end: CGPoint, curvature: CGFloat) -> CGPoint {
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let normal = chordNormal(start: start, end: end)
+        return CGPoint(x: mid.x + normal.dx * curvature / 2,
+                       y: mid.y + normal.dy * curvature / 2)
+    }
+
+    /// The curvature that would put the bow handle at `point`. The inverse of `bowPoint`.
+    static func curvature(forBowAt point: CGPoint, start: CGPoint, end: CGPoint) -> CGFloat {
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let normal = chordNormal(start: start, end: end)
+        // Projected onto the normal, so dragging along the chord does nothing and only the
+        // sideways component bends the arrow.
+        return 2 * ((point.x - mid.x) * normal.dx + (point.y - mid.y) * normal.dy)
+    }
+
+    /// Unit normal to the chord. Matches `AnnotationGeometry.quadratic`, which is what actually
+    /// draws the curve — the two disagreeing would put the handle somewhere the arrow is not.
+    private static func chordNormal(start: CGPoint, end: CGPoint) -> CGVector {
+        let dx = end.x - start.x, dy = end.y - start.y
+        let length = max(hypot(dx, dy), 0.0001)
+        return CGVector(dx: -dy / length, dy: dx / length)
+    }
+
     static func rects(for bounds: CGRect, size: CGFloat = defaultSize) -> [Handle: CGRect] {
         let half = size / 2
         func rect(_ x: CGFloat, _ y: CGFloat) -> CGRect {
@@ -88,6 +134,8 @@ enum SelectionHandles {
         case .bottom:      maxY = point.y
         case .bottomLeft:  minX = point.x; maxY = point.y
         case .left:        minX = point.x
+        // Handled by the arrow path in the canvas, which knows the element's endpoints; a
+        // bounding box cannot express "move this end" or "bend it here".
         case .start, .end, .curve: return bounds
         }
 

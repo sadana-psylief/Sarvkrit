@@ -35,7 +35,9 @@ enum AnnotationGeometry {
     static func flatten(_ element: AnnotationElement) -> [CGPoint] {
         switch element.kind {
         case .arrow(let arrow):
-            return arrow.curvature == 0
+            // The same threshold the renderer uses. `== 0` here against `abs > 0.01` there meant
+            // a bowed arrow could be *drawn* curved and *hit-tested* as a straight chord.
+            return ArrowGeometry.isStraight(arrow.curvature)
                 ? [arrow.start, arrow.end]
                 : quadratic(from: arrow.start, to: arrow.end, curvature: arrow.curvature, steps: 16)
         case .line(let line):

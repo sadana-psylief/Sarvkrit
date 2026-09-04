@@ -140,6 +140,15 @@ final class EditorDocumentModel: ObservableObject {
             case .arrow(var value):
                 value.stroke.colour = colour
                 value.stroke.width = width
+                // Picking "Curved" on a straight arrow gives it the default bow; picking any other
+                // style takes it away. Without this the style button would appear to do nothing,
+                // which is why the bow used to be substituted at render time instead.
+                if self.arrowHead == .curved, ArrowGeometry.isStraight(value.curvature) {
+                    value.curvature = ArrowGeometry.defaultCurvature(from: value.start,
+                                                                     to: value.end)
+                } else if self.arrowHead != .curved {
+                    value.curvature = 0
+                }
                 value.head = self.arrowHead
                 document.elements[index].kind = .arrow(value)
             case .line(var value):

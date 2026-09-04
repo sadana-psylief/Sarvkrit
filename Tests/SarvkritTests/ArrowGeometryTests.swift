@@ -126,10 +126,13 @@ final class ArrowGeometryTests: XCTestCase {
         // Four buttons that render the same thing would be four buttons that do nothing. `curved`
         // shares its proportions with `filled` on purpose — what separates them is the default
         // bow, so it has to be compared as a drawn shape rather than as numbers.
+        // `.curved` shares its proportions with `.filled`; what separates them is the bow, which
+        // is now written into the element when it is created rather than substituted on every
+        // read. That change is what lets the bow handle drag a curve back to straight.
+        let bow = ArrowGeometry.defaultCurvature(from: .zero, to: CGPoint(x: 200, y: 0))
         let straight = path(.filled).boundingBox
-        let curved = path(.curved).boundingBox
-        XCTAssertGreaterThan(curved.maxY, straight.maxY + 3,
-                             "curved must bow without the user touching the handle")
+        let curved = path(.curved, curvature: bow).boundingBox
+        XCTAssertGreaterThan(curved.maxY, straight.maxY + 3, "a curved arrow must bow")
 
         let thin = ArrowGeometry.metrics(for: .thin, strokeWidth: 10, length: 200)
         let filled = ArrowGeometry.metrics(for: .filled, strokeWidth: 10, length: 200)
@@ -140,17 +143,38 @@ final class ArrowGeometryTests: XCTestCase {
         else { return XCTFail("open should be the stroked one") }
     }
 
-    func testAnExplicitCurveOverridesTheDefaultBow() {
-        // Otherwise dragging the handle back to straight would be impossible on a curved arrow.
-        let defaulted = ArrowGeometry.effectiveCurvature(0, head: .curved,
-                                                         from: .zero, to: CGPoint(x: 100, y: 0))
-        XCTAssertEqual(defaulted, 14, accuracy: 0.001)
-        XCTAssertEqual(ArrowGeometry.effectiveCurvature(-40, head: .curved,
-                                                        from: .zero, to: CGPoint(x: 100, y: 0)),
-                       -40)
-        XCTAssertEqual(ArrowGeometry.effectiveCurvature(0, head: .filled,
-                                                        from: .zero, to: CGPoint(x: 100, y: 0)),
-                       0, "a straight style stays straight")
+    func testStoredZeroAlwaysMeansStraight() {
+        // **The regression test for being able to straighten a curve.** The bow used to be a
+        // fallback applied on every read: any stored value under the threshold became the default
+        // bow, so a `.curved` arrow could not be dragged flat no matter where the handle went.
+        // Measured on the spine, not the drawn path: an arrowhead is wide whether or not the
+        // shaft bends, so a bounding box says nothing about straightness.
+        let end = CGPoint(x: 200, y: 0)
+        for head in ArrowElement.Head.allCases {
+            let spine = ArrowGeometry.spinePoints(from: .zero, to: end, curvature: 0)
+            let drift = spine.map { abs($0.y) }.max() ?? 0
+            XCTAssertLessThan(drift, 0.01, "\(head) with no curvature still bows by \(drift)")
+        }
+
+        // And with the default bow it does leave the chord, so the two cases are distinguishable.
+        let bowed = ArrowGeometry.spinePoints(
+            from: .zero, to: end,
+            curvature: ArrowGeometry.defaultCurvature(from: .zero, to: end))
+        XCTAssertGreaterThan(bowed.map { abs($0.y) }.max() ?? 0, 10)
+    }
+
+    func testTheDefaultBowIsSevenPercentOfTheChord() {
+        // A quadratic reaches half its control offset at the midpoint, hence the doubling.
+        XCTAssertEqual(ArrowGeometry.defaultCurvature(from: .zero, to: CGPoint(x: 100, y: 0)),
+                       14, accuracy: 0.001)
+        XCTAssertEqual(ArrowGeometry.defaultCurvature(from: .zero, to: CGPoint(x: 200, y: 0)),
+                       28, accuracy: 0.001)
+    }
+
+    func testTheStraightThresholdIsSharedRatherThanRepeated() {
+        XCTAssertTrue(ArrowGeometry.isStraight(0))
+        XCTAssertTrue(ArrowGeometry.isStraight(0.005))
+        XCTAssertFalse(ArrowGeometry.isStraight(1))
     }
 
     func testAZeroLengthArrowDoesNotCrash() {
