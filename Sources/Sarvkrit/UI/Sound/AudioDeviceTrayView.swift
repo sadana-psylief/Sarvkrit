@@ -1,20 +1,25 @@
 import CoreAudio
 import SwiftUI
 
-/// The device list shown under the feature's row in the tray.
+/// The output and input device list: the bottom half of the Sound panel.
 ///
 /// A `SettingsRow` can't express this — it has a fixed 52pt height and a 40pt trailing column sized
-/// for a switch — so this is a sibling row type inside the same `SettingsModule`, keeping the
-/// standard row inset so `ModuleSeparator`'s hairlines still line up.
+/// for a switch — so these are row types of its own, keeping the standard row inset so the
+/// hairlines still line up with everything else.
+///
+/// Like `VolumeMixerTrayView`, this used to live inside the card belonging to its feature's switch
+/// and so drew no card of its own. It owns one now.
 struct AudioDeviceTrayView: View {
     @ObservedObject var feature: OutputSwitcherFeature
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(AudioDevice.Kind.allCases) { kind in
+        SettingsModule {
+            ForEach(Array(AudioDevice.Kind.allCases.enumerated()), id: \.element) { index, kind in
                 let devices = feature.selectable(kind)
                 if !devices.isEmpty {
-                    ModuleSeparator()
+                    // Between the two lists only — a hairline above the first would divide it
+                    // from the top of the card.
+                    if index > 0 { ModuleSeparator() }
                     header(for: kind)
                     ForEach(devices) { device in
                         row(device, kind: kind)

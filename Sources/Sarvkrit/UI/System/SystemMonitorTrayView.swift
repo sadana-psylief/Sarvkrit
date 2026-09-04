@@ -6,15 +6,14 @@ import SwiftUI
 /// menu bar icon — so the text beside that icon is only ever a summary, and this is the place you
 /// come to see everything.
 ///
-/// A sibling row type inside the caller's `SettingsModule`, like `VolumeMixerTrayView`: it supplies
-/// no padding, width or background of its own, and keeps `Theme.Metrics.rowInset` so the module's
-/// hairlines stay aligned with the toggle rows above it.
+/// It used to be a sibling row type inside the card belonging to the monitor's own switch, which is
+/// why it began with a `ModuleSeparator` and drew no card. It is the panel now, so it owns one, and
+/// keeps `Theme.Metrics.rowInset` so its rows line up with every other row in the app.
 struct SystemMonitorTrayView: View {
     @ObservedObject var feature: SystemMonitorFeature
 
     var body: some View {
-        VStack(spacing: 0) {
-            ModuleSeparator()
+        SettingsModule {
             // Every metric, always — including the ones switched off.
             //
             // A MenuBarExtra panel is positioned by the system once, anchored under the icon, so

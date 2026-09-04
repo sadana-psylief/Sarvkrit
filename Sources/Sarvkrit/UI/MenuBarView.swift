@@ -14,9 +14,23 @@ struct MenuBarView: View {
     /// Explicit observation of the Keep Awake feature, for the same reason `MenuBarLabel` needs it.
     @ObservedObject var keepAwakeFeature: KeepAwakeFeature
 
-    /// Mirrors the persisted selection. Held locally so switching panels is instant, and written
-    /// back to `AppState` — whose guarded setter makes a same-value write genuinely free.
-    @State private var selection: String = TrayPanel.generalID
+    /// Which panel is showing, resolved from the persisted id on every read.
+    ///
+    /// Deliberately *not* mirrored into `@State`. Doing that meant the first frame drew whatever
+    /// the state was initialised to and only jumped to the remembered panel once `onAppear` had
+    /// run — a visible flash of the wrong panel each time the menu opened, and a half-updated
+    /// frame in anything that photographs it. Resolving on read also means a panel disappearing
+    /// underneath the selection needs no `onChange` to notice: `resolve` simply stops finding it
+    /// and falls back.
+    ///
+    /// Writing straight through costs nothing. `AppState.selectedTrayTabID`'s setter is guarded,
+    /// so a same-value write from a two-way binding publishes exactly zero times.
+    private var selection: Binding<String> {
+        Binding(
+            get: { TrayPanel.resolve(storedID: app.selectedTrayTabID, available: panels) },
+            set: { app.selectedTrayTabID = $0 }
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -34,7 +48,7 @@ struct MenuBarView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            TrayPanelStrip(panels: panels, selection: $selection)
+            TrayPanelStrip(panels: panels, selection: selection)
 
             selectedContent
 
@@ -65,14 +79,8 @@ struct MenuBarView: View {
         // this window on a *shrink* at all — it keeps the tallest height of the presentation and
         // centres the smaller content inside it. `MenuBarWindowAnchor` now does that resize, on
         // every height change including each frame of an animated one.
-        .standardMotion(value: selection)
+        .standardMotion(value: selection.wrappedValue)
         .standardMotion(value: app.unmetRequirementsInOrder)
-        .onAppear { resolveSelection() }
-        // The strip is no longer fixed: switching a feature off in the Features panel removes its
-        // panel while you are standing on it. Without this you'd be left on a tab that no longer
-        // exists, looking at nothing.
-        .onChange(of: panels.map(\.id)) { _, _ in resolveSelection() }
-        .onChange(of: selection) { _, new in app.selectedTrayTabID = new }
     }
 
     /// The whole strip. Features and General are built here rather than in `AppState` because they
@@ -99,7 +107,7 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var selectedContent: some View {
-        if let panel = panels.first(where: { $0.id == selection }) {
+        if let panel = panels.first(where: { $0.id == selection.wrappedValue }) {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 // The strip is icons only, so unlike the old labelled tabs it does not name what
                 // you are looking at. This is the only thing that does.
@@ -129,13 +137,6 @@ struct MenuBarView: View {
             // has a confirmation explaining how to get back. A confirmation sheet inside a
             // MenuBarExtra panel doesn't work — the panel dismisses as focus moves.
         }
-    }
-
-    private func resolveSelection() {
-        let resolved = TrayPanel.resolve(storedID: app.selectedTrayTabID, available: panels)
-        // Guarded, because this runs on every strip change and an unguarded write would push a
-        // same-value selection back through `onChange` on each one.
-        if selection != resolved { selection = resolved }
     }
 
     /// Observed directly, not through `AppState` — nested `ObservableObject` changes don't

@@ -1,15 +1,16 @@
 import SwiftUI
 
-/// Sliders for whatever is making sound, shown under the feature's row in the tray.
+/// Sliders for whatever is making sound: the top half of the Sound panel.
 ///
-/// A `SettingsRow` can't hold a slider — its trailing column is 40pt, sized for a switch — so this
-/// is a sibling row type inside the same `SettingsModule`.
+/// It used to sit *under* the feature's own switch inside that switch's card, which is why it began
+/// with a `ModuleSeparator` and supplied no card of its own — it was a sibling row type, borrowing
+/// the module around it. It is one of two things on a panel now, so it owns its card and starts
+/// with content rather than a hairline dividing it from nothing.
 struct VolumeMixerTrayView: View {
     @ObservedObject var feature: VolumeMixerFeature
 
     var body: some View {
-        VStack(spacing: 0) {
-            ModuleSeparator()
+        SettingsModule {
             if feature.permissionLooksDenied {
                 notice
             } else if feature.processes.isEmpty {
