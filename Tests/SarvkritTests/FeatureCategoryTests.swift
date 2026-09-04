@@ -120,6 +120,9 @@ final class FeatureCategoryTests: XCTestCase {
                 "window-management", "text-snippets", "shelf", "screenshot", "pin-to-screen",
                 "audio-switcher",
                 "mute-microphone", "music-blocker", "volume-mixer", "privacy-guard",
+                // Displays lists what is connected and which channel each one answers on, which
+                // the generic pane's fixed prose cannot say.
+                "displays",
                 "system-monitor",
             ]
             for feature in features {

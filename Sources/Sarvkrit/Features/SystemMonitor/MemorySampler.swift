@@ -35,6 +35,7 @@ enum MemorySampler {
 
         return MemorySample(
             used: appMemory + wired + compressed,
+            pressure: MemoryPressure.read(),
             total: ProcessInfo.processInfo.physicalMemory,
             swapUsed: readSwapUsed()
         )

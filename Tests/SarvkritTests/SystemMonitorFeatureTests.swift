@@ -239,10 +239,14 @@ final class SystemMonitorFeatureTests: XCTestCase {
     // MARK: - The readings appear in the Sarvkrit menu
 
     func testTheFeatureSuppliesTrayContent() {
-        // `MenuBarView` renders this under the feature's row. Returning nil is how the readings
-        // would quietly vanish from the dropdown with every other test still passing.
+        // `MenuBarView` builds the strip from these. Returning none is how the readings would
+        // quietly lose their tab with every other test still passing.
         MainActor.assumeIsolated {
-            XCTAssertNotNil(makeFeature().makeTrayView())
+            let panels = makeFeature().trayPanels()
+            XCTAssertEqual(panels.map(\.id), ["system", "network", "disks", "power"])
+            // Order is the strip's order, so this pins it: Network before Disks before Power is
+            // what the tabs read left to right.
+            XCTAssertTrue(panels.allSatisfy { !$0.title.isEmpty && !$0.symbolName.isEmpty })
         }
     }
 

@@ -114,9 +114,12 @@ final class VolumeMixerFeature: Feature, ObservableObject {
         AnyView(VolumeMixerDetailView(feature: self))
     }
 
+    /// Shares the Sound panel with the output switcher — see `OutputSwitcherFeature.trayPanels()`.
     @MainActor
-    func makeTrayView() -> AnyView? {
-        AnyView(VolumeMixerTrayView(feature: self))
+    func trayPanels() -> [TrayPanel] {
+        [TrayPanel(id: "sound", title: "Sound", symbolName: "slider.horizontal.3") {
+            VolumeMixerTrayView(feature: self)
+        }]
     }
 
     // MARK: - Keeping up with what's playing

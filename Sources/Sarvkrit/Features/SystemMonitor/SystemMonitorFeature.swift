@@ -102,6 +102,16 @@ final class SystemMonitorFeature: Feature, ObservableObject {
     private var previousNetwork: NetworkCounters?
     private var previousDisk: DiskThroughput?
     private var previousSampledAt: Date?
+    /// Running totals for the session, alongside the rate baselines and on the same queue.
+    private var networkDownloaded = SessionTotals()
+    private var networkUploaded = SessionTotals()
+    /// Holds a cached HID client, so it is an instance rather than an enum of statics like the
+    /// other samplers.
+    private let thermal = ThermalSampler()
+    /// SMART is a user-client round trip to the drive, and a figure that does not move within a
+    /// session. Sampling it every two seconds alongside everything else would be pure cost.
+    private var smart: SMARTReader.Reading?
+    private var smartReadAt: Date?
 
     private static let metricsKey = "systemMonitor.enabledMetrics"
     private static let menuBarKey = "systemMonitor.menuBarMetrics"
@@ -196,6 +206,11 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         generation += 1
         isRunning = true
         discardBaselines()
+        // Only here, and deliberately not in `discardBaselines()`. That also runs on wake, where
+        // the rate baselines must go — a rate spanning a nap is fiction — but the session totals
+        // must not: bytes that moved before the Mac slept really did move, and zeroing them on
+        // every wake would make the figure mean nothing at all.
+        resetSessionTotals()
         restartTimer()
         observeWake()
         poll()
@@ -227,14 +242,36 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         AnyView(SystemMonitorDetailView(feature: self))
     }
 
-    /// Every reading, under the feature's own row in the Sarvkrit menu.
+    /// Every reading, as its own panel in the Sarvkrit menu.
     ///
     /// This is where the readings live. The monitor deliberately adds no status item of its own —
     /// Sarvkrit is one menu bar icon — so the dropdown is the place the full set is shown, and the
     /// menu bar text beside the icon is only ever a summary.
+    ///
+    /// Four panels, not one. Seven readings in a single card is a list you scan rather than an
+    /// instrument you read, and a 420pt window holds one card comfortably and four badly.
+    ///
+    /// All four appear together whenever the monitor is on, including for metrics the user has
+    /// switched off — those render dimmed with a dash. Which metrics are enabled is state inside
+    /// this object, and SwiftUI does not observe through a nested `ObservableObject`, so a strip
+    /// that added and removed tabs per metric would go stale the moment one was toggled in the
+    /// settings window.
     @MainActor
-    func makeTrayView() -> AnyView? {
-        AnyView(SystemMonitorTrayView(feature: self))
+    func trayPanels() -> [TrayPanel] {
+        [
+            TrayPanel(id: "system", title: "System", symbolName: "cpu") {
+                SystemPanelView(feature: self)
+            },
+            TrayPanel(id: "network", title: "Network", symbolName: "globe") {
+                NetworkPanelView(feature: self)
+            },
+            TrayPanel(id: "disks", title: "Disks", symbolName: "internaldrive") {
+                DisksPanelView(feature: self)
+            },
+            TrayPanel(id: "power", title: "Power", symbolName: "bolt") {
+                PowerPanelView(feature: self)
+            },
+        ]
     }
 
     // MARK: - Sampling
@@ -252,8 +289,14 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         let elapsed = previousSampledAt.map { now.timeIntervalSince($0) }
         var snapshot = SystemSnapshot()
 
+        // One pass over the sensors for both, the same way Battery and Power share one registry
+        // pass: they are separate rows reading the same hardware.
+        let temperatures = (metrics.contains(.cpu) || metrics.contains(.gpu))
+            ? thermal.read() : nil
+
         if metrics.contains(.cpu), let ticks = CPUSampler.readTicks() {
             snapshot.cpu = CPUSample(
+                celsius: temperatures?.cpu,
                 usage: previousCPU.flatMap { CPULoad.usage(previous: $0, current: ticks) },
                 coreCount: CPUSampler.coreCount
             )
@@ -261,16 +304,20 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         }
 
         if metrics.contains(.gpu), let usage = GPUSampler.readUtilization() {
-            snapshot.gpu = GPUSample(usage: usage)
+            snapshot.gpu = GPUSample(usage: usage, celsius: temperatures?.gpu)
         }
 
         if metrics.contains(.memory) {
             snapshot.memory = MemorySampler.read()
         }
 
+        if metrics.contains(.disk) { refreshSMARTIfStale(now: now) }
+
         if metrics.contains(.disk), let capacity = DiskSampler.readCapacity() {
             let throughput = DiskSampler.readThroughput()
             snapshot.disk = DiskSample(
+                volumes: VolumeLister.list(),
+                smart: smart,
                 used: capacity.used,
                 total: capacity.total,
                 readPerSecond: rate(from: previousDisk?.read, to: throughput?.read, over: elapsed),
@@ -281,10 +328,14 @@ final class SystemMonitorFeature: Feature, ObservableObject {
         }
 
         if metrics.contains(.network), let counters = NetworkSampler.read() {
+            networkDownloaded.add(counter: counters.received)
+            networkUploaded.add(counter: counters.sent)
             snapshot.network = NetworkSample(
                 downloadPerSecond: rate(
                     from: previousNetwork?.received, to: counters.received, over: elapsed),
-                uploadPerSecond: rate(from: previousNetwork?.sent, to: counters.sent, over: elapsed)
+                uploadPerSecond: rate(from: previousNetwork?.sent, to: counters.sent, over: elapsed),
+                sessionDownloaded: networkDownloaded.total,
+                sessionUploaded: networkUploaded.total
             )
             previousNetwork = counters
         }
@@ -377,6 +428,21 @@ final class SystemMonitorFeature: Feature, ObservableObject {
 
     /// Hops to `workQueue` rather than writing directly: the baselines belong to that queue, and
     /// this is called from the main thread on wake and on every toggle.
+    private static let smartInterval: TimeInterval = 300
+
+    private func refreshSMARTIfStale(now: Date) {
+        if let smartReadAt, now.timeIntervalSince(smartReadAt) < Self.smartInterval { return }
+        smart = SMARTReader.readInternal()
+        smartReadAt = now
+    }
+
+    private func resetSessionTotals() {
+        Self.workQueue.async { [weak self] in
+            self?.networkDownloaded.reset()
+            self?.networkUploaded.reset()
+        }
+    }
+
     private func discardBaselines() {
         Self.workQueue.async { [weak self] in
             self?.previousCPU = nil

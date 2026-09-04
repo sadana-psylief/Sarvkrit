@@ -16,6 +16,9 @@ struct SystemSnapshot: Equatable {
 }
 
 struct CPUSample: Equatable {
+    /// Degrees Celsius, or `nil` where no sensor answered — an Intel Mac, which reports through
+    /// the SMC rather than the HID sensor path, or a build macOS declined to hand sensors to.
+    var celsius: Double?
     /// 0…100 across all cores, from the tick delta between two samples — and therefore `nil` on
     /// the very first sample, which has nothing to diff against. Reporting 0% there would claim an
     /// idle Mac rather than admitting to having no reading yet.
@@ -26,11 +29,16 @@ struct CPUSample: Equatable {
 
 struct GPUSample: Equatable {
     var usage: Double
+    /// Degrees Celsius. See `CPUSample.celsius` for when this is absent.
+    var celsius: Double?
 }
 
 struct MemorySample: Equatable {
     /// What macOS calls "Memory Used": app memory plus wired plus compressed.
     var used: UInt64
+    /// How hard the kernel is working to find memory, which is the more useful question than how
+    /// much is in use. `nil` when the kernel reports a level this build doesn't recognise.
+    var pressure: MemoryPressure?
     var total: UInt64
     var swapUsed: UInt64?
 
@@ -41,6 +49,12 @@ struct MemorySample: Equatable {
 }
 
 struct DiskSample: Equatable {
+    /// Every mounted volume worth showing. The `used`/`total` below stay as they were — the boot
+    /// volume — because that is what the menu bar readout and the sparkline plot.
+    var volumes: [MountedVolume] = []
+    /// The internal drive's own health. One reading for the machine, not one per volume: SMART
+    /// belongs to a physical device. See `SMARTReader`.
+    var smart: SMARTReader.Reading?
     var used: UInt64
     var total: UInt64
     var readPerSecond: Double?
@@ -55,6 +69,10 @@ struct DiskSample: Equatable {
 struct NetworkSample: Equatable {
     var downloadPerSecond: Double?
     var uploadPerSecond: Double?
+    /// Bytes since the monitor was switched on — see `SessionTotals` for what "session" means and
+    /// why it is not the uptime of the Mac.
+    var sessionDownloaded: UInt64 = 0
+    var sessionUploaded: UInt64 = 0
 }
 
 struct BatterySample: Equatable {
@@ -64,6 +82,12 @@ struct BatterySample: Equatable {
     var isPresent: Bool
     var minutesRemaining: Int?
     var cycleCount: Int?
+    /// How much of its design capacity the battery still holds — System Settings' "Maximum
+    /// Capacity". Absent on a desktop, and on any Mac whose registry omits the capacity keys.
+    var healthPercent: Double?
+    /// Degrees Celsius, from the battery's own public registry entry rather than the private
+    /// sensor path the CPU and GPU temperatures need.
+    var celsius: Double?
 }
 
 struct PowerSample: Equatable {

@@ -15,6 +15,9 @@ struct MetricSparkline: View {
     /// The y-axis maximum. Percentages pass 100 so the line means the same thing at every glance;
     /// rates have no natural ceiling and pass their own peak.
     let ceiling: Double
+    /// Matches the meter above it, so a panel showing three readings at once says which line
+    /// belongs to which number without a legend.
+    var tint: Color = .accentColor
 
     /// One sample, tagged with which unbroken run of readings it belongs to.
     private struct Point: Identifiable {
@@ -56,14 +59,14 @@ struct MetricSparkline: View {
                 y: .value("Value", point.value),
                 series: .value("Run", point.run)
             )
-            .foregroundStyle(Color.accentColor.opacity(0.22))
+            .foregroundStyle(tint.opacity(0.22))
 
             LineMark(
                 x: .value("Sample", point.id),
                 y: .value("Value", point.value),
                 series: .value("Run", point.run)
             )
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(tint)
         }
         .chartXAxis(.hidden)
         .chartYAxis(.hidden)
@@ -72,7 +75,11 @@ struct MetricSparkline: View {
         .chartXScale(domain: 0...Double(max(1, window.capacity - 1)))
         // The floor is what keeps an all-gap or all-zero window from producing a 0...0 domain.
         .chartYScale(domain: 0...max(1, ceiling))
-        .frame(width: 110, height: 24)
+        // Full width, not the 110pt it was: in the window's pane this sits beside its number in a
+        // row, but on a panel it spans the card under the row it belongs to, which is the only way
+        // two minutes of history is legible at this height.
+        .frame(maxWidth: .infinity)
+        .frame(height: 28)
         // The number beside it already says everything this conveys.
         .accessibilityHidden(true)
     }

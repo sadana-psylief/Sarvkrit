@@ -24,6 +24,33 @@ enum Theme {
         static let card: CGFloat = 10
         static let module: CGFloat = 10
         static let iconTile: CGFloat = 7
+        /// Hover and selection fills behind something smaller than a card — a menu row, a tab.
+        static let control: CGFloat = 6
+        /// Anything fully rounded: status pills, meter bars. Large rather than computed, because
+        /// `RoundedRectangle` clamps to half the smaller side and a capsule is what that gives.
+        static let pill: CGFloat = 999
+    }
+
+    /// The type scale.
+    ///
+    /// These are not new sizes — they are the seven the app had already settled on across some
+    /// fifty call sites, given names so a panel row and a settings row agree by construction
+    /// rather than by coincidence. Weights stay at the call site: the same size is regular in a
+    /// caption and semibold in a header, and folding that in would need a token per pairing.
+    enum Typography {
+        /// Tracked uppercase section labels — `SectionHeader`.
+        static let section: CGFloat = 10
+        /// Secondary text under a title, and anything tertiary.
+        static let caption: CGFloat = 11
+        /// The default for a row's own text.
+        static let body: CGFloat = 12
+        /// A row title, and the app name in the panel header.
+        static let title: CGFloat = 13
+        /// A live number sitting beside a meter. Large enough to read at a glance from the menu
+        /// bar, small enough that a row stays one line.
+        static let metric: CGFloat = 15
+        /// A tile's headline number — a temperature, a wattage.
+        static let stat: CGFloat = 20
     }
 
     /// The row grid. Alignment in the dropdown is structural, not maintained: every toggle row is
@@ -35,24 +62,39 @@ enum Theme {
         static let iconColumn: CGFloat = 26
         static let switchColumn: CGFloat = 40
         static let rowInset: CGFloat = 12
-        static let tabHeight: CGFloat = 44
         static let tabIcon: CGFloat = 15
         static let tabRadius: CGFloat = 8
         /// Separators start after the icon column, the way grouped lists inset them.
         static let separatorInset: CGFloat = rowInset + iconColumn + Space.md
+
+        /// An icon-only tab. Square, because there is no longer a label to set the width, and 34
+        /// so the 15pt glyph keeps a comfortable margin without the strip dominating the panel.
+        static let tabSquare: CGFloat = 34
+        /// A row inside a panel card: taller than a menu row because it carries a meter or a
+        /// slider, shorter than a toggle row because it has no caption line to reserve.
+        static let panelRowHeight: CGFloat = 34
+        /// The track of a `MeterBar`. Thin enough to read as a measure rather than a control —
+        /// nothing here is draggable.
+        static let meterHeight: CGFloat = 6
     }
 
     enum Size {
-        /// Sized so the tabs stay legible, and re-measured every time one is added.
+        /// The panel's width, and no longer a function of the tab count.
         ///
-        /// 320 held six tabs at 42.7pt, narrow enough that "Clipboard" shrank to fit — which is why
-        /// it went to 360 (49.3pt each). A seventh tab for Sound would have put it back to 41.1pt,
-        /// *worse* than the state that prompted the first widening, so it went to 420: seven tabs at
-        /// 49.7pt, holding the size that was already known to work.
+        /// It used to be. Tabs carried a label, so each new one squeezed every other, and this
+        /// constant grew 320 → 360 → 420 → 480 chasing a legible width for the longest word. Tabs
+        /// are icons now: they are a fixed 34pt square each, and nine of them occupy 330pt of any
+        /// width at all. So this is chosen for the *content* instead — 420 is what a two-column
+        /// `SplitStat` and a 110pt app name beside a slider both want, and adding a tenth panel
+        /// will not change it.
+        static let dropdownWidth: CGFloat = 420
+        /// How tall a panel's content may grow before it scrolls inside itself.
         ///
-        /// An eighth tab for Capture at 420 gives 42.5pt — back under the 42.7pt that started all
-        /// this — so it goes to 480: eight tabs at 50.0pt, still the size that works.
-        static let dropdownWidth: CGFloat = 480
+        /// The Features panel lists every feature in the app — eighteen rows and seven headers,
+        /// well over a thousand points — and the menu bar panel is anchored under the icon, so a
+        /// panel taller than the screen has nowhere to go. Everything else stays well under this
+        /// and never sees a scroller.
+        static let panelMaxContentHeight: CGFloat = 420
         static let iconTile: CGFloat = 28
         static let windowMin = CGSize(width: 680, height: 440)
         static let windowDefault = CGSize(width: 720, height: 480)

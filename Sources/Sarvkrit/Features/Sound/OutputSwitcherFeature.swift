@@ -112,9 +112,20 @@ final class OutputSwitcherFeature: Feature, ObservableObject {
         AnyView(SoundDetailView(feature: self))
     }
 
+    /// Contributes to the shared Sound panel rather than owning one.
+    ///
+    /// Picking an output device and setting an app's volume are one screen to anyone using them;
+    /// two tabs would be an implementation detail — that Sarvkrit models them as separate features
+    /// — leaking into the menu. `TrayPanel.merged(_:)` collapses both declarations into one tab.
+    ///
+    /// Only this and the mixer contribute. The other Sound features — the microphone mute, the
+    /// music blocker, the privacy guard — have nothing to operate from here and so declare no
+    /// panel at all.
     @MainActor
-    func makeTrayView() -> AnyView? {
-        AnyView(AudioDeviceTrayView(feature: self))
+    func trayPanels() -> [TrayPanel] {
+        [TrayPanel(id: "sound", title: "Sound", symbolName: "slider.horizontal.3") {
+            AudioDeviceTrayView(feature: self)
+        }]
     }
 
     // MARK: - Switching

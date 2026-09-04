@@ -67,7 +67,9 @@ enum PowerSourceReader {
             // -1 means "still working it out" and 0 means "no estimate"; MetricFormatting renders
             // both as a placeholder rather than as a clock.
             minutesRemaining: minutes,
-            cycleCount: registry?.cycleCount
+            cycleCount: registry?.cycleCount,
+            healthPercent: registry?.healthPercent,
+            celsius: registry?.celsius
         )
     }
 
@@ -95,6 +97,8 @@ enum PowerSourceReader {
         var milliamps: Int
         var millivolts: Int
         var cycleCount: Int?
+        var healthPercent: Double?
+        var celsius: Double?
     }
 
     private static func readBatteryRegistry() -> BatteryRegistry? {
@@ -110,7 +114,19 @@ enum PowerSourceReader {
         return BatteryRegistry(
             milliamps: BatteryMath.milliamps(rawAmperage: rawAmperage),
             millivolts: millivolts,
-            cycleCount: (properties["CycleCount"] as? NSNumber)?.intValue
+            cycleCount: (properties["CycleCount"] as? NSNumber)?.intValue,
+            // `NominalChargeCapacity`, not `MaxCapacity`: see `BatteryMath.healthPercent`, where
+            // the difference is the whole point. `AppleRawMaxCapacity` is the older key and reads
+            // a little lower; it is the fallback rather than the first choice so that Sarvkrit and
+            // System Settings agree on a number the user can check.
+            healthPercent: BatteryMath.healthPercent(
+                nominalCapacity: (properties["NominalChargeCapacity"] as? NSNumber)?.intValue
+                    ?? (properties["AppleRawMaxCapacity"] as? NSNumber)?.intValue,
+                designCapacity: (properties["DesignCapacity"] as? NSNumber)?.intValue),
+            // Public, documented and already here, which is why the battery's temperature does not
+            // go through the private sensor path the other two do.
+            celsius: BatteryMath.celsius(
+                rawTemperature: (properties["Temperature"] as? NSNumber)?.intValue)
         )
     }
 

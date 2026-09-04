@@ -112,6 +112,17 @@ final class KeepAwakeFeature: Feature, ObservableObject {
         AnyView(KeepAwakeDetailView(feature: self))
     }
 
+    /// The one panel that stays on the strip while its feature is off — see
+    /// `Feature.panelIsItsOwnSwitch`, which explains why.
+    var panelIsItsOwnSwitch: Bool { true }
+
+    @MainActor
+    func trayPanels() -> [TrayPanel] {
+        [TrayPanel(id: "keep-awake", title: "Keep Awake", symbolName: "moon.zzz") {
+            KeepAwakeTrayView(feature: self)
+        }]
+    }
+
     // MARK: - The system flag
 
     private func applyLidClosed() {

@@ -2,12 +2,16 @@
 
 The things macOS does differently than you'd expect — fixed. A menu bar app.
 
-Sixteen features, each an independent toggle you can turn on or off at any time. Nothing runs unless
-you switch it on, and turning something off stops it immediately.
+Nineteen features, each an independent toggle you can turn on or off at any time. Nothing runs
+unless you switch it on, and turning something off stops it immediately.
 
 ```
-Keyboard  ·  Clipboard  ·  Windows  ·  Files  ·  Sound  ·  System
+Keyboard  ·  Clipboard  ·  Windows  ·  Capture  ·  Files  ·  Sound  ·  System
 ```
+
+Click the menu bar icon and you get a panel per thing worth looking at — what the machine is doing,
+the network, the disks, where the power is going, the volume of each app, the brightness of each
+screen — rather than a list of switches. The switches are all still there, on their own tab.
 
 ---
 
@@ -225,6 +229,56 @@ screen* — overlays, pinned shots, the capture bar, whatever state any of it is
 with the system rather than by watching the keyboard, so it keeps working even if you revoke
 Sarvkrit's other permissions.
 
+### 🔊 Sound
+
+#### Volume Mixer
+
+A separate volume for each app. Slide one down without touching anything else, or **push a quiet one
+past 100%** when a video was mastered too low — up to 200%, shown with a ⚡ so it's clear Sarvkrit is
+adding gain that wasn't in the original.
+
+Boosting is where a mixer usually starts distorting, because multiplying a signal that already peaks
+near full scale produces samples the hardware can't play. Sarvkrit runs the boosted signal through a
+soft limiter, which leaves anything below the threshold **bit-for-bit untouched** — a quiet podcast
+at 200% never reaches it — and bends the loudest peaks over smoothly instead of flattening them.
+
+There's no audio driver and no installer. It works by tapping the app's audio and playing it back at
+the level you chose, which is the only way to do this that doesn't put a plug-in in
+`/Library/Audio/Plug-Ins/HAL/`.
+
+**This needs the System Audio Recording permission**, and macOS refuses it *silently* — every call
+still reports success, and the audio simply goes quiet. Sarvkrit notices that and says so, rather
+than appearing to work.
+
+An app you've never touched plays at exactly the volume it would without this feature.
+
+#### Audio Devices
+
+Pick which device your Mac plays through and listens with, without opening System Settings. **⌃⌥O**
+steps to the next output, which beats a list when you're just moving between speakers and headphones.
+Name a preferred device and Sarvkrit switches to it whenever it's connected.
+
+#### Mute Microphone
+
+Silences the microphone from the menu bar, whichever app is using it.
+
+#### Privacy Guard
+
+Holds the microphone muted and tells you the moment the camera comes on. The lock puts the mute back
+if anything turns it off — an app, System Settings, you by accident — and can mute at login and
+whenever the Mac sleeps or locks.
+
+**Sarvkrit can't switch the camera off.** macOS provides no way for any app to do that, and anything
+claiming otherwise is either using a private trick or just showing you a warning. This shows you the
+warning, the instant the camera starts. Checking is a question *about* the device — Sarvkrit never
+opens the camera itself.
+
+#### Music Blocker
+
+Stops the Music app barging in when you connect headphones. You can still open it yourself.
+
+---
+
 ### ⚙️ System
 
 #### Keep Awake
@@ -261,14 +315,54 @@ Shows what your Mac is actually doing — **CPU**, **GPU**, **Power**, **Battery
 - **Two minutes of history** is kept to draw the graphs. It lives in memory only, is never written
   to disk, and is discarded the moment you switch the monitor off.
 
-Everything comes from public system APIs, so nothing here asks for a password or a permission.
-That is also why **Power** means where your energy is going — battery charge or discharge in watts,
-and the adapter's rating when one is plugged in — rather than per-chip wattage, which needs either
-undocumented SMC keys or a root process running continuously.
+It shows a little more than the seven headline numbers:
 
-Readings the Mac genuinely can't give are shown as **—**, never as zero. A desktop has no battery;
-a rate needs two samples, so it has nothing to report for the first couple of seconds after you
-switch it on or wake the Mac up.
+- **Temperatures** for the CPU, the GPU and the battery.
+- **Memory pressure**, not just memory used. A Mac at 90% used with normal pressure is doing exactly
+  what it should — macOS fills spare RAM with cache and hands it back on demand — and the percentage
+  on its own alarms people about precisely that case.
+- **Battery health** and cycle count. This is the number System Settings calls Maximum Capacity, and
+  it is worked out the same way, so the two agree.
+- **Uptime**, and **how much the network has moved** since you switched the monitor on.
+- **Every mounted volume**, with how full it is, its **SMART** status, and an **Eject** button for
+  the ones that can be. Machinery volumes — Preboot, VM, the read-only system snapshot, mounted disk
+  images — are left out, on the same test Finder uses to decide what goes in its sidebar.
+
+**One reading uses a private API, and it is the temperatures.** macOS publishes no way to read them,
+so this goes through the same undocumented sensor interface every Mac temperature tool uses. It is
+worth being exact about what that costs: it is *unprivileged* — no root, no password, no permission
+prompt, and nothing leaves your Mac — and the symbols are looked up at runtime, so a macOS release
+that removes them makes the temperatures read **—** rather than stopping Sarvkrit from launching.
+Everything else here is public API. Temperatures are Apple Silicon only; Intel Macs report through
+the SMC instead and show **—**.
+
+**Power** still means where your energy is going — battery charge or discharge in watts, and the
+adapter's rating when one is plugged in — rather than per-chip wattage. That one genuinely does need
+a root process running continuously, which is a different bargain from an unprivileged read.
+
+Readings the Mac genuinely can't give are shown as **—**, never as zero. A desktop has no battery; a
+rate needs two samples, so it has nothing to report for the first couple of seconds after you switch
+it on or wake the Mac up; and a Mac with no GPU temperature sensor shows a dash for it rather than
+borrowing the CPU's.
+
+#### Displays
+
+Sets the brightness of every connected screen from the menu, including externals, which the
+brightness keys don't reach.
+
+How far it can go depends on the screen. The built-in panel and some Apple externals have a backlight
+macOS can set directly, and the slider moves the real thing. Everything else falls back to **dimming
+the picture** Sarvkrit sends, which works on any display but can only make it darker than the setting
+on the monitor's own controls — the panel says so, on the displays where that's what's happening,
+rather than offering a slider whose top half does nothing.
+
+Dimming that way changes a setting that outlives the app, so it is undone when you switch the feature
+off, when Sarvkrit quits, **and at the next launch if Sarvkrit was killed while a screen was dim**.
+A screen left dark with nothing on it to explain why is the one failure worth engineering against.
+
+Setting brightness needs no permission of any kind. Reading and setting the backlight uses a private
+but unprivileged framework, resolved at runtime, for the same reasons as the temperatures above; the
+dimming fallback is public API.
 
 ---
 
@@ -347,12 +441,23 @@ to an app that's already running**: after you allow it, Sarvkrit has to be resta
 capture anything, and it offers to do that rather than leaving you with black rectangles. Pin to
 Screen needs nothing at all — floating an image you already have asks nothing of the system.
 
+**System Audio Recording** — Volume Mixer only. Setting one app's volume means taking its audio and
+playing it back, and macOS classes taking it as recording. Nothing is written anywhere: the audio
+goes straight back out at the level you chose. **macOS refuses this one silently** — every call still
+reports success and the app simply falls quiet — so Sarvkrit watches for that and tells you, rather
+than looking like it works.
+
 **Folder access** — File Rules asks the first time it reads a folder you've pointed a rule at. macOS
 prompts for this normally.
 
 **Full Disk Access** — Trash Cleanup only. **macOS never prompts for this one**: you have to add
 Sarvkrit by hand in System Settings → Privacy & Security → Full Disk Access. Sarvkrit tells you when
 it's missing and links you there, rather than silently doing nothing.
+
+**Nothing at all** — Keep Awake, Displays, System Monitor and the audio device switcher ask for no
+permission of any kind. Two of them read through private but *unprivileged* interfaces, which is
+described where each one is: see [System Monitor](#system-monitor) for temperatures and
+[Displays](#displays) for brightness.
 
 Permissions are keyed to the app's location, so a copy in `/Applications` and a copy elsewhere are
 two separate grants.
