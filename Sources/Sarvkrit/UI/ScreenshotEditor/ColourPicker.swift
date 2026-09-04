@@ -11,15 +11,15 @@ enum AnnotationPalette {
     /// Order matters: it is the order they appear, and 1–6 select the first six by keyboard.
     static let colours: [RGBAColour] = [
         .red, .orange, .yellow, .green, .blue, .purple,
-        RGBAColour(r: 1, g: 0.18, b: 0.51),          // pink
-        RGBAColour(r: 0.20, g: 0.78, b: 0.75),       // teal
-        RGBAColour(r: 0.55, g: 0.35, b: 0.20),       // brown
+        RGBAColour(hex: "E93D82"),                   // rose
+        RGBAColour(hex: "0D9298"),                   // cyan
+        RGBAColour(hex: "A5713F"),                   // clay
         .white,
         .black,
     ]
 
-    static let names = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple",
-                        "Pink", "Teal", "Brown", "White", "Black"]
+    static let names = ["Crimson", "Ember", "Amber", "Jade", "Azure", "Violet",
+                        "Rose", "Cyan", "Clay", "White", "Black"]
 
     static func name(at index: Int) -> String {
         index < names.count ? names[index] : "Colour \(index + 1)"

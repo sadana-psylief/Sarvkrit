@@ -24,7 +24,7 @@ final class CaptureChromeSnapshotTests: XCTestCase {
     }
 
     private func write(_ rep: NSBitmapImageRep, named name: String) throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"]
+        guard let directory = PreviewDirectory.path
         else { return }
         try XCTUnwrap(rep.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))

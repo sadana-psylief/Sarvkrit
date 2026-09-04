@@ -26,10 +26,7 @@ final class MarkupPreviewTests: XCTestCase {
     }
 
     private func write(_ image: CGImage, _ name: String) throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"]
-        else { return }
-        try FileManager.default.createDirectory(atPath: directory,
-                                                withIntermediateDirectories: true)
+        guard let directory = PreviewDirectory.path else { return }
         let rep = NSBitmapImageRep(cgImage: image)
         let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
         try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))

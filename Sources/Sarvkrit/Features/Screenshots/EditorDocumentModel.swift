@@ -170,10 +170,13 @@ final class EditorDocumentModel: ObservableObject {
                 self.textPreset.apply(to: &value, accent: colour)
                 document.elements[index].kind = .text(value)
             case .highlighter(var value):
-                value.colour = colour
+                // Tinted, for the same reason the canvas tints it when creating one — see
+                // `RGBAColour.asMarker`.
+                value.colour = colour.asMarker
                 document.elements[index].kind = .highlighter(value)
             case .counter(var value):
                 value.fill = colour
+                value.textColour = colour.readableForeground
                 document.elements[index].kind = .counter(value)
             default:
                 break

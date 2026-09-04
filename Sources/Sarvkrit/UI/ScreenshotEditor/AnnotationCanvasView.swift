@@ -124,15 +124,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             context.clip()
         }
         context.translateBy(x: composition.imageRect.minX, y: composition.imageRect.minY)
-        // Under the marks, not over them: the halo has to peek out around the arrow's silhouette
-        // the way a glow does, rather than wash a translucent blue across the arrow's own colour.
+        AnnotationRenderer.draw(shown, base: model.base, in: context,
+                                filterCache: model.filterCache, quality: .interactive)
         if let selection = model.selection,
            let element = model.document.elements.first(where: { $0.id == selection }),
            case .arrow(let arrow) = element.kind {
             drawArrowHalo(arrow, in: context)
         }
-        AnnotationRenderer.draw(shown, base: model.base, in: context,
-                                filterCache: model.filterCache, quality: .interactive)
         context.restoreGState()
         context.restoreGState()
 
@@ -148,12 +146,17 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     /// nothing at all saying it was selected except three small handles. This traces the actual
     /// silhouette instead, head included.
     ///
-    /// Drawn by stroking the *fill* path: a centred stroke puts half the width outside the
-    /// silhouette and half inside, and the arrow then paints over the inside half. So the visible
-    /// glow is half the line width, and the line width is in image pixels — hence the division by
-    /// zoom, which keeps the glow a constant size on screen however far the canvas is zoomed.
+    /// Drawn by stroking the arrow's own outline with the arrow's interior clipped away.
+    ///
+    /// A centred stroke puts half its width outside the silhouette and half inside; clipping the
+    /// inside out leaves exactly the outer half, which is the glow. Painted *after* the marks
+    /// rather than before them, because `AnnotationRenderer.draw` lays the screenshot down first
+    /// and a halo drawn ahead of it is simply covered up — which is what the first version did.
+    ///
+    /// Line width is in image pixels, hence the division by zoom: the glow should be the same
+    /// size on screen at 50% as at 400%, the way a focus ring is.
     private func drawArrowHalo(_ arrow: ArrowElement, in context: CGContext) {
-        let glow: CGFloat = 5                       // view points, each side
+        let glow: CGFloat = 4                       // view points, outside the silhouette
         let path: CGPath
         switch ArrowGeometry.shape(from: arrow.start, to: arrow.end,
                                    curvature: arrow.curvature,
@@ -165,8 +168,16 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             path = stroked.copy(strokingWithWidth: lineWidth, lineCap: .round,
                                 lineJoin: .round, miterLimit: 10)
         }
+
         context.saveGState()
-        context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.45).cgColor)
+        let outside = CGMutablePath()
+        outside.addRect(CGRect(origin: .zero, size: model.document.imageSize)
+            .insetBy(dx: -1000, dy: -1000))
+        outside.addPath(path)
+        context.addPath(outside)
+        context.clip(using: .evenOdd)
+
+        context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.5).cgColor)
         context.setLineWidth(glow * 2 / max(transform.zoom, 0.01))
         context.setLineJoin(.round)
         context.setLineCap(.round)
@@ -266,9 +277,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         }
         if model.tool == .counter {
             model.edit {
+                // The number has to be readable on whatever fill was picked. `textColour` used to
+                // be left at its `.white` default and never recomputed, so white-on-amber was a
+                // counter you could not read.
                 $0.add(.counter(CounterElement(centre: point,
                                                radius: 22 * max($0.scale, 1),
-                                               fill: model.colour)))
+                                               fill: model.colour,
+                                               textColour: model.colour.readableForeground)))
             }
             delegate?.canvasDidEdit(self)
             return
@@ -345,7 +360,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .ellipse:
             draft = .ellipse(ShapeElement(rect: rect, stroke: stroke))
         case .highlighter:
-            draft = .highlighter(HighlightElement(rect: rect, colour: model.colour))
+            draft = .highlighter(HighlightElement(rect: rect, colour: model.colour.asMarker))
         case .spotlight:
             draft = .spotlight(SpotlightElement(rect: rect))
         case .blur:

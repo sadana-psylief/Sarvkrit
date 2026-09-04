@@ -91,7 +91,7 @@ final class MeshRendererTests: XCTestCase {
 final class MeshCatalogueSheetTests: XCTestCase {
 
     func testWriteTheCatalogueSheet() throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"] else {
+        guard let directory = PreviewDirectory.path else {
             throw XCTSkip("set SARVKRIT_PREVIEW_DIR to write the sheet")
         }
         let tile = 150, gap = 10, columns = 5
@@ -334,7 +334,7 @@ final class ExportBandingTests: XCTestCase {
 final class BackgroundInspectorTests: XCTestCase {
 
     func testWriteTheInspector() throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"] else {
+        guard let directory = PreviewDirectory.path else {
             throw XCTSkip("set SARVKRIT_PREVIEW_DIR to write the preview")
         }
         let base = MeshRenderer.image(BackgroundCatalogue.entries[0].mesh, width: 400, height: 300)!

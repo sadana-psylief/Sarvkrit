@@ -27,17 +27,26 @@ struct RGBAColour: Codable, Equatable, Hashable {
     var b: Double
     var a: Double = 1
 
-    static let red = RGBAColour(r: 1, g: 0.23, b: 0.19)
-    static let orange = RGBAColour(r: 1, g: 0.58, b: 0)
-    static let yellow = RGBAColour(r: 1, g: 0.8, b: 0)
-    static let green = RGBAColour(r: 0.2, g: 0.78, b: 0.35)
-    static let blue = RGBAColour(r: 0, g: 0.48, b: 1)
-    static let purple = RGBAColour(r: 0.69, g: 0.32, b: 0.87)
+    // The six named marks. These were the iOS system colours — `systemRed`, `systemOrange` and so
+    // on — which are tuned to sit *in* an Apple interface, and read as raw next to a screenshot
+    // of somebody else's. These are a flat, designed set at roughly the Radix/Tailwind 500-600
+    // weight: enough saturation dropped to look considered, not so much that the mark stops
+    // carrying on a white screenshot, which is what most screenshots are.
+    //
+    // **Not pastels.** A pastel arrow on a white dashboard is decoration you have to hunt for.
+    // The reference these are judged against draws its own arrow in a vivid crimson.
+    //
+    // The property names stay `red`, `orange`, … rather than becoming `crimson`, `ember`, …:
+    // `StrokeStyle`, `CounterElement`, `TextElement`, `HighlightElement`, `TextPreset` and
+    // `RuleStore` all name them, and renaming would bury this change in an unrelated diff.
+    static let red = RGBAColour(hex: "E5484D")          // crimson
+    static let orange = RGBAColour(hex: "F76B15")       // ember
+    static let yellow = RGBAColour(hex: "FFC53D")       // amber
+    static let green = RGBAColour(hex: "30A46C")        // jade
+    static let blue = RGBAColour(hex: "0B7FE0")         // azure
+    static let purple = RGBAColour(hex: "8E4EC6")       // violet
     static let white = RGBAColour(r: 1, g: 1, b: 1)
     static let black = RGBAColour(r: 0, g: 0, b: 0)
-
-    /// The 1–6 palette.
-    static let palette: [RGBAColour] = [.red, .orange, .yellow, .green, .blue, .purple]
 }
 
 struct StrokeStyle: Codable, Equatable {
@@ -158,9 +167,24 @@ struct TextElement: Codable, Equatable {
     var resolvedFont: NSFont { typeface.font(ofSize: fontSize, customName: fontName) }
 }
 
+extension RGBAColour {
+    /// This colour as a marker.
+    ///
+    /// The highlighter fills with `.multiply`, so whatever it is given is multiplied into the
+    /// text underneath — and a mark colour chosen to stand out *on* a screenshot is far too dark
+    /// to read *through*. Amber under multiply turns body text muddy.
+    ///
+    /// Tinting at the point of use rather than giving the highlighter a paler default, because a
+    /// default only covers the default: the picker hands it whatever the user chose, and one tap
+    /// on amber puts the dark multiply straight back.
+    var asMarker: RGBAColour {
+        RGBAColour(r: r + (1 - r) * 0.55, g: g + (1 - g) * 0.55, b: b + (1 - b) * 0.55, a: a)
+    }
+}
+
 struct HighlightElement: Codable, Equatable {
     var rect: CGRect
-    var colour: RGBAColour = .yellow
+    var colour: RGBAColour = RGBAColour.yellow.asMarker
     /// True when the bar was snapped to a Vision-detected line, so the inspector can offer to
     /// unsnap and a re-layout can re-snap.
     var snappedToText: Bool = false

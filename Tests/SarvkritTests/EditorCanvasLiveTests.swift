@@ -43,7 +43,7 @@ final class EditorCanvasLiveTests: XCTestCase {
     }
 
     private func write(_ rep: NSBitmapImageRep, named name: String) throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"]
+        guard let directory = PreviewDirectory.path
         else { return }
         let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
         try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
