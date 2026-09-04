@@ -149,8 +149,14 @@ final class TrayPanelRenderTests: XCTestCase {
         let restore = AppState.shared.selectedTrayTabID
         defer { AppState.shared.selectedTrayTabID = restore }
 
-        for id in ["keep-awake", "sound", "system", "network", "disks", "power",
-                   TrayPanel.featuresID, TrayPanel.generalID] {
+        // Only ids that are actually on the strip in this test host. Sweeping over the monitor's
+        // four while the monitor is switched off rendered Sound four times over and asserted it had
+        // pixels — a test that photographs the wrong panel and passes. The monitor's own panels are
+        // covered against real readings in `testTheMonitorPanelsRenderAgainstRealReadings`.
+        let available = Set(AppState.shared.contributedTrayPanels.map(\.id))
+        for id in (["keep-awake", "sound", "system", "network", "disks", "power"]
+                    .filter(available.contains)
+                   + [TrayPanel.featuresID, TrayPanel.generalID]) {
             AppState.shared.selectedTrayTabID = id
             for scheme in [ColorScheme.light, .dark] {
                 let rep = try snapshot(MenuBarView(keepAwakeFeature: keepAwake),

@@ -40,13 +40,18 @@ final class DisplaysFeature: Feature, ObservableObject {
     @Published private(set) var levels: [CGDirectDisplayID: Float] = [:]
 
     private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Displays")
-    private let control = BrightnessControl()
+    private let control: BrightnessControl
     private var reconfigurationObserver: NSObjectProtocol?
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        control = BrightnessControl(defaults: defaults)
         // Before anything else, and whether or not the feature is switched on: this clears a gamma
         // table left behind by a crash, and only this app knows to look. A user whose screen came
         // back dim after a crash would have no way to connect it to Sarvkrit.
+        //
+        // It is a no-op unless Sarvkrit is what dimmed something — see `BrightnessControl.hasDimmed`
+        // for why that gate is the difference between fixing our own mess and wiping everyone
+        // else's display calibration on every launch.
         control.restoreGamma()
     }
 
@@ -87,7 +92,13 @@ final class DisplaysFeature: Feature, ObservableObject {
 
     func setBrightness(_ value: Float, for display: ConnectedDisplay) {
         control.setBrightness(value, for: display)
-        MainActor.assumeIsolated { levels[display.id] = value }
+        // Reported back at the floor the gamma channel actually applies, not at what was asked for.
+        // Dragging to 0 on a dimmed display leaves the screen at 15%, and a label reading "0%" over
+        // a visibly lit screen is the panel lying about what it did.
+        let applied = control.channel(for: display) == .gamma
+            ? max(BrightnessControl.minimumGamma, value)
+            : value
+        MainActor.assumeIsolated { levels[display.id] = applied }
     }
 
     /// Displays come and go, and a stale list means a slider driving a display that is no longer

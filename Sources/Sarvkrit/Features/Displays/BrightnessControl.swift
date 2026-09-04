@@ -39,9 +39,34 @@ final class BrightnessControl {
     ///
     /// **A gamma table outlives the process that set it.** If Sarvkrit is killed while a display is
     /// dimmed, that display stays dimmed with nothing on screen to explain why — the same class of
-    /// problem as leaving a Mac unable to sleep, and handled the same way: restored on deactivate,
-    /// and again at launch to clear anything a previous crash left behind.
+    /// problem as leaving a Mac unable to sleep, and handled the same way.
     private var gammaFactors: [CGDirectDisplayID: Float] = [:]
+
+    /// Whether *Sarvkrit* currently has a display dimmed, persisted so the answer survives a crash.
+    ///
+    /// This is load-bearing, and getting it wrong is worse than the problem it solves.
+    /// `CGDisplayRestoreColorSyncSettings()` does not undo "our" gamma — it resets the transfer
+    /// function to the ColorSync profile's, discarding whatever *anything* had loaded. Calling it
+    /// unconditionally at launch would mean Sarvkrit starting up wipes the display state of every
+    /// calibration tool and every f.lux-style app on the Mac, for users who have never switched
+    /// Displays on at all.
+    ///
+    /// So the restore is gated on this marker, exactly the way `SleepDisableFlag` only puts back a
+    /// setting it can prove it was the one to change.
+    private let defaults: UserDefaults
+    private static let dimmedKey = "displays.gammaDimmed"
+
+    private var hasDimmed: Bool {
+        get { defaults.bool(forKey: Self.dimmedKey) }
+        set {
+            guard defaults.bool(forKey: Self.dimmedKey) != newValue else { return }
+            defaults.set(newValue, forKey: Self.dimmedKey)
+        }
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     private var channels: [CGDirectDisplayID: BrightnessChannel] = [:]
 
@@ -107,25 +132,32 @@ final class BrightnessControl {
     /// Scales the whole transfer function. `CGSetDisplayTransferByFormula` is public API.
     private func applyGamma(_ factor: Float, to id: CGDirectDisplayID) {
         // Never fully black: a display at 0 with no way to see the slider that got it there is a
-        // trap, and the user's next move would have to be blind.
-        let scale = max(0.15, factor)
+        // trap, and the user's next move would have to be blind. `DisplaysFeature` clamps the value
+        // it reports to the same floor, so the label and the picture agree.
+        let scale = max(Self.minimumGamma, factor)
         gammaFactors[id] = factor
+        // Written *before* the table is set, so a crash between the two lines still leaves the
+        // marker that gets it cleaned up.
+        hasDimmed = true
         CGSetDisplayTransferByFormula(id,
                                       0, scale, 1,
                                       0, scale, 1,
                                       0, scale, 1)
     }
 
-    /// Puts every display's gamma back, and forgets that it dimmed anything.
+    /// The lowest the gamma fallback will go. See `applyGamma`.
+    static let minimumGamma: Float = 0.15
+
+    /// Puts every display's gamma back — but only if Sarvkrit is what dimmed it.
     ///
-    /// Called on `deactivate()` **and** at launch. The launch call is the one that matters: it is
-    /// what clears a table left behind by a crash, which nothing else would ever undo.
+    /// Called on `deactivate()` and at launch. The launch call is the one that matters: it clears a
+    /// table left behind by a crash, which nothing else would ever undo. It is also the one that
+    /// must not fire otherwise, because the call resets far more than Sarvkrit set — see
+    /// `hasDimmed`.
     func restoreGamma() {
-        guard !gammaFactors.isEmpty else {
-            CGDisplayRestoreColorSyncSettings()
-            return
-        }
+        guard hasDimmed || !gammaFactors.isEmpty else { return }
         gammaFactors.removeAll()
+        hasDimmed = false
         CGDisplayRestoreColorSyncSettings()
     }
 }

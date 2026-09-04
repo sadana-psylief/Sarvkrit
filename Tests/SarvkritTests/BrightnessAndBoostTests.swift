@@ -75,9 +75,42 @@ final class BrightnessAndBoostTests: XCTestCase {
 
     func testAQuietSignalIsBoostedLinearly() {
         // A quiet podcast at 200% never reaches the knee, so it must come through as plain
-        // multiplication rather than shaped.
-        XCTAssertEqual(SoftClip.apply(0.1, gain: 2), 0.2, accuracy: 1e-6)
-        XCTAssertEqual(SoftClip.apply(-0.15, gain: 2), -0.3, accuracy: 1e-6)
+        // multiplication rather than shaped. Non-integer gains too: the shaper's own 2× make-up
+        // gain is divided back out in `apply`, and a test that only ever used gain 2 would pass
+        // even if that correction were wrong.
+        for (sample, gain) in [(Float(0.1), Float(2)), (-0.15, 2), (0.1, 1.5), (0.2, 1.5),
+                               (-0.08, 1.25), (0.05, 1.9)] {
+            XCTAssertEqual(SoftClip.apply(sample, gain: gain), sample * gain, accuracy: 1e-6,
+                           "sample \(sample) at gain \(gain)")
+        }
+    }
+
+    // MARK: - Gamma is only ever restored when we dimmed something
+
+    func testGammaIsNotRestoredWhenSarvkritDimmedNothing() {
+        // The bug this pins would have shipped: `CGDisplayRestoreColorSyncSettings` resets the
+        // transfer function to the ColorSync profile's, discarding whatever *any* app had loaded.
+        // Called unconditionally at launch it would wipe the display state of every calibration
+        // tool and f.lux-style app on the Mac, for users who never switched Displays on.
+        let defaults = UserDefaults(suiteName: "displays.\(UUID())")!
+        defer { defaults.removePersistentDomain(forName: defaults.description) }
+        XCTAssertFalse(defaults.bool(forKey: "displays.gammaDimmed"),
+                       "a fresh install has dimmed nothing")
+
+        _ = DisplaysFeature(defaults: defaults)
+        XCTAssertFalse(defaults.bool(forKey: "displays.gammaDimmed"))
+    }
+
+    func testTheDimmedMarkerSurvivesToTheNextLaunch() {
+        // A gamma table outlives the process, so the record that we set one has to as well — this
+        // is the crash case, and the only case where restoring is right.
+        let defaults = UserDefaults(suiteName: "displays.\(UUID())")!
+        defer { defaults.removePersistentDomain(forName: defaults.description) }
+
+        defaults.set(true, forKey: "displays.gammaDimmed")
+        _ = DisplaysFeature(defaults: defaults)
+        XCTAssertFalse(defaults.bool(forKey: "displays.gammaDimmed"),
+                       "launching after a crash restores the gamma and clears the marker")
     }
 
     func testTheOutputNeverLeavesTheRepresentableRange() {
