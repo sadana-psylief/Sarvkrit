@@ -71,51 +71,71 @@ struct ScreenshotEditorView: View {
 
     // MARK: - Toolbar
 
+    /// Two rows: what you draw with, then what you draw it in and what you do with it.
+    ///
+    /// **One row could not hold it once the tools were named.** Fourteen labelled tools plus the
+    /// colour well, the style pickers, the thickness slider and the file actions come to well over
+    /// a thousand points, so on any ordinary window most of the palette scrolled out of sight —
+    /// which is the same "I could not find it" this labelling was meant to end. Splitting by what
+    /// the controls are *for* halves the width and reads better than the single strip did.
     private var toolbar: some View {
-        HStack(spacing: 10) {
-            // The tools scroll rather than clip. On a narrow window something has to give, and
-            // losing Undo or Done off the end is far worse than scrolling the palette.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(Array(Self.toolGroups.enumerated()), id: \.offset) { _, group in
-                        HStack(spacing: 2) {
-                            ForEach(group) { tool in toolButton(tool) }
-                        }
-                        .padding(2)
-                        .background(groupBackground)
-                    }
-
-                    Divider().frame(height: 18)
-
-                    ColourWell(model: model)
-
-                    if model.tool == .arrow { arrowStylePicker }
-                    if model.tool == .text { textStylePicker }
-                    if model.tool == .emoji {
-                        EmojiPicker(model: model)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 10) {
+                        ForEach(Array(Self.toolGroups.enumerated()), id: \.offset) { _, group in
+                            HStack(spacing: 2) {
+                                ForEach(group) { tool in toolButton(tool) }
+                            }
                             .padding(2)
                             .background(groupBackground)
-                    }
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "lineweight")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                        Slider(value: $model.strokeWidth, in: 2...36) { editing in
-                            if !editing { model.applyStyleToSelection() }
                         }
-                        .frame(width: 80)
+
                     }
-                    .help("Line thickness")
+                    .padding(.vertical, 1)
                 }
-                .padding(.vertical, 1)
             }
 
-            // Priority on the trailing group: adding the arrow-style picker pushed Undo through
-            // Done straight off the end of a 1180pt window, so the actions you always need were
-            // the first thing to disappear.
-            trailingActions
-                .layoutPriority(2)
+            HStack(spacing: 10) {
+                // Leading on the options row, where it belongs: a background is a property of the
+                // whole picture, not a thing you draw with. It used to be wedged into the *file
+                // actions* between Redo and Copy — so scanning the palette for it failed — with
+                // `square.on.square.badge.person.crop` for a glyph, which is AppKit's
+                // profile-picture symbol and reads as "user photo".
+                backgroundButton
+                    .padding(2)
+                    .background(groupBackground)
+
+                ColourWell(model: model)
+
+                if model.tool == .arrow { arrowStylePicker }
+                if model.tool == .text { textStylePicker }
+                if model.tool == .emoji {
+                    EmojiPicker(model: model)
+                        .padding(2)
+                        .background(groupBackground)
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "lineweight")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Slider(value: $model.strokeWidth, in: 2...36) { editing in
+                        if !editing { model.applyStyleToSelection() }
+                    }
+                    .frame(width: 80)
+                    .accessibilityLabel("Line thickness")
+                }
+                .help("Line thickness")
+
+                Spacer(minLength: 0)
+
+                // Priority on the trailing group: adding the arrow-style picker once pushed Undo
+                // through Done straight off the end of the window, so the actions you always need
+                // were the first thing to disappear.
+                trailingActions
+                    .layoutPriority(2)
+            }
         }
         .buttonStyle(.plain)
         .padding(.horizontal, Theme.Space.md)
@@ -125,6 +145,41 @@ struct ScreenshotEditorView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    /// The background tool, shown as what it makes.
+    ///
+    /// A gradient swatch rather than a symbol: the feature's whole output is a coloured surround,
+    /// so a picture of one says more than any glyph, and it is the only hint in the toolbar that
+    /// twenty presets exist behind the button.
+    private var backgroundButton: some View {
+        Button { showsBackgroundInspector.toggle() } label: {
+            VStack(spacing: 2) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color(red: 0.98, green: 0.36, blue: 0.31),
+                                 Color(red: 0.55, green: 0.20, blue: 0.85)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 14, height: 11)
+                    .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .strokeBorder(.white.opacity(0.5), lineWidth: 0.5))
+                Text("Background")
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .frame(height: 34)
+            .padding(.horizontal, 7)
+            .background(showsBackgroundInspector ? Color.accentColor : .clear,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .foregroundStyle(showsBackgroundInspector ? Color.white
+                                                      : Color(nsColor: .labelColor))
+        }
+        .buttonStyle(.plain)
+        .clickableCursor()
+        .help("Background — padding, shadow and 20 presets")
+        .accessibilityLabel("Background")
+        .accessibilityAddTraits(showsBackgroundInspector ? [.isSelected] : [])
+    }
+
     private var groupBackground: some View {
         RoundedRectangle(cornerRadius: 9, style: .continuous)
             .fill(Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
@@ -132,24 +187,27 @@ struct ScreenshotEditorView: View {
 
     private var trailingActions: some View {
         HStack(spacing: 9) {
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .disabled(!model.canUndo).help("Undo  (⌘Z)")
-            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .disabled(!model.canRedo).help("Redo  (⇧⌘Z)")
-
-            Button { showsBackgroundInspector.toggle() } label: {
-                Image(systemName: "square.on.square.badge.person.crop")
-                    .frame(width: 26, height: 20)
-                    .background(showsBackgroundInspector ? Color.accentColor : .clear,
-                                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .foregroundStyle(showsBackgroundInspector ? Color.white
-                                                              : Color(nsColor: .labelColor))
+            Button { model.undo() } label: {
+                Image(systemName: "arrow.uturn.backward").frame(width: 24, height: 20)
             }
-            .help("Background")
+            .disabled(!model.canUndo).help("Undo  (⌘Z)").accessibilityLabel("Undo")
+            Button { model.redo() } label: {
+                Image(systemName: "arrow.uturn.forward").frame(width: 24, height: 20)
+            }
+            .disabled(!model.canRedo).help("Redo  (⇧⌘Z)").accessibilityLabel("Redo")
 
-            Button(action: onCopy) { Image(systemName: "doc.on.doc") }.help("Copy  (⌘C)")
-            Button(action: onSaveEditable) { Image(systemName: "square.and.pencil") }
-                .help("Save so it stays editable  (⇧⌘S)")
+            // Framed, because a bare glyph's hover target is the glyph's own bounding box —
+            // about 13pt, which is a tooltip most people never manage to trigger.
+            Button(action: onCopy) {
+                Image(systemName: "doc.on.doc").frame(width: 24, height: 20)
+            }
+            .help("Copy  (⌘C)")
+            .accessibilityLabel("Copy")
+            Button(action: onSaveEditable) {
+                Image(systemName: "square.and.pencil").frame(width: 24, height: 20)
+            }
+            .help("Save so it stays editable  (⇧⌘S)")
+            .accessibilityLabel("Save so it stays editable")
             Button("Done", action: onSave)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -157,15 +215,31 @@ struct ScreenshotEditorView: View {
         }
     }
 
+    /// Icon *and* name, which is what the rest of this app does and what the editor was missing.
+    ///
+    /// `AllInOnePickerView` — the capture bar nobody complained about — is icon plus
+    /// `Text(mode.title)` plus a tooltip. This was a near-copy of that cell with the text taken
+    /// out, and fourteen unlabelled glyphs is what "other features in that annotation place is not
+    /// clear" was about. The tooltip was already here; a tooltip is a fallback, not a label.
     private func toolButton(_ tool: ToolKind) -> some View {
         let isActive = model.tool == tool
         return Button { model.tool = tool } label: {
-            Image(systemName: tool.symbolName)
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 26, height: 20)
-                .background(isActive ? Color.accentColor : .clear,
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .foregroundStyle(isActive ? Color.white : Color(nsColor: .labelColor))
+            VStack(spacing: 2) {
+                Image(systemName: tool.symbolName)
+                    .font(.system(size: 12, weight: .medium))
+                Text(tool.title)
+                    .font(.system(size: 9, weight: .medium))
+                    .lineLimit(1)
+                    // Sized to the word, not to a guess. A fixed 46pt truncated "Highlighter" to
+                    // "Highligh…", which is a label that has stopped being one.
+                    .fixedSize()
+            }
+            .frame(minWidth: 46)
+            .frame(height: 34)
+            .padding(.horizontal, 5)
+            .background(isActive ? Color.accentColor : .clear,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .foregroundStyle(isActive ? Color.white : Color(nsColor: .labelColor))
         }
         .buttonStyle(.plain)
         .clickableCursor()
@@ -192,7 +266,8 @@ struct ScreenshotEditorView: View {
                 }
                 .buttonStyle(.plain)
                 .clickableCursor()
-                .help("Arrow style")
+                .help("\(head.title) arrow")
+                .accessibilityLabel("\(head.title) arrow")
             }
         }
         .padding(2)

@@ -41,6 +41,17 @@ struct StrokeStyle: Codable, Equatable {
 struct ArrowElement: Codable, Equatable {
     enum Head: String, Codable, Equatable, CaseIterable {
         case filled, open, thin, curved
+
+        /// Named so the four style buttons can say which is which. They shared one tooltip,
+        /// "Arrow style", which answered nothing about the difference between them.
+        var title: String {
+            switch self {
+            case .filled: return "Solid"
+            case .open: return "Open"
+            case .thin: return "Thin"
+            case .curved: return "Curved"
+            }
+        }
     }
     var start: CGPoint
     var end: CGPoint

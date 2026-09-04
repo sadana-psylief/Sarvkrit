@@ -22,8 +22,12 @@ struct BackgroundInspector: View {
                     get: { model.document.background != nil },
                     set: { on in model.edit { $0.background = on ? CaptureBackground() : nil } }))
 
+                // **The presets show whether or not one is applied.** Gating them behind the
+                // toggle meant opening the panel showed a single unticked checkbox and nothing
+                // else — no sign that twenty gradients were behind it, and no reason to guess
+                // that ticking the box was worth doing. Picking a swatch turns it on.
+                swatches
                 if model.document.background != nil {
-                    swatches
                     controls
                     presetControls
                 }
@@ -97,6 +101,8 @@ struct BackgroundInspector: View {
                         }
                         .buttonStyle(.plain)
                         .clickableCursor()
+                        .help("Delete “\(preset.name)”")
+                        .accessibilityLabel("Delete preset \(preset.name)")
                     }
                     .font(.caption)
                 }

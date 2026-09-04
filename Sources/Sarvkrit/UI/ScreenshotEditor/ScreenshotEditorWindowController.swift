@@ -32,8 +32,16 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
+    /// Fits the named tool row with a little slack. Below this the palette starts scrolling and
+    /// tools disappear silently, which is the one thing this window must not do.
+    static let minimumWidth: CGFloat = 890
+
     func show() {
-        let size = NSSize(width: min(1100, CGFloat(model.base.width) / 2 + 80),
+        // Wide enough for the tool row, whatever the capture's size. A window sized only to a
+        // small screenshot left most of the palette scrolled out of sight, which is the problem
+        // naming the tools was meant to solve.
+        let size = NSSize(width: min(1100, max(Self.minimumWidth,
+                                               CGFloat(model.base.width) / 2 + 80)),
                           height: min(800, CGFloat(model.base.height) / 2 + 140))
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -41,7 +49,7 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
             backing: .buffered, defer: false)
         window.title = "Screenshot"
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 560, height: 400)
+        window.contentMinSize = NSSize(width: Self.minimumWidth, height: 400)
         window.contentView = NSHostingView(rootView: ScreenshotEditorView(
             model: model,
             presets: Self.presets,
