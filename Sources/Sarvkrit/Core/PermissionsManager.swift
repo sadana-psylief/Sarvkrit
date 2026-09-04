@@ -1,31 +1,43 @@
 import ApplicationServices
 import AppKit
 import Combine
+import CoreGraphics
 import Foundation
 
-/// Tracks the Accessibility (TCC) grant.
+/// Tracks the TCC grants the app can actually ask about.
 ///
-/// There is no notification for this — the only way to know is to poll `AXIsProcessTrusted`.
-/// The poll does double duty: it flips the checkmark in the UI *and* fires `onTrustChanged`
-/// so `AppState` can retry activating features. `CGEvent.tapCreate` fails outright while
-/// untrusted, so without that retry, granting permission appears to do nothing until relaunch.
+/// There is no notification for either of them — the only way to know is to poll
+/// `AXIsProcessTrusted` and `CGPreflightScreenCaptureAccess`. The poll does double duty: it flips
+/// the checkmarks in the UI *and* fires `onGrantsChanged` so `AppState` can retry activating
+/// features. `CGEvent.tapCreate` fails outright while untrusted, so without that retry, granting
+/// permission appears to do nothing until relaunch.
+///
+/// **One timer, both grants.** A second timer would double the wakeups on an app that is idle
+/// almost all the time, for no benefit — the two are read together in a single `refresh()`.
+///
+/// **`init` must never prompt.** `CGPreflightScreenCaptureAccess()` is silent and safe here;
+/// `CGRequestScreenCaptureAccess()` shows a system dialog and is not. `FeatureCategoryTests`
+/// constructs a `PermissionsManager` inside the app-hosted test bundle, and a dialog there would
+/// hang the run. Requesting is always an explicit call from a button.
 final class PermissionsManager: ObservableObject {
     @Published private(set) var isTrusted: Bool
+    @Published private(set) var canCaptureScreen: Bool
 
-    /// Called on the main thread whenever trust flips, in either direction.
-    var onTrustChanged: ((Bool) -> Void)?
+    /// Called on the main thread whenever any queryable grant changes, in either direction.
+    var onGrantsChanged: (() -> Void)?
 
     private var timer: Timer?
     private var scheduledInterval: TimeInterval?
 
-    /// Untrusted means a banner or the onboarding screen is on display waiting for the checkmark
-    /// to flip, so poll briskly. Once granted, nothing is waiting — but keep polling slowly rather
-    /// than stopping, because permission can be revoked at any time and an accessory app rarely
-    /// becomes active, so there'd be no other moment to notice.
-    private var desiredInterval: TimeInterval { isTrusted ? 5.0 : 1.0 }
+    /// A missing grant means a banner or the onboarding screen is on display waiting for the
+    /// checkmark to flip, so poll briskly. Once everything is granted, nothing is waiting — but
+    /// keep polling slowly rather than stopping, because permission can be revoked at any time and
+    /// an accessory app rarely becomes active, so there'd be no other moment to notice.
+    private var desiredInterval: TimeInterval { (isTrusted && canCaptureScreen) ? 5.0 : 1.0 }
 
     init() {
         self.isTrusted = AXIsProcessTrusted()
+        self.canCaptureScreen = CGPreflightScreenCaptureAccess()
     }
 
     func startMonitoring() {
@@ -55,10 +67,12 @@ final class PermissionsManager: ObservableObject {
 
     func refresh() {
         let trusted = AXIsProcessTrusted()
-        guard trusted != isTrusted else { return }
+        let capture = CGPreflightScreenCaptureAccess()
+        guard trusted != isTrusted || capture != canCaptureScreen else { return }
         isTrusted = trusted
-        onTrustChanged?(trusted)
-        // Trust changed, so the right cadence changed with it.
+        canCaptureScreen = capture
+        onGrantsChanged?()
+        // A grant changed, so the right cadence changed with it.
         scheduleTimer()
     }
 
@@ -69,6 +83,33 @@ final class PermissionsManager: ObservableObject {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
         refresh()
+    }
+
+    /// Shows the Screen Recording alert. Like the Accessibility one it appears once per app per
+    /// install, and it **returns false even when the user then grants it** — the answer describes
+    /// this process, which cannot be given the grant retroactively. Treat the return value as
+    /// "can I capture right now", never as "did the user say yes".
+    @discardableResult
+    func requestScreenRecordingAccess() -> Bool {
+        let granted = CGRequestScreenCaptureAccess()
+        refresh()
+        return granted
+    }
+
+    /// Asks macOS for whichever grant this is, then opens its settings pane.
+    ///
+    /// Both, always, and in that order. The request is what registers the app in the settings list
+    /// — without it the user arrives at a pane that does not mention Sarvkrit. And the system only
+    /// shows its own dialog once per app per install, so on every later run the pane is the real
+    /// path. `OnboardingView` has done exactly this for Accessibility since the beginning; this
+    /// generalises it so a second grant cannot be left unreachable.
+    func request(_ requirement: Requirement) {
+        switch requirement {
+        case .accessibility: requestAccess()
+        case .screenRecording: requestScreenRecordingAccess()
+        case .audioCapture: break
+        }
+        openSystemSettings(for: requirement)
     }
 
     func openSystemSettings() {
@@ -87,6 +128,7 @@ final class PermissionsManager: ObservableObject {
     func isGranted(_ requirement: Requirement) -> Bool {
         switch requirement {
         case .accessibility: return isTrusted
+        case .screenRecording: return canCaptureScreen
         case .audioCapture: return true
         }
     }

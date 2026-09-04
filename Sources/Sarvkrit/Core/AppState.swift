@@ -118,7 +118,7 @@ final class AppState: ObservableObject {
         // The permission poll does double duty: it updates the checkmark AND retries
         // activation. tapCreate fails outright while untrusted, so without this a user who
         // grants access sees nothing happen until they relaunch.
-        permissions.onTrustChanged = { [weak self] _ in self?.sync() }
+        permissions.onGrantsChanged = { [weak self] in self?.sync() }
         permissions.startMonitoring()
 
         // SwiftUI does not observe *through* a nested ObservableObject: a view holding
@@ -206,8 +206,27 @@ final class AppState: ObservableObject {
     }
 
     /// True when at least one enabled feature needs a permission we don't have.
-    var needsAccessibility: Bool {
+    var needsPermission: Bool {
         !unmetRequirements.isEmpty
+    }
+
+    /// The missing grants in a stable order.
+    ///
+    /// `unmetRequirements` is a `Set`, whose iteration order is not stable between launches — so
+    /// rendering it directly would let two banners swap places at random. `sortOrder` is the
+    /// declaration order of the enum.
+    var unmetRequirementsInOrder: [Requirement] {
+        unmetRequirements.sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    /// The missing permission that is holding one feature back, if any.
+    ///
+    /// Used for the row caption and the detail pane's explanation, both of which named
+    /// Accessibility unconditionally before there was a second grant to get wrong.
+    func blockingRequirement(for feature: Feature) -> Requirement? {
+        feature.requirements
+            .filter { $0.isQueryable && !permissions.isGranted($0) }
+            .min { $0.sortOrder < $1.sortOrder }
     }
 
     /// Which permissions the enabled features are missing.

@@ -181,6 +181,50 @@ tools like this delete the wrong thing. And it waits before offering, then check
 still find the app anywhere: app updates are a delete followed by a replace, and sweeping mid-update
 would destroy the preferences of an app you still have.
 
+### 📸 Capture
+
+#### Screenshots
+
+Capture an area, a window, or the whole screen. **The screen freezes while you choose**, so an open
+menu or a tooltip stays put instead of vanishing the moment you click — and because the selection is
+drawn over a picture that has already been taken, the magnifier and the live pixel readout cost
+nothing.
+
+A window capture is taken on its own rather than cut out of the screen, so its shadow can be kept or
+dropped and its corners can be genuinely transparent instead of showing whatever was behind it.
+
+**Scrolling capture** takes a frame each time you pause while scrolling and stitches them into one
+tall image. It watches your scrolling rather than doing the scrolling for you, which is why it needs
+no extra permission. Vertical is what it's built and tested for; a full-width sticky header or footer
+is written once, but a floating button in the middle of a row will repeat.
+
+**Text recognition** reads the text — or a QR code — out of any part of the screen and puts it on the
+clipboard. It runs on your Mac, and a scanned QR payload is copied rather than opened, because
+following a link scanned off the screen should be your decision.
+
+After a capture a thumbnail appears in the corner: copy it, annotate it, pin it, or drag it straight
+into another app. The editor has arrows, shapes, text, counters, a highlighter that snaps to lines of
+text, and backgrounds.
+
+**On blurring things out.** An ordinary blur is reversible — blurred small text is routinely
+recovered — and so is pixelation when the alphabet is small, which is exactly the password case. So
+Sarvkrit names them for what they are and offers a **secure** mode that keeps nothing but the average
+colour of the region, with texture generated from a seed rather than from your pixels. A weak blur
+over a password is worse than none, because you'd share it believing it was hidden.
+
+#### Pin to Screen
+
+Floats a screenshot above everything else while you work. Resize it, fade it, and move it wherever
+you need it. Lock Mode makes it ignore clicks so you can work through it — and because a locked shot
+can't be clicked to unlock, **⌃⇧P** unlocks every pinned shot and one draws a coloured border while
+locked. Needs no permissions at all.
+
+**⌃⇧⎋ always clears the screen.** Everything in this category floats above your other windows, and
+one thing deliberately ignores clicks, so there is one shortcut that means *get all of it off my
+screen* — overlays, pinned shots, the capture bar, whatever state any of it is in. It's registered
+with the system rather than by watching the keyboard, so it keeps working even if you revoke
+Sarvkrit's other permissions.
+
 ### ⚙️ System
 
 #### Keep Awake
@@ -251,6 +295,30 @@ switch it on or wake the Mac up.
 | **⌥P** | Clipboard picker | Pin or unpin |
 | **⌥⌫** | Clipboard picker | Delete that entry |
 | **Esc** | Clipboard picker | Close |
+| **⌃⇧A** | Anywhere | Capture an area |
+| **⌃⇧W** | Anywhere | Capture a window |
+| **⌃⇧F** | Anywhere | Capture the screen |
+| **⌃⇧5** | Anywhere | All-In-One: pick a mode, a size and a timer |
+| **⌃⇧S** | Anywhere | Scrolling capture |
+| **⌃⇧T** | Anywhere | Copy text from the screen |
+| **⌃⇧Z** | Anywhere | Bring back the last capture overlay you dismissed |
+| **⌃⇧H** | Anywhere | Hide the capture overlays until the next shot |
+| **⌃⇧P** | Anywhere | Pin the clipboard image, or unlock every pinned shot |
+| **⌃⇧Y** | Anywhere | Browse everything you've captured |
+| **⌃⇧⎋** | Anywhere | Clear everything Sarvkrit has put on screen |
+| **Esc** | Capture overlay | Cancel |
+| **⇧** drag | Capture overlay | Keep the shape you're already drawing |
+| **⌥** drag | Capture overlay | Grow from the centre |
+| **Arrows** | Capture overlay | Nudge the selection (⇧ for ten pixels) |
+| **A L R E T H D N B P C S ;** | Editor | Pick a tool |
+| **1**–**6** | Editor | Pick a colour |
+| **⌘Z** / **⇧⌘Z** | Editor | Undo and redo |
+| **⌘S** / **⇧⌘S** | Editor | Save, or save so it stays editable |
+
+**Why not ⌘⇧3, ⌘⇧4 and ⌘⇧5.** Those belong to macOS's own screenshot service, which claims them
+below the level Sarvkrit can register at — bind one and it either fails outright or silently never
+fires. You can still record one if you want it, and Sarvkrit will mark it as unregistered rather
+than pretend; free it in System Settings › Keyboard › Keyboard Shortcuts › Screenshots first.
 
 Window shortcuts fire only while Window Management is switched on, and the keys go back to the app
 you're using the moment you turn it off. They are all rebindable — the table above is just what
@@ -272,6 +340,12 @@ Sarvkrit asks for as little as it can, and each feature says what it needs.
 shortcuts. macOS calls it this because it's the same permission apps use to control the interface on
 your behalf. Sarvkrit watches only the specific keys and clicks belonging to features you've switched
 on, doesn't record what you type, and sends nothing off your Mac.
+
+**Screen Recording** — Screenshots only. macOS classes reading what's on your display as recording
+the screen, so taking a screenshot needs it. **Unlike Accessibility, macOS does not hand this grant
+to an app that's already running**: after you allow it, Sarvkrit has to be restarted before it can
+capture anything, and it offers to do that rather than leaving you with black rectangles. Pin to
+Screen needs nothing at all — floating an image you already have asks nothing of the system.
 
 **Folder access** — File Rules asks the first time it reads a folder you've pointed a rule at. macOS
 prompts for this normally.

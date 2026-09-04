@@ -56,6 +56,10 @@ struct AboutView: View {
                     Text(app.permissions.isTrusted ? "Granted" : "Not granted")
                         .foregroundStyle(app.permissions.isTrusted ? Color.secondary : Color.orange)
                 }
+                LabeledContent("Screen Recording") {
+                    Text(app.permissions.canCaptureScreen ? "Granted" : "Not granted")
+                        .foregroundStyle(app.permissions.canCaptureScreen ? Color.secondary : Color.orange)
+                }
             }
             Section {
                 // Useful in a permissions app: TCC grants are keyed to the app's location and

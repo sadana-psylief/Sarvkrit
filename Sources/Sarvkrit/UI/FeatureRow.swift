@@ -6,12 +6,18 @@ struct FeatureRow: View {
     let feature: any Feature
     @Binding var isOn: Bool
     var isBlocked: Bool
+    /// Which permission is missing, in the user's words.
+    ///
+    /// Passed in rather than derived: this row used to say "Needs Accessibility access" whatever
+    /// was actually missing, which sent people to the wrong settings pane the moment a second
+    /// grant existed.
+    var blockedReason: String?
 
     var body: some View {
         SettingsRow(
             symbolName: feature.symbolName,
             title: feature.title,
-            caption: isBlocked ? "Needs Accessibility access" : feature.summary,
+            caption: isBlocked ? (blockedReason ?? "Needs a permission") : feature.summary,
             captionColor: isBlocked ? .orange : .secondary,
             isHighlighted: isOn && !isBlocked
         ) {
@@ -23,6 +29,6 @@ struct FeatureRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(feature.title)
-        .accessibilityHint(isBlocked ? "Needs Accessibility access" : feature.summary)
+        .accessibilityHint(isBlocked ? (blockedReason ?? "Needs a permission") : feature.summary)
     }
 }

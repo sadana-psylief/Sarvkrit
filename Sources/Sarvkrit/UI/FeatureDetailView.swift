@@ -53,7 +53,9 @@ private struct GenericFeatureDetailView: View {
                     .disabled(app.isBlocked(feature))
             } footer: {
                 if app.isBlocked(feature) {
-                    Text("Grant Accessibility access below to turn this on.")
+                    Text(app.blockingRequirement(for: feature).map {
+                        "Grant \($0.title) below to turn this on."
+                    } ?? "Grant the permission below to turn this on.")
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -71,20 +73,31 @@ private struct GenericFeatureDetailView: View {
                 }
             }
 
-            if feature.requiresAccessibility {
+            // Driven by `requirements`, not by a hardcoded Accessibility check. A feature that
+            // needs Screen Recording used to render here as "Accessibility access: Not granted",
+            // which is worse than saying nothing — it sends the user to the wrong settings pane.
+            // Only queryable grants appear: one we cannot ask about has no honest answer to show.
+            let shown = feature.requirements.filter(\.isQueryable).sorted { $0.sortOrder < $1.sortOrder }
+            if !shown.isEmpty {
                 Section("Requirements") {
-                    LabeledContent("Accessibility access") {
-                        HStack(spacing: Theme.Space.sm) {
-                            Image(systemName: app.permissions.isTrusted
-                                  ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                .foregroundStyle(app.permissions.isTrusted ? .green : .orange)
-                                .accessibilityHidden(true)
-                            Text(app.permissions.isTrusted ? "Granted" : "Not granted")
-                                .foregroundStyle(.secondary)
+                    ForEach(shown, id: \.self) { requirement in
+                        let granted = app.permissions.isGranted(requirement)
+                        LabeledContent(requirement.title) {
+                            HStack(spacing: Theme.Space.sm) {
+                                Image(systemName: granted
+                                      ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                    .foregroundStyle(granted ? .green : .orange)
+                                    .accessibilityHidden(true)
+                                Text(granted ? "Granted" : "Not granted")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                    }
-                    if !app.permissions.isTrusted {
-                        Button("Open System Settings") { app.permissions.openSystemSettings() }
+                        if !granted {
+                            Button(requirement.isRequestable
+                                   ? "Allow \(requirement.title)…" : "Open System Settings") {
+                                app.permissions.request(requirement)
+                            }
+                        }
                     }
                 }
             }

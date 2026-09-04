@@ -16,30 +16,35 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>ai.hercules.sarvkrit.capture</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>sarvkrit</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-	<!-- Reactivate the running copy instead of starting another. Covers same-path
-	     relaunches; SingleInstance.swift covers copies living at different paths. -->
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
-	<!-- Menu bar only: no Dock icon, no menu bar menus. -->
 	<key>LSUIElement</key>
 	<true/>
-	<!-- Reason strings for the folder-access prompts File Rules triggers. Without these the
-	     dialog has no explanation and reads like a bug. -->
-	<key>NSDownloadsFolderUsageDescription</key>
-	<string>Sarvkrit needs access to your Downloads folder to apply the file rules you create.</string>
-	<key>NSDocumentsFolderUsageDescription</key>
-	<string>Sarvkrit needs access to your Documents folder to apply the file rules you create.</string>
-	<key>NSDesktopFolderUsageDescription</key>
-	<string>Sarvkrit needs access to your Desktop to apply the file rules you create.</string>
-	<!-- The Volume Mixer routes another app's audio through Sarvkrit to change its level, which
-	     macOS classes as recording that audio. Its own TCC category, separate from the microphone.
-	     Must be written by hand: Xcode doesn't offer this key in its dropdown. -->
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Sarvkrit needs this to set the volume of individual apps. Their audio passes through Sarvkrit so it can be turned up or down, and is never recorded, stored or sent anywhere.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Sarvkrit needs access to your Desktop to apply the file rules you create.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Sarvkrit needs access to your Documents folder to apply the file rules you create.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Sarvkrit needs access to your Downloads folder to apply the file rules you create.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Sarvkrit</string>
 	<key>NSSupportsAutomaticTermination</key>

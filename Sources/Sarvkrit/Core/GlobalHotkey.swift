@@ -33,6 +33,19 @@ final class GlobalHotkey {
         static let shelf: UInt32 = 1
         static let audioCycle: UInt32 = 2
         static let micMute: UInt32 = 3
+        static let captureArea: UInt32 = 4
+        static let captureWindow: UInt32 = 5
+        static let captureFullscreen: UInt32 = 6
+        static let captureAllInOne: UInt32 = 7
+        static let captureScrolling: UInt32 = 8
+        static let captureText: UInt32 = 9
+        static let restoreLastOverlay: UInt32 = 10
+        static let hideOverlays: UInt32 = 11
+        static let pinClipboardImage: UInt32 = 12
+        /// The escape hatch. See `CaptureOverlayGuard` — this one exists so a floating window can
+        /// never be the reason a user cannot use their own screen.
+        static let dismissAllOverlays: UInt32 = 13
+        static let historyBrowser: UInt32 = 14
     }
 
     /// Distinct per hotkey. Two sharing an id would collide.
@@ -43,11 +56,17 @@ final class GlobalHotkey {
         self.identifier = id
     }
 
+    /// - Returns: `RegisterEventHotKey`'s status. **Worth checking**, because the interesting
+    ///   failure is silent: the system screenshot service owns ⌘⇧3/4/5 at a lower level than this
+    ///   API, so registering one of those either reports `eventHotKeyExistsErr` or succeeds and
+    ///   never fires. Settings reports the failure rather than offering a shortcut that does
+    ///   nothing.
+    @discardableResult
     func register(
         keyCode: UInt32,
         modifiers: UInt32 = GlobalHotkey.defaultModifiers,
         onFire: @escaping () -> Void
-    ) {
+    ) -> OSStatus {
         unregister()
         self.onFire = onFire
 
@@ -86,7 +105,7 @@ final class GlobalHotkey {
         )
 
         let hotKeyID = EventHotKeyID(signature: Self.signature, id: identifier)
-        RegisterEventHotKey(
+        return RegisterEventHotKey(
             keyCode,
             modifiers,
             hotKeyID,

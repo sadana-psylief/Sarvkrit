@@ -1,11 +1,16 @@
 import SwiftUI
 
-/// "Accessibility access needed", shown in the dropdown and the detail pane.
+/// "<Grant> needed", shown in the dropdown and the detail pane.
 ///
 /// It appears above the feature toggles, which go disabled at the same time. That pairing is
 /// the most important UX detail in the app: a toggle that can be flipped but silently does
 /// nothing is worse than one that's greyed out with a reason attached.
+///
+/// The text comes from the `Requirement` rather than being written here, so a second grant can't
+/// end up with a banner that says "Accessibility" — which is exactly what this view used to do,
+/// back when Accessibility was the only thing it could be about.
 struct PermissionBanner: View {
+    let requirement: Requirement
     var onOpenSettings: () -> Void
 
     var body: some View {
@@ -15,13 +20,17 @@ struct PermissionBanner: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                Text("Accessibility access needed")
+                Text("\(requirement.title) needed")
                     .font(.subheadline.weight(.semibold))
-                Text("Sarvkrit can't watch for keys or clicks until you allow it in System Settings.")
+                Text(requirement.explanation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Open Settings", action: onOpenSettings)
+                // "Allow…" rather than "Open Settings" when macOS can be asked: the request is
+                // what puts Sarvkrit in the settings list in the first place, so sending the user
+                // straight to the pane would show them a list the app is not in.
+                Button(requirement.isRequestable ? "Allow \(requirement.title)…" : "Open Settings",
+                       action: onOpenSettings)
                     .buttonStyle(.link)
                     .font(.caption)
             }
