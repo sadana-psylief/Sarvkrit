@@ -149,7 +149,8 @@ final class TrayPanelRenderTests: XCTestCase {
         let restore = AppState.shared.selectedTrayTabID
         defer { AppState.shared.selectedTrayTabID = restore }
 
-        for id in ["sound", "keep-awake", TrayPanel.featuresID, TrayPanel.generalID] {
+        for id in ["keep-awake", "sound", "system", "network", "disks", "power",
+                   TrayPanel.featuresID, TrayPanel.generalID] {
             AppState.shared.selectedTrayTabID = id
             for scheme in [ColorScheme.light, .dark] {
                 let rep = try snapshot(MenuBarView(keepAwakeFeature: keepAwake),
@@ -160,11 +161,55 @@ final class TrayPanelRenderTests: XCTestCase {
         }
     }
 
-    func testAMonitorPanelSurvivesAHistoryThatIsEntirelyGaps() throws {
+    /// A monitor that has actually sampled this Mac, three times, so rates and history exist.
+    ///
+    /// Every rate is `nil` on the first sample — a rate needs two — so a panel rendered against a
+    /// fresh feature is all dashes, which says nothing about whether real numbers fit their
+    /// columns. This is the only way the previews show what a user sees.
+    private func sampledMonitor() -> SystemMonitorFeature {
+        let feature = SystemMonitorFeature(defaults: UserDefaults(suiteName: "preview.\(UUID())")!)
+        feature.enabledMetrics = Set(MetricKind.allCases)
+        for _ in 0..<3 {
+            feature.apply(feature.takeSnapshot())
+            // Real elapsed time: a rate over a zero interval is discarded by design.
+            Thread.sleep(forTimeInterval: 0.4)
+        }
+        return feature
+    }
+
+    private func monitorPanels(_ feature: SystemMonitorFeature) -> [(String, AnyView)] {
+        [
+            ("system", AnyView(SystemPanelView(feature: feature))),
+            ("network", AnyView(NetworkPanelView(feature: feature))),
+            ("disks", AnyView(DisksPanelView(feature: feature))),
+            ("power", AnyView(PowerPanelView(feature: feature))),
+        ]
+    }
+
+    func testTheMonitorPanelsRenderAgainstRealReadings() throws {
+        let feature = sampledMonitor()
+        for (name, view) in monitorPanels(feature) {
+            for scheme in [ColorScheme.light, .dark] {
+                let rep = try snapshot(
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        SectionHeader(name)
+                        view
+                    }
+                    .padding(Theme.Space.md),
+                    scheme: scheme)
+                XCTAssertGreaterThan(rep.pixelsHigh, 0, name)
+                try write(rep, named: "live-\(name)-\(scheme == .dark ? "dark" : "light")")
+            }
+        }
+    }
+
+    func testEveryMonitorPanelSurvivesAHistoryThatIsEntirelyGaps() throws {
         // The NaN-shaped case `SystemMonitorPaneRenderTests` pins for the window's pane: an all-gap
-        // window is an empty y-domain, and a chart handed one draws nothing or crashes.
+        // window is an empty y-domain, and a chart handed one draws nothing or crashes. All four
+        // panels draw charts, so all four are exposed to it.
         let feature = AppState.shared.features.compactMap { $0 as? SystemMonitorFeature }.first!
-        let view = SystemMonitorTrayView(feature: feature)
-        XCTAssertGreaterThan(try snapshot(view, scheme: .dark).pixelsHigh, 0)
+        for (name, view) in monitorPanels(feature) {
+            XCTAssertGreaterThan(try snapshot(view, scheme: .dark).pixelsHigh, 0, name)
+        }
     }
 }

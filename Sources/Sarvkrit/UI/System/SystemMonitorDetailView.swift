@@ -75,11 +75,14 @@ struct SystemMonitorDetailView: View {
         }
     }
 
-    private func sparkline(for kind: MetricKind) -> MetricSparkline {
+    private func sparkline(for kind: MetricKind) -> some View {
         MetricSparkline(
             window: feature.reading.history[kind] ?? MetricHistory(),
             ceiling: ceiling(for: kind)
         )
+        // The chart spans its card on a menu panel and sits inline beside the number here, so the
+        // width belongs to the caller. 110 is what this row has always given it.
+        .frame(width: 110)
     }
 
     private func value(for kind: MetricKind) -> String {

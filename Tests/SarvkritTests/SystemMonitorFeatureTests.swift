@@ -243,8 +243,10 @@ final class SystemMonitorFeatureTests: XCTestCase {
         // quietly lose their tab with every other test still passing.
         MainActor.assumeIsolated {
             let panels = makeFeature().trayPanels()
-            XCTAssertFalse(panels.isEmpty)
-            XCTAssertEqual(panels.map(\.id), ["system"])
+            XCTAssertEqual(panels.map(\.id), ["system", "network", "disks", "power"])
+            // Order is the strip's order, so this pins it: Network before Disks before Power is
+            // what the tabs read left to right.
+            XCTAssertTrue(panels.allSatisfy { !$0.title.isEmpty && !$0.symbolName.isEmpty })
         }
     }
 

@@ -23,4 +23,28 @@ enum BatteryMath {
         guard millivolts > 0 else { return nil }
         return Double(milliamps) / 1_000 * Double(millivolts) / 1_000
     }
+
+    /// How much of its original charge the battery still holds, as a percentage.
+    ///
+    /// This is the number System Settings calls Maximum Capacity, and it comes from
+    /// `NominalChargeCapacity ÷ DesignCapacity`. Both are real mAh figures, unlike `MaxCapacity`,
+    /// which on Apple Silicon is already a percentage and always reads 100 — using it would give a
+    /// battery health of 100% on every Mac forever, and look entirely convincing doing it.
+    ///
+    /// Not clamped upward. A new battery genuinely reports slightly over its design capacity, and
+    /// 102% is the truth; capping it at 100 would hide a real reading to make the number tidier.
+    static func healthPercent(nominalCapacity: Int?, designCapacity: Int?) -> Double? {
+        guard let nominalCapacity, let designCapacity, designCapacity > 0, nominalCapacity > 0
+        else { return nil }
+        return Double(nominalCapacity) / Double(designCapacity) * 100
+    }
+
+    /// `AppleSmartBattery` reports temperature in hundredths of a degree Celsius.
+    ///
+    /// Guarded rather than converted blindly: the key is absent on a desktop and reads zero on a
+    /// battery the SMC has not yet talked to, and −273°C on a menu panel would be a memorable bug.
+    static func celsius(rawTemperature: Int?) -> Double? {
+        guard let rawTemperature, rawTemperature > 0 else { return nil }
+        return Double(rawTemperature) / 100
+    }
 }
