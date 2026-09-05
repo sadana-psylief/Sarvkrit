@@ -103,7 +103,22 @@ enum Theme {
     /// One curve for the whole app. Motion exists to explain what changed — a system utility
     /// that animates for its own sake feels slow.
     enum Motion {
-        static let standard: Animation = .easeInOut(duration: 0.15)
+        /// The same curve as a scalar, for the one place motion is not a SwiftUI animation:
+        /// `MenuBarWindowAnchor` animates an `NSWindow` frame through `NSAnimationContext`, which
+        /// takes a duration and a `CAMediaTimingFunction`. `standard` is derived from it so the
+        /// AppKit and SwiftUI halves of "one curve for the whole app" cannot drift apart.
+        static let standardDuration: TimeInterval = 0.15
+
+        static let standard: Animation = .easeInOut(duration: standardDuration)
+
+        /// Longer than `standard`, and the one motion in the app that earns it.
+        ///
+        /// The tray panel's height changes by up to 195pt between panels. At 0.15s that is
+        /// ~1200pt/s, which does not read as movement — it reads as a jump that happens to be
+        /// blurry, and the handful of frames a display can fit into 150ms at that speed land far
+        /// enough apart to look like stepping. Everything else this token family covers moves a
+        /// row height or a colour, where 0.15s is right.
+        static let panelResizeDuration: TimeInterval = 0.25
 
         /// Pure, so the Reduce Motion contract is unit-testable rather than only observable by eye.
         static func resolved(reduceMotion: Bool) -> Animation? {

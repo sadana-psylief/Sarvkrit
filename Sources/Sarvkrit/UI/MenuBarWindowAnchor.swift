@@ -100,6 +100,8 @@ final class MenuBarWindowAnchor {
 
     /// Weak: the panel's window belongs to SwiftUI, and outliving it is not this object's business.
     private weak var window: NSWindow?
+    /// Keeps the content still while the window resizes around it. Weak for the same reason.
+    private weak var pinned: TopPinnedContentView?
     private var observers: [NSObjectProtocol] = []
 
     /// The top edge the system chose for this presentation. Captured when the panel appears and
@@ -120,6 +122,22 @@ final class MenuBarWindowAnchor {
     private var isAdjusting = false
     /// Set between a content report and the coalesced pass that acts on it.
     private var pinScheduled = false
+    /// The height the last completed step left the window at. `0` means this presentation has not
+    /// placed the panel yet, which is what stops it animating open.
+    private var settledHeight: CGFloat = 0
+    /// Where a running animation is heading, if one is running.
+    private var inFlightTo: CGRect?
+    /// Bumped per animation, so a superseded one's completion handler knows it no longer owns the
+    /// state. A `MenuBarExtra` panel is reused for the life of the app, so state stuck here does
+    /// not clear itself.
+    private var generation = 0
+
+    private func reset() {
+        generation += 1
+        inFlightTo = nil
+        isAdjusting = false
+        settledHeight = 0
+    }
 
     private init() {}
 
@@ -131,8 +149,13 @@ final class MenuBarWindowAnchor {
         observers.removeAll()
         self.window = window
         anchorTop = nil
+        reset()
 
         guard let window else { return }
+
+        // Interposed once, before anything is measured or moved. Without it an animated resize
+        // shows half its own height difference as blank space above the content.
+        pinned = TopPinnedContentView.install(in: window)
 
         observe(NSWindow.didChangeOcclusionStateNotification, on: window) { [weak self] in
             guard let self, let window = self.window else { return }
@@ -141,6 +164,7 @@ final class MenuBarWindowAnchor {
                 self.pin()
             } else {
                 self.anchorTop = nil
+                self.reset()
             }
         }
         // A second chance to capture, for the presentation where the occlusion notification lands
@@ -153,10 +177,16 @@ final class MenuBarWindowAnchor {
         // would throw away the one number worth keeping.
         observe(NSWindow.willCloseNotification, on: window) { [weak self] in
             self?.anchorTop = nil
+            self?.reset()
         }
         // Growth still arrives this way. Cheap to honour, and it keeps the two paths in agreement.
         observe(NSWindow.didResizeNotification, on: window) { [weak self] in
-            self?.pin()
+            // Ignored while we are the ones resizing: an animated resize posts one of these per
+            // frame, and every one would otherwise re-enter and re-decide. To see those frames —
+            // the only way to tell whether the window actually moved smoothly, since no test can
+            // watch a window animate — log `window.frame` here.
+            guard let self, !self.isAdjusting else { return }
+            self.pin()
         }
 
         captureAnchor()
@@ -172,14 +202,23 @@ final class MenuBarWindowAnchor {
     func note(contentHeight height: CGFloat) {
         guard abs(height - contentHeight) > MenuBarPanelPlacement.moveTolerance else { return }
         contentHeight = height
+        // The container lays the content out at this height, not at the window's — during a
+        // resize those differ on purpose.
+        pinned?.contentHeight = height
 
+        // Acted on **now**, inside the probe's layout pass, and not deferred to the next runloop
+        // turn. On a grow SwiftUI has already resized the window to the settled height by the time
+        // this arrives, and a turn's delay is long enough for that frame to be drawn: the panel
+        // visibly snaps to full size and then animates from the top again.
+        //
+        // Resizing from inside `layout()` is only safe because of `TopPinnedContentView`. The
+        // content's height no longer depends on the window's, so the re-entrant layout this
+        // provokes measures the same height and returns at the tolerance check above. `pinScheduled`
+        // is the guard that makes that terminate rather than a promise to run later.
         guard !pinScheduled else { return }
         pinScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pinScheduled = false
-            self.pin()
-        }
+        pin()
+        pinScheduled = false
     }
 
     private func observe(
@@ -204,36 +243,103 @@ final class MenuBarWindowAnchor {
         anchorTop = top
     }
 
+    /// Decide, then do. Every judgement lives in `MenuBarPanelResize`; this half owns only the
+    /// AppKit calls and the bookkeeping an animation needs.
     private func pin() {
-        guard !isAdjusting, contentHeight > 0, let window, window.isVisible,
+        guard let window, window.isVisible,
               let visible = screen(for: window)?.visibleFrame else { return }
 
-        let current = window.frame
-        let size = CGSize(width: current.width, height: contentHeight)
-        let origin = MenuBarPanelPlacement.origin(
-            forHeight: contentHeight,
-            x: current.minX,
-            top: anchorTop ?? visible.maxY,
-            width: size.width,
-            in: visible
+        apply(
+            MenuBarPanelResize.step(
+                window: window.frame,
+                settledHeight: settledHeight,
+                contentHeight: contentHeight,
+                inFlightTo: inFlightTo,
+                anchorTop: anchorTop ?? visible.maxY,
+                visible: visible,
+                // Read here, once, at the moment of deciding. Not the thing `Tokens.swift` warns
+                // against: that warning is about reading it in a `View` body, where the value is
+                // captured in a render and never updates again.
+                animates: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ),
+            to: window
         )
+    }
 
-        guard abs(current.height - size.height) > MenuBarPanelPlacement.moveTolerance
-                || MenuBarPanelPlacement.needsMove(from: current.origin, to: origin) else { return }
+    private func apply(_ step: MenuBarPanelResize.Step, to window: NSWindow) {
+        switch step {
+        case .none:
+            return
 
-        // One `setFrame`, not `setContentSize` followed by `setFrameTopLeftPoint` the way
-        // `ClipboardPickerController.resize(to:)` does it. That panel opens at the cursor and is
-        // never visibly wrong in between; here the in-between state — the new short height still
-        // sitting on the old bottom-left origin — is precisely the bug, and it would flash.
-        isAdjusting = true
-        window.setFrame(NSRect(origin: origin, size: size), display: true)
-        isAdjusting = false
+        case .set(let frame):
+            // One `setFrame`, not `setContentSize` followed by `setFrameTopLeftPoint` the way
+            // `ClipboardPickerController.resize(to:)` does it. That panel opens at the cursor and
+            // is never visibly wrong in between; here the in-between state — the new short height
+            // still sitting on the old bottom-left origin — is precisely the bug, and it would
+            // flash.
+            let before = window.frame
+            isAdjusting = true
+            window.setFrame(frame, display: true)
+            isAdjusting = false
+            settledHeight = frame.height
+            inFlightTo = nil
+            log.debug("""
+                set \(NSStringFromRect(before), privacy: .public) -> \
+                \(NSStringFromRect(window.frame), privacy: .public) \
+                anchorTop=\(self.anchorTop ?? -1, privacy: .public)
+                """)
 
-        log.debug("""
-            pinned \(NSStringFromRect(current), privacy: .public) -> \
-            \(NSStringFromRect(window.frame), privacy: .public) \
-            anchorTop=\(self.anchorTop ?? -1, privacy: .public)
-            """)
+        case .animate(let from, let to):
+            generation += 1
+            let generation = self.generation
+            isAdjusting = true
+            inFlightTo = to
+            // Recorded now rather than in the completion handler. A superseded animation's
+            // completion bails at the generation check, and if the baseline were only written
+            // there it would be left describing a height the panel has not been at for two
+            // switches — enough for the next correction to animate to a place it already is.
+            // Logged once as `350 350 363 363` followed by a second `animate 363 -> 350`.
+            settledHeight = to.height
+
+            // The rewind. On a grow SwiftUI has already jumped the window to the settled height by
+            // the time the content report arrives, so without this the animation starts at its own
+            // destination and there is nothing to see. `display: false` because this is not a
+            // frame anyone should be shown — it is where the animation begins, and the animation
+            // begins in the same call stack.
+            if !MenuBarPanelResize.same(window.frame, from) {
+                // `display: false` is not enough on its own — the frame still reaches the window
+                // server, and on a 195pt grow that is a visible flash of the panel at its old
+                // height. This holds the screen until the animation's first frame is in.
+                window.disableScreenUpdatesUntilFlush()
+                window.setFrame(from, display: false)
+            }
+
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = Theme.Motion.panelResizeDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                // The whole rect in one call, which is what holds the top edge still: the origin
+                // moves by Δy = −Δh, so y + h is constant at every step. Animating height and
+                // origin as separate properties would let rounding wobble the top edge.
+                window.animator().setFrame(to, display: true)
+            }, completionHandler: { [weak self] in
+                MainActor.assumeIsolated {
+                    // A newer switch may have started meanwhile; it owns the state now, and
+                    // clearing `isAdjusting` here would unguard its animation.
+                    guard let self, generation == self.generation else { return }
+                    self.isAdjusting = false
+                    self.inFlightTo = nil
+                    // One settling pass: absorbs sub-pixel residue and anything SwiftUI did to the
+                    // window while we were not listening.
+                    self.pin()
+                }
+            })
+
+            log.debug("""
+                animate \(from.height, privacy: .public) -> \(to.height, privacy: .public) \
+                top=\(to.maxY, privacy: .public) \
+                anchorTop=\(self.anchorTop ?? -1, privacy: .public)
+                """)
+        }
     }
 
     /// The screen holding the status item, which is the one the window is on — not

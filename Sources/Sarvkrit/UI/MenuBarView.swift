@@ -70,27 +70,25 @@ struct MenuBarView: View {
                 onHeight: { MenuBarWindowAnchor.shared.note(contentHeight: $0) }
             )
         )
-        // **Nothing here may animate this panel's height.** There used to be a `.standardMotion`
-        // per height-bearing value, on the theory that `MenuBarWindowAnchor` could follow the
-        // content through the animation. It does follow it, and SwiftUI overwrites the result:
-        // SwiftUI sizes this window from the content's *settled* height, so on a grow it jumps
-        // straight to the final height and re-asserts it on every content change, while the
-        // anchor drags it back to whatever height the animation is currently at. One instrumented
-        // Keyboard → Files switch, logged as `before -> after` window heights:
+        // **Nothing here may animate this panel's height.** The window animates; the content
+        // does not. `MenuBarWindowAnchor` owns the one and `TopPinnedContentView` holds the other
+        // still while it moves.
+        //
+        // There used to be a `.standardMotion` per height-bearing value, on the theory that the
+        // anchor could follow the content through a SwiftUI animation. It does follow it, and
+        // SwiftUI overwrites the result: SwiftUI sizes this window from the content's *settled*
+        // height, so on a grow it jumps straight to the final height and re-asserts it on every
+        // content change, while the anchor drags it back to whatever height the animation is at.
+        // One instrumented Keyboard → Files switch, logged as `before -> after` window heights:
         //
         //     533 -> 338   533 -> 341   341 -> 341   533 -> 343   343 -> 343   533 -> 345  …
         //
         // Twenty-five of those inside 150ms and 195pt of travel on the bottom edge — two writers,
-        // alternating. That is the panel "moving and resetting" as you change tabs.
+        // alternating, which is the panel "moving and resetting" as you change tabs. With the
+        // animation moved to the window there is one writer and one animation.
         //
-        // With the animation gone the content settles in one pass, SwiftUI asserts the height at
-        // most once, and the anchor's correction is a single step. The strip still animates its
-        // own selection pill in `TrayPanelStrip`, on a view of fixed height, so nothing there can
-        // move the panel's bottom edge.
-        //
-        // **Animating the resize is not simply missing here; it was tried and it is unreachable
-        // from inside `MenuBarExtra`.** See `MenuBarWindowProbe` for the two measurements that
-        // close it off.
+        // The strip still animates its own selection pill in `TrayPanelStrip`, on a view of fixed
+        // height, so nothing there can move the panel's bottom edge.
     }
 
     /// The whole strip. Features and General are built here rather than in `AppState` because they
