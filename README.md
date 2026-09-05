@@ -43,6 +43,31 @@ before you run it: <https://sarvkrit.com/install> is the script, served as plain
 already have the DMG, `xattr -dr com.apple.quarantine /Applications/Sarvkrit.app` is the same idea
 by hand.
 
+### Homebrew
+
+```sh
+brew install --cask sadana-psylief/tap/sarvkrit
+```
+
+Already have Sarvkrit in `/Applications`? Homebrew refuses to write over an app it did not install,
+so adopt the existing copy instead — `brew install --cask --adopt sadana-psylief/tap/sarvkrit` —
+and `brew upgrade --cask sarvkrit` from then on.
+
+<!-- TODO(notarize): drop the paragraph below, and the postflight_steps block in the tap's
+     Casks/sarvkrit.rb that it describes, once `make notarize` has run for real. -->
+
+Homebrew quarantines everything it downloads and removed the `--no-quarantine` escape hatch in 5.1,
+so an un-notarized cask installed the ordinary way walks straight back into step 2 above. The cask
+therefore strips the attribute itself after installing, and leans on its pinned `sha256` to
+guarantee it installed the bytes that were published — the same trade the install script makes when
+it checks the signature by hand. It is not equivalent to notarization: it swaps Apple's trust root
+for a hash published by the same repo as the DMG. The DMG route above is the one that keeps
+Gatekeeper's own check.
+
+The cask lives in [sadana-psylief/homebrew-tap](https://github.com/sadana-psylief/homebrew-tap),
+not `homebrew/cask` — the official tap audits with `gktool scan` and no longer accepts un-notarized
+apps. `scripts/update-tap.sh` keeps it in step with each release; see **Releasing** below.
+
 Sarvkrit lives in the menu bar and has no Dock icon until you open its window.
 
 ---
@@ -556,6 +581,17 @@ make release VERSION=1.1.1 RELEASE_ARGS=--allow-unnotarized
 
 which also insists the notes tell people about the **Open Anyway** detour they will hit.
 
+`release.sh` finishes by running `scripts/update-tap.sh`, which downloads the DMG GitHub is now
+serving, hashes it, and rewrites `version` and `sha256` in
+[sadana-psylief/homebrew-tap](https://github.com/sadana-psylief/homebrew-tap). It hashes the
+published asset rather than `dist/Sarvkrit.dmg` so the cask can only ever promise what users
+actually receive. A release cannot be un-published, so a failure there is reported rather than
+fatal — the release stands and Homebrew users sit one version behind until you re-run:
+
+```bash
+make tap VERSION=1.1.1
+```
+
 Because `sarvkrit.com/download` and GitHub's own "latest" link both resolve through
 `releases/latest/download/Sarvkrit.dmg`, a new release is picked up with no change on the site.
 The site's own copy — the version it prints, the feature list — is a separate change in
@@ -605,11 +641,15 @@ why the install section above has a step 2 at all.
    passing on both the app and the DMG. Cut a new version rather than replacing the v1.0 asset:
    the v1.0 notes publish that DMG's sha256 under *Verifying the download*, so clobbering the
    asset in place would make the published hash a lie.
-6. Grep both repos for the marker `TODO` + `(notarize)` and delete what it finds: the install
-   step 2 above, step 2 of `INSTALL_STEPS`, the `OpenAnywayMock` illustration and its `.ctx-*`
-   rules in `index.css`. This runbook is a hit too and stays — it is the instruction, not the
-   thing being removed. Then fix step 2 of the v1.0 release notes, which still describes the
-   Gatekeeper detour.
+6. Grep **all three** repos for the marker `TODO` + `(notarize)` and delete what it finds: the
+   install step 2 above, step 2 of `INSTALL_STEPS`, the `OpenAnywayMock` illustration and its
+   `.ctx-*` rules in `index.css`, and — in
+   [sadana-psylief/homebrew-tap](https://github.com/sadana-psylief/homebrew-tap) — the
+   `postflight_steps` block in `Casks/sarvkrit.rb`, which is only stripping the quarantine
+   attribute because the DMG is not notarized. Once it is, Homebrew's own quarantine is exactly
+   what should be left in place, and the cask becomes an ordinary one. This runbook is a hit too
+   and stays — it is the instruction, not the thing being removed. Then fix step 2 of the v1.0
+   release notes, which still describes the Gatekeeper detour.
 
 **The Team ID will almost certainly change.** `77A36893HP` is a *free personal team* — Xcode's own
 record says `isFreeProvisioningTeam = true`, `teamType = Personal Team`, named "Tushar Sadana
@@ -661,7 +701,8 @@ that marketing a product as a practical substitute definitely competes.
 This is a **source-available** licence, not an open-source one. That distinction is deliberate: the
 OSI definition requires permitting competing derivative works, which is the one thing this licence
 withholds. Practically, that means GitHub won't show an open-source licence badge, Sarvkrit can't go
-into Homebrew core, and some people won't contribute to non-OSI projects. That's the cost of the
+into Homebrew core (formulae need an OSI licence; the cask above is unaffected), and some people
+won't contribute to non-OSI projects. That's the cost of the
 term, not an oversight.
 
 ### The name
