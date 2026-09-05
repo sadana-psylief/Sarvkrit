@@ -9,7 +9,7 @@ DIST_DIR   := dist
 DEST       := -destination 'platform=macOS,arch=arm64'
 RELEASE_APP := $(BUILD_DIR)/Build/Products/Release/$(APP).app
 
-.PHONY: all generate build debug test preview run dmg notarize release install uninstall clean
+.PHONY: all generate build debug test preview run dmg notarize release tap install uninstall clean
 
 all: build
 
@@ -59,7 +59,16 @@ dmg: build
 notarize:
 	./scripts/notarize.sh $(DIST_DIR)/$(APP).dmg
 
-## Cuts a GitHub release from a commit already on main: build, notarize, tag, publish.
+## Points the Homebrew cask at a release that is already published, hashing the DMG GitHub is
+## serving rather than the one in dist/. `make release` runs this itself; it is a separate target
+## because a release cannot be un-published, so when the tap push is the thing that failed, this
+## is the whole recovery.
+##   make tap VERSION=1.1.1
+tap:
+	./scripts/update-tap.sh $(VERSION)
+
+## Cuts a GitHub release from a commit already on main: build, notarize, tag, publish, and point
+## the Homebrew cask at it.
 ## Notarization is the gate — nothing is tagged or uploaded if Gatekeeper would still block it.
 ##   make release VERSION=1.1.1
 ##
