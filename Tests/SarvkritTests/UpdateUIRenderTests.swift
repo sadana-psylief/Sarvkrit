@@ -104,6 +104,50 @@ final class UpdateUIRenderTests: XCTestCase {
     /// The command the notice hands over has to be exactly the one the README and the site
     /// document, character for character — it is the entire update path.
     func testInstallCommandIsTheDocumentedOne() {
-        XCTAssertEqual(UpdateNoticeView.installCommand, "curl -fsSL https://sarvkrit.com/install | sh")
+        XCTAssertEqual(InstallSource.direct.updateCommand, "curl -fsSL https://sarvkrit.com/install | sh")
+        XCTAssertEqual(InstallSource.homebrew.updateCommand, "brew upgrade --cask sarvkrit")
+    }
+
+    /// Detection has to key on the running bundle, not merely on Homebrew being present: plenty of
+    /// people have brew installed and Sarvkrit from the DMG, and telling them to `brew upgrade`
+    /// something brew has never heard of is a dead end.
+    func testHomebrewIsDetectedOnlyForTheBundleTheCaskroomPointsAt() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("InstallSourceTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let apps = root.appendingPathComponent("Applications")
+        let ours = apps.appendingPathComponent("Sarvkrit.app")
+        let someoneElses = apps.appendingPathComponent("Elsewhere/Sarvkrit.app")
+        try FileManager.default.createDirectory(at: ours, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: someoneElses, withIntermediateDirectories: true)
+
+        // Exactly the layout `brew install --cask` leaves behind: the real bundle in the
+        // applications directory, and a symlink to it under Caskroom/<token>/<version>.
+        let prefix = root.appendingPathComponent("opt/homebrew")
+        let caskroom = prefix.appendingPathComponent("Caskroom/sarvkrit/1.1.0")
+        try FileManager.default.createDirectory(at: caskroom, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: caskroom.appendingPathComponent("Sarvkrit.app"), withDestinationURL: ours)
+
+        XCTAssertEqual(
+            InstallSource.detect(bundleURL: ours, version: "1.1.0", prefixes: [prefix.path]),
+            .homebrew)
+
+        // A different bundle at the same version — brew manages a copy, but not this one.
+        XCTAssertEqual(
+            InstallSource.detect(bundleURL: someoneElses, version: "1.1.0", prefixes: [prefix.path]),
+            .direct)
+
+        // The right bundle, but the Caskroom entry is a leftover from an older release, so brew's
+        // record is stale and `brew upgrade` would be the wrong advice.
+        XCTAssertEqual(
+            InstallSource.detect(bundleURL: ours, version: "1.2.0", prefixes: [prefix.path]),
+            .direct)
+
+        // No Homebrew at all.
+        XCTAssertEqual(
+            InstallSource.detect(bundleURL: ours, version: "1.1.0", prefixes: []),
+            .direct)
     }
 }

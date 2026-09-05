@@ -9,11 +9,19 @@ import SwiftUI
 /// Open Anyway" on *every* update. `curl` sets no quarantine attribute, so the install script
 /// never meets that wall — and it already checks the signature and the team itself, quits the
 /// running copy, and replaces the app in place.
+///
+/// Which command depends on how this copy was installed. Giving the curl line to someone who
+/// installed through Homebrew would have the script overwrite the bundle out from under the
+/// cask, so `InstallSource` decides; see the reasoning there.
 struct UpdateNoticeView: View {
     var release: LatestRelease
     var onSkip: () -> Void
 
-    static let installCommand = "curl -fsSL https://sarvkrit.com/install | sh"
+    /// Resolved once, at init, rather than on every render: it touches the filesystem, and the
+    /// answer cannot change while the app is running.
+    var source: InstallSource = .detect()
+
+    var installCommand: String { source.updateCommand }
 
     @State private var copied = false
 
@@ -44,7 +52,7 @@ struct UpdateNoticeView: View {
                 .foregroundStyle(.secondary)
 
             HStack(spacing: Theme.Space.sm) {
-                Text(Self.installCommand)
+                Text(installCommand)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .lineLimit(1)
@@ -82,7 +90,7 @@ struct UpdateNoticeView: View {
         // A deliberate user action, so no nspasteboard.org "transient" marker: they asked for
         // this to be on the clipboard and it should behave like anything else they copied.
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(Self.installCommand, forType: .string)
+        NSPasteboard.general.setString(installCommand, forType: .string)
         copied = true
         ToastPresenter.shared.show("Copied", symbolName: "doc.on.doc")
     }
