@@ -94,6 +94,28 @@ struct EventLog: Codable, Equatable {
 
     var isEmpty: Bool { cursor.isEmpty && clicks.isEmpty && keys.isEmpty }
 
+    /// Hand-written so that reading a log back goes through the same sort as building one.
+    ///
+    /// **The synthesised decoder does not call the initialiser above.** It assigns the stored
+    /// properties directly, so every guarantee that initialiser establishes — the one the binary
+    /// search in `indexOfSample` depends on — would hold for a log built in memory and quietly not
+    /// hold for the same log read off disk. That is the worst shape for a bug: it cannot happen in
+    /// a test that builds its own fixture, only in the field, and only on a recording somebody
+    /// cared enough about to reopen.
+    ///
+    /// Points are encoded as `CGPoint`'s own compact array form here, unlike `StudioProject`,
+    /// which spells out `width`/`height`. The difference is deliberate: a project file is short
+    /// and worth reading, and an event log is seventy thousand samples nobody will ever open.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(cursor: (try? container.decode([CursorSample].self, forKey: .cursor)) ?? [],
+                  clicks: (try? container.decode([ClickEvent].self, forKey: .clicks)) ?? [],
+                  keys: (try? container.decode([KeyEvent].self, forKey: .keys)) ?? [],
+                  flags: (try? container.decode([TimeInterval].self, forKey: .flags)) ?? [])
+    }
+
+    private enum CodingKeys: String, CodingKey { case cursor, clicks, keys, flags }
+
     // MARK: - Lookup
 
     /// The pointer's position at `t`, interpolated between the two samples either side.

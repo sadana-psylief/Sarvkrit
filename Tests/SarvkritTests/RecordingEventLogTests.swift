@@ -91,6 +91,27 @@ final class RecordingEventLogTests: XCTestCase {
         XCTAssertEqual(log.cursor.map(\.t), [0, 1, 2])
     }
 
+    /// **The synthesised decoder does not call the sorting initialiser.** It assigns the stored
+    /// properties directly, so a log read back from disk skips the one line that makes every
+    /// lookup in this type safe — and the fixture in the round-trip test above is already in
+    /// order, so it cannot catch it. This is that test.
+    ///
+    /// The JSON is built by re-ordering what the encoder itself produced, rather than written by
+    /// hand, so the test says nothing about the wire format and cannot break when it changes.
+    func testSamplesAreSortedWhenReadBackFromDisk() throws {
+        let ordered = EventLog(cursor: [sample(0, 0, 0), sample(1, 10, 0), sample(2, 20, 0)])
+        var asDictionary = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try JSONEncoder().encode(ordered))
+                as? [String: Any])
+        let cursorEntries = try XCTUnwrap(asDictionary["cursor"] as? [Any])
+        asDictionary["cursor"] = Array(cursorEntries.reversed())
+
+        let shuffled = try JSONSerialization.data(withJSONObject: asDictionary)
+        let log = try JSONDecoder().decode(EventLog.self, from: shuffled)
+        XCTAssertEqual(log.cursor.map(\.t), [0, 1, 2],
+                       "a log read back from disk was left in the order the file happened to have")
+    }
+
     func testClicksAreSortedOnConstruction() {
         let log = EventLog(clicks: [ClickEvent(t: 3, point: .zero, button: .left, isDown: true),
                                     ClickEvent(t: 1, point: .zero, button: .left, isDown: true)])
