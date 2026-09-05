@@ -509,16 +509,58 @@ brew install xcodegen create-dmg   # one time
 make build     # release build into build/
 make test      # unit tests
 make install   # copy to /Applications
+make preview   # renders the snapshot suites' PNGs into build/preview
 make dmg       # dist/Sarvkrit.dmg
 make notarize  # needs a paid Apple Developer account — see below
-make release VERSION=1.0.1   # bump, build, notarize, then tag and publish to GitHub
+make release VERSION=1.1.1   # build, notarize, then tag and publish to GitHub
 ```
 
-`make release` treats notarization as a gate: it bumps `MARKETING_VERSION`, builds, runs
-`make notarize`, and only if that verifies its own work does it commit, tag and create the GitHub
-release. There is no path through it that publishes a DMG users would be blocked by. Because
-`sarvkrit.com/download` and GitHub's own "latest" link both resolve through
+### Cutting a release
+
+`main` takes no direct pushes — see [CONTRIBUTING.md](CONTRIBUTING.md) — so a release is two
+steps, and `make release` is only the second one.
+
+**First, a release-prep pull request**, carrying everything that has to be *in* the tagged commit:
+
+1. `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml`. The build number is
+   monotonic and is not a copy of the marketing version.
+2. `docs/releases/<version>.md` — the release notes, with `@SHA@` where the DMG's checksum goes.
+   `release.sh` substitutes it after the DMG exists, because stapling rewrites the file and a
+   hash taken any earlier would be published beside a DMG that no longer matches it.
+3. Any pictures the notes use, under `docs/images/`. They are referenced at
+   `raw/<tag>/docs/images/…`, so they resolve only from inside the tagged commit; `release.sh`
+   checks every such path is tracked before it publishes anything.
+
+The artwork is generated, not photographed:
+
+```bash
+make preview
+swift scripts/make-release-art.swift build/preview docs/images
+```
+
+`make preview` is the existing snapshot suites writing their PNGs — see `PreviewDirectory.swift` —
+and `make-release-art.swift` frames them into the release-note cards and the DMG background. So
+the pictures on the release page are the same views the tests assert on, and they cannot drift
+from the app without a test noticing first.
+
+**Then `make release VERSION=…`**, from a clean worktree sitting exactly on `origin/main`. It
+refuses otherwise, and refuses if `project.yml` is not already at that version. It builds,
+notarizes, and only if notarization verifies its own work does it push the tag and create the
+GitHub release — there is no path through it that publishes a DMG users would be blocked by.
+
+Until there is a paid Apple Developer account, that gate has to be opened explicitly:
+
+```bash
+make release VERSION=1.1.1 RELEASE_ARGS=--allow-unnotarized
+```
+
+which also insists the notes tell people about the **Open Anyway** detour they will hit.
+
+Because `sarvkrit.com/download` and GitHub's own "latest" link both resolve through
 `releases/latest/download/Sarvkrit.dmg`, a new release is picked up with no change on the site.
+The site's own copy — the version it prints, the feature list — is a separate change in
+[sarvkrit_public](https://github.com/sadana-psylief/sarvkrit_public), and it belongs *after* the
+release exists, or the page claims a version the download does not serve.
 
 `Sarvkrit.xcodeproj` is generated from `project.yml` by XcodeGen and is **not** checked in. Run
 `make generate` (or any build target) before opening the project in Xcode.
@@ -557,7 +599,8 @@ why the install section above has a step 2 at all.
    xcrun notarytool store-credentials SarvkritNotary \
      --apple-id tusharsadana@icloud.com --team-id <new team ID> --password <app-specific-password>
    ```
-5. `make release VERSION=1.0.1`. It will not tag or publish anything unless notarization has
+5. `make release VERSION=1.1.1` — with no `--allow-unnotarized`, which is the whole point of
+   getting here. It will not tag or publish anything unless notarization has
    verified itself — `spctl` reporting `source=Notarized Developer ID` and `stapler validate`
    passing on both the app and the DMG. Cut a new version rather than replacing the v1.0 asset:
    the v1.0 notes publish that DMG's sha256 under *Verifying the download*, so clobbering the

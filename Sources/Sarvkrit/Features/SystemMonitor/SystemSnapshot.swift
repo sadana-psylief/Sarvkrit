@@ -127,7 +127,13 @@ extension SystemSnapshot {
                   let up = network.uploadPerSecond else { return nil }
             return down + up
         case .power:
-            return power?.watts
+            // Magnitude, because `watts` is signed — negative while discharging — and everything
+            // else about this row already reads it that way: the meter plots `abs`, and the
+            // ceiling is `max(1, peak)`, which an all-negative window collapses to 1. Charting
+            // the raw value asked Charts to draw a mark at -24 against a 0...1 domain; Charts
+            // does not clip to the plot area, so the area mark painted 153pt of tint down over
+            // the adapter, battery and health rows beneath it.
+            return power?.watts.map(abs)
         case .battery:
             guard let battery, battery.isPresent else { return nil }
             return battery.percent

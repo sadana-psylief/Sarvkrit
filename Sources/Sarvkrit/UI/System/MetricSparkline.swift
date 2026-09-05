@@ -80,6 +80,11 @@ struct MetricSparkline: View {
         // two minutes of history is legible at this height.
         .frame(maxWidth: .infinity)
         .frame(height: 28)
+        // Swift Charts does not clip marks to the plot area, so a sample outside the y-domain is
+        // drawn outside this frame and over whatever is below it — which is what a signed power
+        // reading against a 0...ceiling domain did to the Power panel. The domains above are the
+        // real fix; this is the guard that keeps the next one from reaching the rest of the panel.
+        .clipped()
         // The number beside it already says everything this conveys.
         .accessibilityHidden(true)
     }

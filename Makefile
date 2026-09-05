@@ -59,11 +59,16 @@ dmg: build
 notarize:
 	./scripts/notarize.sh $(DIST_DIR)/$(APP).dmg
 
-## Cuts a notarized GitHub release: bump, build, notarize, and only then tag and publish.
+## Cuts a GitHub release from a commit already on main: build, notarize, tag, publish.
 ## Notarization is the gate — nothing is tagged or uploaded if Gatekeeper would still block it.
-##   make release VERSION=1.0.1
+##   make release VERSION=1.1.1
+##
+## The version bump and the release notes land through a pull request *first*; main takes no
+## direct pushes, so release.sh only pushes the tag. It refuses if project.yml is not already at
+## VERSION. Until there is a paid Apple Developer account, ship signed-but-not-notarized with:
+##   make release VERSION=1.1.1 RELEASE_ARGS=--allow-unnotarized
 release:
-	./scripts/release.sh $(VERSION)
+	./scripts/release.sh $(VERSION) $(RELEASE_ARGS)
 
 ## Install to /Applications, which is where Launch at Login actually wants the app to live.
 install: build
