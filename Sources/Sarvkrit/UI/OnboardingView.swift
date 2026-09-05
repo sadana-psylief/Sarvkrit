@@ -23,7 +23,7 @@ struct OnboardingView: View {
                 .padding(.vertical, Theme.Space.sm)
             }
 
-            Section("Why Accessibility access") {
+            Section {
                 Text("""
                     Sarvkrit watches for the specific keys and clicks you've switched on, and \
                     nothing else. It doesn't record what you type, and it never sends anything \
@@ -31,6 +31,20 @@ struct OnboardingView: View {
                     permission apps use to control the interface on your behalf.
                     """)
                     .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Why Accessibility access")
+            } footer: {
+                // The update check is on by default and macOS announces it as a background item
+                // on the next launch. Saying so here means that notification is something the
+                // user was told about, rather than something that appears out of nowhere.
+                Text("""
+                    Separately: Sarvkrit asks GitHub once a day whether there's a newer version. \
+                    That check runs as a background item you can switch off in Settings, and it \
+                    sends nothing about you or your Mac.
+                    """)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

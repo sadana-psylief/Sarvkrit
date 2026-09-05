@@ -467,7 +467,22 @@ two separate grants.
 ## Privacy
 
 Clipboard history is kept on your Mac, in `~/Library/Application Support/Sarvkrit/`. It is never
-uploaded anywhere — Sarvkrit has no network code at all.
+uploaded anywhere — **the app contains no network code at all.**
+
+**One thing does reach the internet, and it is deliberately not part of the app.** Sarvkrit ships
+a launchd job that asks GitHub, roughly once a day, what the newest release is, and writes the
+answer to a file the app then reads. That is the whole of it: an unauthenticated `GET` with no
+token, no query string and no identifier of any kind. Nothing about you or your Mac is sent, and
+nothing is sent back.
+
+It is a separate job rather than code inside the app for a reason you can act on: you can read it
+(`Sarvkrit.app/Contents/Resources/check-for-update.sh` — eighty lines of shell), you can see
+it listed under **System Settings → General → Login Items → Allow in the Background**, and you can
+switch it off there or in **Settings → General** without giving up anything else the app does.
+With it off, Sarvkrit makes no network requests whatsoever.
+
+Sarvkrit never installs an update itself. When a newer version exists it says so and shows you the
+command to run.
 
 **Copies marked confidential are never recorded.** macOS has an established convention
 ([nspasteboard.org](https://nspasteboard.org/)) for marking a copy as "don't keep this", and password

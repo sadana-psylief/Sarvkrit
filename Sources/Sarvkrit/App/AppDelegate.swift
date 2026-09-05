@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // shortcut that must never be missing when it is needed.
         CaptureOverlayGuard.shared.install()
         reconcileKeepAwake()
+        reconcileUpdateAgent()
+        observeActivation()
 
         guard !AppState.shared.hasCompletedOnboarding else { return }
         MainWindowController.shared.show()
@@ -100,6 +102,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let urlLog = Logger(subsystem: AppIdentity.logSubsystem, category: "URLScheme")
     private static let captureLog = Logger(subsystem: AppIdentity.logSubsystem, category: "Capture")
+
+    /// Registers the background update check, and repairs it when it has gone missing.
+    ///
+    /// It goes missing for real reasons: `install.sh` updates by deleting the bundle and copying
+    /// the new one over it, and the signing identity changes the day there is a paid Developer
+    /// account. Reconciling costs one cheap status read and fixes both. It runs in the other
+    /// direction too, so a preference turned off while a stale registration survived is repaired
+    /// rather than left contradicting itself.
+    ///
+    /// Three gates, each for its own reason:
+    ///
+    /// - Not during tests. A test run must not plant login items on the machine running it.
+    /// - Not before onboarding is done. Registering during the first few seconds fires a
+    ///   "Background Items Added" notification from nowhere, on top of the Accessibility prompt
+    ///   the user is already being asked about. It waits for a launch they arrive at themselves.
+    /// - Not from outside /Applications. Registering a build directory plants a record pointing
+    ///   at a path `make clean` deletes, leaving an orphan row in the user's Login Items forever.
+    private func reconcileUpdateAgent() {
+        guard !AppIdentity.isRunningTests,
+              AppState.shared.hasCompletedOnboarding,
+              UpdateCheckAgent.isInstalledLocation() else { return }
+        UpdateCheckAgent.reconcile(userWants: AppState.shared.wantsAutomaticUpdateChecks)
+        AppState.shared.refreshUpdateAgentStatus()
+    }
+
+    /// One of the four places the update feed is re-read. The others are launch (above), the menu
+    /// bar panel appearing, and the main window opening.
+    ///
+    /// All four are needed, and this one alone is not enough: Sarvkrit runs as an accessory app,
+    /// so opening the menu bar panel does not make it active and this never fires. A user who
+    /// lives in the tray and never opens the window would otherwise never see a notice at all.
+    private func observeActivation() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { AppState.shared.updates.refresh() }
+        }
+    }
 
     /// Launching Sarvkrit while it's already running has to do *something* visible —
     /// especially when the menu bar icon is hidden, since re-launching is then the only way

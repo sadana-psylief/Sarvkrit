@@ -48,6 +48,15 @@ struct MenuBarView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
+            // Below the permission banners and above the strip, for the same reason those are
+            // where they are: it's an app-level message, not something belonging to one panel.
+            if case .available(let release) = app.updates.state {
+                UpdateBanner(version: release.version?.description ?? release.tagName) {
+                    MainWindowController.shared.show(selecting: SidebarItem.generalID)
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             TrayPanelStrip(panels: panels, selection: selection)
 
             selectedContent
@@ -70,6 +79,14 @@ struct MenuBarView: View {
                 onHeight: { MenuBarWindowAnchor.shared.note(contentHeight: $0) }
             )
         )
+        // The panel opening is the trigger that matters most for the update check. Sarvkrit runs
+        // as an accessory app, so opening this panel does not make it active and
+        // `didBecomeActive` never fires — without this, someone who lives in the menu bar and
+        // never opens the window would never see an update notice at all.
+        //
+        // Safe to sit in this chain: `refresh()` reads a file and publishes only when the answer
+        // changes, so it adds no height of its own. See the warning immediately below.
+        .onAppear { app.updates.refresh() }
         // **Nothing here may animate this panel's height.** The window animates; the content
         // does not. `MenuBarWindowAnchor` owns the one and `TopPinnedContentView` holds the other
         // still while it moves.
