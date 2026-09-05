@@ -45,17 +45,87 @@ final class BackgroundFrameTests: XCTestCase {
 
     // MARK: - Alignment
 
-    func testWithNoSlackEveryAlignmentLandsInTheSamePlace() {
-        // Correct rather than a bug: with the canvas exactly the padded image there is nowhere
-        // else to put it. Pinned so nobody "fixes" alignment by inventing slack.
-        let centred = BackgroundLayout.compute(imageSize: image, style: style { $0.padding = 20 })
-        for alignment in CaptureBackground.Alignment.allCases {
-            let placed = BackgroundLayout.compute(imageSize: image, style: style {
-                $0.padding = 20
+    /// The bug report this replaces: "alignment does not work only left center right no top or
+    /// bottom."
+    ///
+    /// It was true, and it was a design error rather than a wiring one. Alignment used to spend
+    /// only the slack *left over* after the padding, and the only thing that ever creates slack
+    /// is the Ratio target — which grows exactly one dimension. On `.original` with a landscape
+    /// shot that is always the horizontal one, so vertical free space was zero forever.
+    ///
+    /// Alignment now redistributes the padding itself, keeping the total, so all nine directions
+    /// do something on any capture.
+    func testEveryAlignmentMovesTheShot() {
+        func origin(_ alignment: CaptureBackground.Alignment) -> CGPoint {
+            BackgroundLayout.compute(imageSize: image, style: style {
+                $0.padding = 40
                 $0.alignment = alignment
-            })
-            XCTAssertEqual(placed.imageRect, centred.imageRect, "\(alignment) moved without slack")
+            }).imageRect.origin
         }
+        let centre = origin(.centre)
+        for alignment in CaptureBackground.Alignment.allCases where alignment != .centre {
+            XCTAssertNotEqual(origin(alignment), centre, "\(alignment) did not move")
+        }
+        // And each one moves the way its name says.
+        XCTAssertLessThan(origin(.top).y, centre.y)
+        XCTAssertGreaterThan(origin(.bottom).y, centre.y)
+        XCTAssertLessThan(origin(.leading).x, centre.x)
+        XCTAssertGreaterThan(origin(.trailing).x, centre.x)
+    }
+
+    func testCentreIsExactlyWhereItAlwaysWas() {
+        // The one alignment that must not change: everything anybody has already made is centred.
+        let placed = BackgroundLayout.compute(imageSize: image, style: style {
+            $0.padding = 40
+            $0.alignment = .centre
+        })
+        XCTAssertEqual(placed.imageRect.minX, 40, accuracy: 0.001)
+        XCTAssertEqual(placed.imageRect.minY, 40, accuracy: 0.001)
+    }
+
+    func testAnAlignedShotKeepsAMarginAndTheTotalPadding() {
+        // Never flush: a shot jammed against the canvas edge reads as a mistake, and the shadow
+        // would be clipped by it. A quarter of the padding stays on the near side and the rest
+        // goes opposite, so the total is preserved either way.
+        let padding: CGFloat = 40
+        let placed = BackgroundLayout.compute(imageSize: image, style: style {
+            $0.padding = padding
+            $0.alignment = .topLeading
+        })
+        XCTAssertEqual(placed.imageRect.minX, padding * 0.25, accuracy: 0.001)
+        XCTAssertEqual(placed.imageRect.minY, padding * 0.25, accuracy: 0.001)
+
+        let canvas = BackgroundLayout.compute(imageSize: image, style: style {
+            $0.padding = padding
+            $0.alignment = .topLeading
+        }).canvas
+        XCTAssertEqual(canvas.width - placed.imageRect.maxX, padding * 1.75, accuracy: 0.001,
+                       "the padding moved, it did not evaporate")
+    }
+
+    func testOppositeAlignmentsMirrorEachOther() {
+        func rect(_ alignment: CaptureBackground.Alignment) -> CGRect {
+            BackgroundLayout.compute(imageSize: image, style: style {
+                $0.padding = 40
+                $0.alignment = alignment
+            }).imageRect
+        }
+        let canvas = BackgroundLayout.compute(imageSize: image, style: style {
+            $0.padding = 40
+        }).canvas
+        XCTAssertEqual(rect(.leading).minX, canvas.width - rect(.trailing).maxX, accuracy: 0.001)
+        XCTAssertEqual(rect(.top).minY, canvas.height - rect(.bottom).maxY, accuracy: 0.001)
+    }
+
+    func testWithNoPaddingAlignmentGoesFlush() {
+        // Nothing to preserve, so the shot goes all the way. Only reachable when there is slack
+        // from a ratio target or an inset, since otherwise the canvas is the image.
+        let placed = BackgroundLayout.compute(imageSize: image, style: style {
+            $0.padding = 0
+            $0.aspect = .square
+            $0.alignment = .top
+        })
+        XCTAssertEqual(placed.imageRect.minY, 0, accuracy: 0.001)
     }
 
     func testAlignmentSpendsTheSlackAnAspectTargetCreates() {
@@ -170,28 +240,91 @@ final class AutoBalanceAsAPreferenceTests: XCTestCase {
 final class ShadowAmountTests: XCTestCase {
 
     /// Opening the panel, nudging the shadow and putting it back must leave the picture it
-    /// started with. It did not: the default read as 50 and 50 gave back a lighter shadow, so a
-    /// round trip quietly changed the export.
-    func testTheDefaultShadowSurvivesARoundTrip() {
+    /// started with — at **any** capture size, now that the mapping scales with one.
+    func testAnyAmountSurvivesARoundTripAtAnySize() {
+        for shortSide in [CGFloat(300), 500, 1200, 4000] {
+            for amount in [Double(5), 20, 50, 80, 100] {
+                let shadow = BackgroundInspector.shadow(amount, shortSide: shortSide)
+                let back = BackgroundInspector.shadowAmount(for: shadow, shortSide: shortSide)
+                XCTAssertEqual(back, amount, accuracy: 0.5, "\(amount) at \(shortSide)")
+            }
+        }
+    }
+
+    /// The midpoint still means the shadow everybody is used to — but only at the capture size
+    /// `CaptureBackground.Shadow()`'s absolute numbers were chosen for. That is the point of
+    /// scaling: 50 is the same *look* everywhere, not the same forty pixels everywhere.
+    func testFiftyOnAFiveHundredPixelShotIsTheOldDefault() {
         let original = CaptureBackground.Shadow()
-        let amount = BackgroundInspector.shadowAmount(for: original)
-        let restored = BackgroundInspector.shadow(amount)
-        XCTAssertEqual(amount, 50, accuracy: 0.5)
+        let restored = BackgroundInspector.shadow(50, shortSide: 500)
         XCTAssertEqual(restored?.radius ?? 0, original.radius, accuracy: 0.5)
         XCTAssertEqual(restored?.offsetY ?? 0, original.offsetY, accuracy: 0.5)
         XCTAssertEqual(restored?.opacity ?? 0, original.opacity, accuracy: 0.01)
     }
 
+    func testABiggerCaptureGetsABiggerShadow() {
+        // The whole complaint: an absolute 40-pixel radius is invisible on a 4K shot.
+        let small = BackgroundInspector.shadow(50, shortSide: 400)
+        let large = BackgroundInspector.shadow(50, shortSide: 2400)
+        XCTAssertEqual((large?.radius ?? 0) / (small?.radius ?? 1), 6, accuracy: 0.01)
+    }
+
     func testZeroMeansNoShadow() {
-        XCTAssertNil(BackgroundInspector.shadow(0))
-        XCTAssertEqual(BackgroundInspector.shadowAmount(for: nil), 0)
+        XCTAssertNil(BackgroundInspector.shadow(0, shortSide: 500))
+        XCTAssertEqual(BackgroundInspector.shadowAmount(for: nil, shortSide: 500), 0)
     }
 
     func testMoreIsMore() {
-        let light = BackgroundInspector.shadow(20)
-        let heavy = BackgroundInspector.shadow(90)
+        let light = BackgroundInspector.shadow(20, shortSide: 500)
+        let heavy = BackgroundInspector.shadow(90, shortSide: 500)
         XCTAssertLessThan(light?.radius ?? 0, heavy?.radius ?? 0)
         XCTAssertLessThan(light?.opacity ?? 0, heavy?.opacity ?? 0)
+    }
+}
+
+/// Corner radii past what CoreGraphics will accept.
+final class RoundedPathTests: XCTestCase {
+
+    /// `CGPath(roundedRect:cornerWidth:cornerHeight:)` asserts when the corner is more than half
+    /// the side. The Corners slider used to stop at 64 and could never get there; it now reaches
+    /// half the shorter side exactly, and Inset shrinks the drawn rect *below* the size that
+    /// maximum was computed from — so this is reachable from the UI, not just from a bad document.
+    func testARadiusPastHalfTheSideIsAStadiumNotACrash() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let path = CGPath.rounded(rect, cornerRadius: 5_000)
+        XCTAssertEqual(path.boundingBox.width, 200, accuracy: 0.5)
+        XCTAssertEqual(path.boundingBox.height, 100, accuracy: 0.5)
+        // A stadium: the mid-height point of the left edge is on the path's boundary, while the
+        // corner the radius has eaten is not inside it.
+        XCTAssertFalse(path.contains(CGPoint(x: 1, y: 1)), "the corner should be rounded away")
+        XCTAssertTrue(path.contains(CGPoint(x: 100, y: 50)), "the middle is still filled")
+    }
+
+    func testZeroRadiusIsAPlainRect() {
+        let path = CGPath.rounded(CGRect(x: 0, y: 0, width: 40, height: 40), cornerRadius: 0)
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)), "no corner should be taken off")
+    }
+
+    func testANegativeRadiusIsTreatedAsZero() {
+        let path = CGPath.rounded(CGRect(x: 0, y: 0, width: 40, height: 40), cornerRadius: -20)
+        XCTAssertTrue(path.contains(CGPoint(x: 1, y: 1)))
+    }
+
+    /// The reachable-from-the-UI case, end to end: corners at the slider's maximum *and* an inset.
+    func testCornersAtMaximumWithAnInsetStillComposites() throws {
+        let base = try XCTUnwrap(CGContext(
+            data: nil, width: 300, height: 200, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        base.setFillColor(CGColor(srgbRed: 0.5, green: 0.5, blue: 0.9, alpha: 1))
+        base.fill(CGRect(x: 0, y: 0, width: 300, height: 200))
+        let image = try XCTUnwrap(base.makeImage())
+
+        var style = CaptureBackground()
+        style.cornerRadius = 100        // half the shorter side, the slider's new maximum
+        style.inset = 50                // and then shrink the rect below what that assumed
+        style.padding = 40
+        XCTAssertNotNil(BackgroundCompositor.render(image, style: style, sources: .init(base: image)))
     }
 }
 

@@ -150,6 +150,66 @@ final class MarkupPreviewTests: XCTestCase {
                                     "the padding is a guarantee, not slack to be spent")
     }
 
+    /// All nine alignments, side by side.
+    ///
+    /// This is the bug report — "alignment does not work only left center right no top or
+    /// bottom" — rendered. Nothing short of nine pictures shows that the top row and the bottom
+    /// row now differ from the middle one, and the arithmetic tests cannot show that the result
+    /// looks deliberate rather than broken.
+    func testTheAlignmentContactSheetRenders() throws {
+        let shot = CGSize(width: 240, height: 150)
+        let base = try XCTUnwrap(CGContext(
+            data: nil, width: Int(shot.width), height: Int(shot.height),
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        base.setFillColor(CGColor(srgbRed: 0.99, green: 0.99, blue: 1, alpha: 1))
+        base.fill(CGRect(origin: .zero, size: shot))
+        base.setFillColor(CGColor(srgbRed: 0.35, green: 0.30, blue: 0.85, alpha: 1))
+        base.fill(CGRect(x: 0, y: 110, width: 240, height: 40))
+        let capture = try XCTUnwrap(base.makeImage())
+
+        var style = CaptureBackground()
+        style.fill = .builtIn(id: "dusk")
+        style.padding = 40
+        style.cornerRadius = 10
+
+        var tiles: [CGImage] = []
+        for alignment in Self.alignmentOrder {
+            style.alignment = alignment
+            tiles.append(try XCTUnwrap(BackgroundCompositor.render(capture, style: style)))
+        }
+        let tile = CGSize(width: CGFloat(tiles[0].width), height: CGFloat(tiles[0].height))
+        let gap: CGFloat = 12
+        let sheet = try XCTUnwrap(CGContext(
+            data: nil,
+            width: Int(tile.width * 3 + gap * 4), height: Int(tile.height * 3 + gap * 4),
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        sheet.setFillColor(CGColor(srgbRed: 0.96, green: 0.96, blue: 0.97, alpha: 1))
+        sheet.fill(CGRect(x: 0, y: 0, width: sheet.width, height: sheet.height))
+        for (index, image) in tiles.enumerated() {
+            let column = CGFloat(index % 3), row = CGFloat(2 - index / 3)   // bottom-left origin
+            sheet.draw(image, in: CGRect(x: gap + column * (tile.width + gap),
+                                         y: gap + row * (tile.height + gap),
+                                         width: tile.width, height: tile.height))
+        }
+        try write(try XCTUnwrap(sheet.makeImage()), "markup-alignments")
+
+        // And the thing the report was about: the top row and the bottom row are not the middle.
+        let origins = Self.alignmentOrder.map { alignment -> CGFloat in
+            style.alignment = alignment
+            return BackgroundLayout.compute(imageSize: shot, style: style).imageRect.minY
+        }
+        XCTAssertLessThan(origins[1], origins[4], "top should sit above centre")
+        XCTAssertGreaterThan(origins[7], origins[4], "bottom should sit below centre")
+    }
+
+    private static let alignmentOrder: [CaptureBackground.Alignment] = [
+        .topLeading, .top, .topTrailing,
+        .leading, .centre, .trailing,
+        .bottomLeading, .bottom, .bottomTrailing,
+    ]
+
     /// The drawn arrow measures what `ArrowGeometry` says it should.
     ///
     /// Rendering it and measuring the pixels back is the check the proportion tests cannot make:

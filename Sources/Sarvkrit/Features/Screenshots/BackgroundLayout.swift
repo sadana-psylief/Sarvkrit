@@ -35,14 +35,24 @@ enum BackgroundLayout {
     /// which is the opposite of padding: padding grows the canvas and leaves the shot alone.
     /// **Alignment** then spends whatever room is left over.
     ///
-    /// **Padding is not room to spend.** Alignment works inside the canvas *already inset by the
-    /// padding*, so it can never push the screenshot into its own margin. Letting it do so was the
-    /// first version of this, and it meant choosing "top left" silently threw the padding away —
-    /// the two controls fought and the last one touched won.
+    /// **Alignment redistributes the padding; it does not spend leftovers.** The first version
+    /// worked inside the canvas already inset by the padding, so it could only move the shot into
+    /// slack that something else had created — and the only thing that creates slack is the Ratio
+    /// target, which grows exactly one dimension. On `.original` with a landscape capture that is
+    /// always the horizontal one, so vertical free space was zero on every screenshot anybody
+    /// would ever take. The bug report was "alignment does not work only left center right no top
+    /// or bottom", and it was accurate.
     ///
-    /// So the slack is only ever what an aspect target added or an inset freed. With neither, all
-    /// nine alignments land in the same place, which is correct rather than a bug: there is
-    /// nowhere else to go.
+    /// So the free space now includes the padding, and a quarter of the padding stays behind as a
+    /// margin on whichever side you align to:
+    ///
+    /// - **centre** lands on `F / 2`, which is exactly where it always was — nothing already made
+    ///   moves;
+    /// - **an edge** keeps `padding × 0.25` near and puts the other 175% opposite, so the total
+    ///   padding is preserved and the shot is never flush. Flush matters: it would clip the
+    ///   shadow against the canvas edge and generally reads as a mistake rather than a choice;
+    /// - **padding 0** collapses the margin to nothing and alignment goes all the way, which is
+    ///   right — there is no padding to preserve.
     private static func place(imageSize: CGSize, in canvas: CGSize,
                               style: CaptureBackground) -> CGRect {
         let inset = max(style.inset, 0)
@@ -52,17 +62,22 @@ enum BackgroundLayout {
         let drawn = CGSize(width: max(imageSize.width * scale, 1),
                            height: max(imageSize.height * scale, 1))
 
-        // The padding is guaranteed on all four sides, so a canvas smaller than twice the padding
-        // still leaves the image centred rather than pushed off one edge.
         let padding = max(style.padding, 0)
-        let content = CGRect(x: padding, y: padding,
-                             width: max(canvas.width - padding * 2, 0),
-                             height: max(canvas.height - padding * 2, 0))
-        let free = CGSize(width: max(content.width - drawn.width, 0),
-                          height: max(content.height - drawn.height, 0))
+        let free = CGSize(width: max(canvas.width - drawn.width, 0),
+                          height: max(canvas.height - drawn.height, 0))
         let unit = style.alignment.unitPoint
-        return CGRect(x: content.minX + free.width * unit.x,
-                      y: content.minY + free.height * unit.y,
+
+        /// Where the image starts along one axis, given all the free space on it.
+        ///
+        /// The margin is halved into `free / 2` as well as clamped, so a canvas with less room
+        /// than two margins centres rather than handing back a negative offset.
+        func offset(free: CGFloat, unit: CGFloat) -> CGFloat {
+            let margin = min(padding * 0.25, free / 2)
+            return margin + (free - margin * 2) * unit
+        }
+
+        return CGRect(x: offset(free: free.width, unit: unit.x),
+                      y: offset(free: free.height, unit: unit.y),
                       width: drawn.width, height: drawn.height)
     }
 }

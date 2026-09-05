@@ -10,9 +10,34 @@ struct BackgroundInspector: View {
     @State private var isNamingPreset = false
     @State private var showsEveryGradient = false
     /// The frame the user last had, so "None" does not throw their padding away.
-    @State private var remembered = CaptureBackground()
+    ///
+    /// Optional, because the fallback before anything has been chosen has to be sized to *this*
+    /// capture — and a `@State` default cannot see the model.
+    @State private var remembered: CaptureBackground?
 
-    private var style: CaptureBackground { model.document.background ?? remembered }
+    private var style: CaptureBackground { model.document.background ?? remembered ?? initial }
+
+    /// The shorter side of what will actually be composited.
+    ///
+    /// `contentRect`, not the base image: `AnnotationRenderer.composition(for:)` lays out against
+    /// the cropped rect, so a cropped capture would otherwise get a shadow and slider limits
+    /// sized to pixels it no longer has.
+    private var shortSide: CGFloat {
+        let size = model.document.contentRect.size
+        return max(min(size.width, size.height), 1)
+    }
+
+    /// What a background looks like before anybody has touched it.
+    ///
+    /// **The shadow has to be sized here, not just on the slider.** `CaptureBackground()` carries
+    /// an absolute 40-pixel radius, which was chosen for a capture about a thousand pixels across
+    /// — on a 4K shot it is invisible, so every new background started with no shadow anybody
+    /// could see and the two-layer treatment would only have made an invisible shadow nicer.
+    private var initial: CaptureBackground {
+        var style = CaptureBackground()
+        style.shadow = Self.shadow(50, shortSide: shortSide)
+        return style
+    }
 
     private func update(_ change: (inout CaptureBackground) -> Void) {
         var next = style
@@ -315,12 +340,12 @@ struct BackgroundInspector: View {
                                           // The other thing Auto Balance chooses — see `choose`.
                                           update { $0.padding = value; $0.isAutoBalanced = false }
                                       }),
-                       in: 0...240)
+                       in: 0...maxPadding)
             }
             labelled("Inset", value: "\(Int(style.inset))") {
                 Slider(value: Binding(get: { style.inset },
                                       set: { value in update { $0.inset = value } }),
-                       in: 0...200)
+                       in: 0...maxInset)
             }
             .help("Shrink the screenshot without growing the canvas")
 
@@ -340,13 +365,13 @@ struct BackgroundInspector: View {
 
             labelled("Shadow", value: "\(Int(shadowAmount))") {
                 Slider(value: Binding(get: { shadowAmount },
-                                      set: { value in update { $0.shadow = Self.shadow(value) } }),
+                                      set: { value in update { $0.shadow = Self.shadow(value, shortSide: shortSide) } }),
                        in: 0...100)
             }
             labelled("Corners", value: "\(Int(style.cornerRadius))") {
                 Slider(value: Binding(get: { style.cornerRadius },
                                       set: { value in update { $0.cornerRadius = value } }),
-                       in: 0...64)
+                       in: 0...maxCorner)
             }
 
             HStack(alignment: .top, spacing: Theme.Space.md) {
@@ -373,22 +398,47 @@ struct BackgroundInspector: View {
     /// here because they are one perceptual thing — "how much shadow" — and separate sliders for
     /// them is a lighting rig, not a screenshot tool. Zero means off, so the toggle is still in
     /// there at the end of the track.
-    private var shadowAmount: Double { Self.shadowAmount(for: style.shadow) }
+    private var shadowAmount: Double { Self.shadowAmount(for: style.shadow, shortSide: shortSide) }
 
-    static func shadowAmount(for shadow: CaptureBackground.Shadow?) -> Double {
-        guard let shadow else { return 0 }
-        return min(shadow.radius / 0.8, 100)
+    static func shadowAmount(for shadow: CaptureBackground.Shadow?, shortSide: CGFloat) -> Double {
+        guard let shadow, shortSide > 0 else { return 0 }
+        return min(shadow.radius / (shortSide * radiusPerUnit), 100)
     }
+
+    // **Every one of these was a fixed number against a value measured in image pixels**, so all
+    // three were roughly half as useful on a Retina capture and a tenth as useful on a 4K one —
+    // which is what "corners can have a wider range" was about. Relative to the capture, they mean
+    // the same thing at any size. Corners reaches half the shorter side, which is a full stadium;
+    // `CGPath.rounded` caps it there anyway, so the slider cannot ask for an invalid path.
+    private var maxPadding: CGFloat { shortSide / 2 }
+    private var maxInset: CGFloat { shortSide / 4 }
+    private var maxCorner: CGFloat { shortSide / 2 }
+
+    /// Radius as a fraction of the shorter side, per point of the slider.
+    ///
+    /// Set so that 50 on a 500-pixel capture is a 40-pixel radius — which is exactly what
+    /// `CaptureBackground.Shadow()` has always been, so the slider's midpoint still means the
+    /// shadow everybody is used to.
+    private static let radiusPerUnit = 0.0016
 
     /// The curve is set so the *default* shadow round-trips: `Shadow()` reads as 50, and 50 gives
     /// back `Shadow()`. Without that, opening the panel and nudging the slider back to where it
     /// started would leave a different picture than the one you opened.
-    static func shadow(_ amount: Double) -> CaptureBackground.Shadow? {
-        guard amount > 0.5 else { return nil }
-        return CaptureBackground.Shadow(radius: amount * 0.8,
-                                        offsetY: amount * 0.4,
-                                        opacity: 0.12 + amount / 100 * 0.46)
+    static func shadow(_ amount: Double, shortSide: CGFloat) -> CaptureBackground.Shadow? {
+        guard amount > 0.5, shortSide > 0 else { return nil }
+        let radius = amount * shortSide * radiusPerUnit
+        return CaptureBackground.Shadow(radius: radius,
+                                        offsetY: radius * 0.5,
+                                        opacity: 0.12 + amount / 100 * 0.46,
+                                        colour: coolBlack)
     }
+
+    /// Shadows are not neutral black.
+    ///
+    /// A pure-black shadow over a coloured background reads as a grey smear; a hair of blue in it
+    /// reads as shade. Applied only where a shadow is being made — a document that stored its own
+    /// colour keeps it.
+    private static let coolBlack = RGBAColour(r: 0.04, g: 0.05, b: 0.10)
 
     /// Nine anchors, laid out as the thing they describe.
     ///

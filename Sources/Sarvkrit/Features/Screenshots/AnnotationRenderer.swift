@@ -112,9 +112,7 @@ enum AnnotationRenderer {
             context.strokePath()
 
         case .rectangle(let shape):
-            let path = CGPath(roundedRect: shape.rect,
-                              cornerWidth: shape.cornerRadius, cornerHeight: shape.cornerRadius,
-                              transform: nil)
+            let path = CGPath.rounded(shape.rect, cornerRadius: shape.cornerRadius)
             if let colour = shape.fill {
                 fill(path, with: colour, in: context)
             }
@@ -263,9 +261,7 @@ enum AnnotationRenderer {
                              width: size.width + text.padding * 2,
                              height: size.height + text.padding * 2)
             // Capped at half the short side, so a capsule is a capsule and never an invalid path.
-            let radius = min(text.cornerRadius, min(box.width, box.height) / 2)
-            let path = CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius,
-                              transform: nil)
+            let path = CGPath.rounded(box, cornerRadius: text.cornerRadius)
             context.setFillColor(background.cgColor)
             context.addPath(path)
             context.fillPath()
