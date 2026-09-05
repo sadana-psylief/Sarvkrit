@@ -37,7 +37,19 @@ final class MenuBarLabelRenderTests: XCTestCase {
 
     func testTheLabelLaysOutWithLiveReadings() throws {
         let features = FeatureRegistry.makeAll()
-        let monitor = try XCTUnwrap(features.compactMap { $0 as? SystemMonitorFeature }.first)
+        // Registry drift is caught by `makeLabel()` and the test above. This one needs a monitor
+        // with something to *say*, and which metrics appear beside the icon is a user preference
+        // — so it reads from an empty suite and gets the defaults, rather than from the
+        // developer's own. Whoever runs this may well have turned every readout off in the real
+        // app, which left `menuBarLine` empty and failed the precondition below on their machine
+        // and nowhere else.
+        XCTAssertNotNil(features.compactMap { $0 as? SystemMonitorFeature }.first,
+                        "SarvkritApp falls back to a bare icon unless this is registered")
+        let suite = "MenuBarLabelRenderTests"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let monitor = SystemMonitorFeature(defaults: defaults)
         // Activated on purpose: a monitor that is switched off contributes nothing to the label,
         // by design, so there would be no live readings to lay out.
         monitor.activate()
