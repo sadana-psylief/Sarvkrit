@@ -27,6 +27,8 @@ final class ScreenRecordingFeature: Feature, ObservableObject {
     let requirements: Set<Requirement> = [.screenRecording]
 
     let recorder: SCKScreenRecordingService
+    /// What the pre-record bar last had chosen. Shared with it rather than copied.
+    let setup: RecordingSetup
     private let defaults: UserDefaults
     private var hotkeys: [GlobalHotkey] = []
 
@@ -43,6 +45,7 @@ final class ScreenRecordingFeature: Feature, ObservableObject {
          defaults: UserDefaults = .standard) {
         self.recorder = recorder
         self.defaults = defaults
+        self.setup = RecordingSetup(defaults: defaults)
     }
 
     // MARK: - Settings

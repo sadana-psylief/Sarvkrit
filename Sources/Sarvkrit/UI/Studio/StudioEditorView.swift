@@ -100,9 +100,7 @@ struct StudioEditorView: View {
     private func isAvailable(_ tab: StudioDocumentModel.Inspector) -> Bool {
         switch tab {
         case .canvas, .cursor, .masks: return true
-        case .camera: return FileManager.default.fileExists(atPath: model.bundle.cameraURL.path)
-        case .audio: return FileManager.default.fileExists(atPath: model.bundle.microphoneURL.path)
-            || FileManager.default.fileExists(atPath: model.bundle.systemAudioURL.path)
+        case .camera, .audio: return true
         // Enabled whenever there is audio to work from — the tab is where you *make* captions,
         // so gating it on already having them would hide the only way to get any.
         case .captions:
@@ -125,11 +123,7 @@ struct StudioEditorView: View {
                 case .camera: CameraInspector(model: model)
                 case .captions: CaptionsInspector(model: model)
                 case .keystrokes: KeystrokesInspector(model: model)
-                case .audio:
-                    SectionHeader("Audio")
-                    Text("Nothing was recorded for this.")
-                        .font(.system(size: Theme.Typography.body))
-                        .foregroundStyle(.secondary)
+                case .audio: AudioInspector(model: model)
                 }
             }
             .padding(Theme.Space.lg)

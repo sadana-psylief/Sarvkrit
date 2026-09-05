@@ -34,17 +34,23 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
 
     /// - Parameter height: capped, because a 4K webcam feed for a 300-point circle is pure waste —
     ///   it costs encode time and disk for detail the canvas throws away.
-    func start(device: AVCaptureDevice, microphone: AVCaptureDevice?,
+    /// - Parameter device: nil records the microphone alone, which is what somebody who wants
+    ///   narration without appearing on camera has asked for.
+    func start(device: AVCaptureDevice?, microphone: AVCaptureDevice?,
                to url: URL, height: Int = 1080) throws {
-        guard !isRecording else { return }
+        guard !isRecording, device != nil || microphone != nil else { return }
 
         let session = AVCaptureSession()
         session.beginConfiguration()
-        session.sessionPreset = height >= 1080 ? .hd1920x1080 : .hd1280x720
+        if device != nil {
+            session.sessionPreset = height >= 1080 ? .hd1920x1080 : .hd1280x720
+        }
 
-        let videoInput = try AVCaptureDeviceInput(device: device)
-        guard session.canAddInput(videoInput) else { throw RecordingError.cannotWrite }
-        session.addInput(videoInput)
+        if let device {
+            let videoInput = try AVCaptureDeviceInput(device: device)
+            guard session.canAddInput(videoInput) else { throw RecordingError.cannotWrite }
+            session.addInput(videoInput)
+        }
 
         if let microphone, let audioInput = try? AVCaptureDeviceInput(device: microphone),
            session.canAddInput(audioInput) {

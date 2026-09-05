@@ -28,6 +28,7 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     private var bundle: RecordingBundle?
     private var manifest: RecordingManifest?
     private let events = EventRecorder()
+    private let camera = CameraRecorder()
     private var displayLink: CADisplayLink?
 
     private(set) var isRecording = false
@@ -46,7 +47,8 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
 
     // MARK: - Start
 
-    func start(_ request: RecordingRequest) async throws {
+    /// - Parameter setup: the camera and microphone the user chose, if any.
+    func start(_ request: RecordingRequest, setup: RecordingSetup? = nil) async throws {
         guard !isRecording else { throw RecordingError.alreadyRecording }
 
         let content = try await SCShareableContent.excludingDesktopWindows(
@@ -81,6 +83,27 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         self.mapPoint = Self.mapper(sourceRect: sourceRect, geometry: geometry,
                                     scale: CGFloat(filter.pointPixelScale), pixels: pixels)
         events.begin(mapping: { [weak self] point in self?.mapPoint?(point) })
+
+        // Started before the stream, so the camera is already rolling when the first screen frame
+        // lands rather than a second behind it.
+        if let setup {
+            let device = setup.cameraID.flatMap { id in
+                CameraRecorder.devices().first { $0.uniqueID == id }
+            }
+            let microphone = setup.microphoneID.flatMap { id in
+                CameraRecorder.microphones().first { $0.uniqueID == id }
+            }
+            // **A microphone with no camera still has to be recorded.** Gating this on the camera
+            // meant choosing a mic alone captured nothing at all, silently — which is the worst
+            // possible way for narration to go missing.
+            if device != nil || microphone != nil {
+                try? camera.start(device: device, microphone: microphone,
+                                  to: device != nil ? bundle.cameraURL : bundle.microphoneURL)
+                manifest.hasCamera = device != nil
+                manifest.hasMicrophone = microphone != nil
+                try? bundle.write(manifest)
+            }
+        }
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen,
@@ -221,6 +244,7 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         displayLink = nil
         try? await stream?.stopCapture()
         stream = nil
+        camera.finish()
 
         let anchor = writer?.firstFrameHostTime
         let duration = elapsed

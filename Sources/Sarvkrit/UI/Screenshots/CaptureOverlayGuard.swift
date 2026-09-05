@@ -67,6 +67,7 @@ final class CaptureOverlayGuard {
             || PinnedShotController.shared.count > 0
             || CaptureHistoryWindowController.shared.isPresenting
             || RecordingHUDController.shared.isShowing
+            || PreRecordBarController.shared.isShowing
     }
 
     /// Takes everything down. Safe to call at any time, including when nothing is up.
@@ -85,6 +86,7 @@ final class CaptureOverlayGuard {
         TextResultController.shared.dismiss()
         WindowPickerListController.shared.dismiss()
         RecordingHUDController.shared.dismiss()
+        PreRecordBarController.shared.dismiss()
         // System-wide, not just AppKit's: the overlay hides the pointer with CGDisplayHideCursor
         // because it runs from the background, and only the matching call brings it back.
         OverlayCursor.show()

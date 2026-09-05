@@ -353,4 +353,18 @@ final class StudioDocumentModel: ObservableObject {
             await MainActor.run { self?.removeSilences(envelope: envelope, sampleRate: 100) }
         }
     }
+
+    // MARK: - Camera
+
+    func addCameraSegment(_ layout: CameraSegment.Layout) {
+        let start = sourceTime
+        edit {
+            $0.cameraSegments.append(CameraSegment(start: start, end: start + 4, layout: layout))
+            $0.cameraSegments.sort { $0.start < $1.start }
+        }
+    }
+
+    func removeCameraSegment(_ id: CameraSegment.ID) {
+        edit { $0.cameraSegments.removeAll { $0.id == id } }
+    }
 }

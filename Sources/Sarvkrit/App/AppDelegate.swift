@@ -224,7 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
 
         feature.startStop = { MainActor.assumeIsolated { Self.toggleRecording(feature) } }
-        feature.recordArea = { MainActor.assumeIsolated { Self.toggleRecording(feature) } }
+        // The dedicated shortcut skips straight to the area picker rather than making somebody
+        // change the segmented control every time.
+        feature.recordArea = {
+            MainActor.assumeIsolated { Self.toggleRecording(feature, forcing: .area) }
+        }
         feature.pauseResume = {
             MainActor.assumeIsolated {
                 guard feature.recorder.isRecording else { return }
@@ -262,22 +266,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// **A second press stops rather than starting a second recording** — the same rule the
     /// screenshot path applies to a scrolling capture already in progress.
     @MainActor
-    private static func toggleRecording(_ feature: ScreenRecordingFeature) {
+    private static func toggleRecording(_ feature: ScreenRecordingFeature,
+                                        forcing source: RecordingSource? = nil) {
         guard !feature.recorder.isRecording else { return stopRecording(feature) }
+        if PreRecordBarController.shared.isShowing {
+            return PreRecordBarController.shared.dismiss()
+        }
 
-        var request = RecordingRequest(
-            source: .display,
-            destination: RecordingBundle.defaultDirectory()
-                .appendingPathComponent("\(Self.recordingName()).\(RecordingBundle.fileExtension)"))
-        request.fps = feature.framesPerSecond
-        request.capturesSystemAudio = feature.capturesSystemAudio
-        request.hidesDesktopIcons = feature.hidesDesktopIcons
+        if let source { feature.setup.source = source }
+        PreRecordBarController.shared.onRecord = { setup in
+            MainActor.assumeIsolated { aim(feature, setup: setup) }
+        }
+        PreRecordBarController.shared.show(setup: feature.setup)
+    }
+
+    /// Works out *what* to record, then counts down, then starts.
+    ///
+    /// Area and window both need something chosen on screen first. Area reuses the frozen-screen
+    /// overlay the screenshot path already has — the screen is captured once and the selection is
+    /// drawn over a still, which is why an open menu stays put while you aim at it.
+    @MainActor
+    private static func aim(_ feature: ScreenRecordingFeature, setup: RecordingSetup) {
+        let capturer = AppState.shared.features
+            .compactMap { $0 as? ScreenshotFeature }.first?.capturer ?? SCKScreenCaptureService()
+
+        switch setup.source {
+        case .display:
+            begin(feature, setup: setup, areaRect: nil, display: nil, window: nil)
+
+        case .area:
+            Task { @MainActor in
+                guard let frames = try? await capturer.snapshotAllDisplays(
+                    options: CaptureOptions()) else { return }
+                CaptureOverlayController.shared.present(
+                    frames: frames,
+                    chrome: .init(showsCrosshair: true, showsMagnifier: true,
+                                  showsDimensions: true,
+                                  hint: "Drag the area to record")
+                ) { _, display, rect in
+                    MainActor.assumeIsolated {
+                        guard let display, let rect else { return }
+                        begin(feature, setup: setup, areaRect: rect, display: display, window: nil)
+                    }
+                }
+            }
+
+        case .window:
+            Task { @MainActor in
+                guard let windows = try? await capturer.shareableWindows() else { return }
+                WindowPickerListController.shared.present(
+                    windows: windows,
+                    thumbnail: { _ in nil }
+                ) { window in
+                    MainActor.assumeIsolated {
+                        guard let window else { return }
+                        begin(feature, setup: setup, areaRect: nil, display: nil, window: window)
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private static func begin(_ feature: ScreenRecordingFeature, setup: RecordingSetup,
+                              areaRect: CGRect?, display: DisplaySnapshotGeometry?,
+                              window: CapturableWindow?) {
+        // The countdown is the screenshot path's, unchanged: it already knows how to place itself
+        // and how to be cancelled by ⌃⇧⎋.
+        CountdownPresenter.shared.run(seconds: setup.countdownSeconds) { proceed in
+            MainActor.assumeIsolated {
+                guard proceed else { return }
+                start(feature, setup: setup, areaRect: areaRect, display: display, window: window)
+            }
+        }
+    }
+
+    @MainActor
+    private static func start(_ feature: ScreenRecordingFeature, setup: RecordingSetup,
+                              areaRect: CGRect?, display: DisplaySnapshotGeometry?,
+                              window: CapturableWindow?) {
+        let destination = RecordingBundle.defaultDirectory()
+            .appendingPathComponent("\(recordingName()).\(RecordingBundle.fileExtension)")
+        var request = setup.request(fps: feature.framesPerSecond,
+                                    hidesDesktopIcons: feature.hidesDesktopIcons,
+                                    destination: destination)
+        request.areaRect = areaRect
+        request.display = display
+        request.window = window
 
         Task { @MainActor in
             do {
                 try FileManager.default.createDirectory(
                     at: RecordingBundle.defaultDirectory(), withIntermediateDirectories: true)
-                try await feature.recorder.start(request)
+                try await feature.recorder.start(request, setup: setup)
                 feature.noteRecording(true)
                 RecordingHUDController.shared.show(
                     elapsed: { feature.recorder.elapsed },
@@ -296,6 +377,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let gigabytes = Double(free) / 1_000_000_000
                 ToastPresenter.shared.show(String(format: "Only %.1f GB free", gigabytes),
                                            symbolName: "externaldrive.badge.exclamationmark")
+            } catch RecordingError.windowGone {
+                ToastPresenter.shared.show("That window has gone", symbolName: "macwindow.badge.plus")
             } catch {
                 ToastPresenter.shared.show("Couldn't start recording",
                                            symbolName: "exclamationmark.triangle")
@@ -315,6 +398,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ToastPresenter.shared.show("\(dropped) frames dropped",
                                            symbolName: "exclamationmark.triangle")
             }
+            // **The moment the feature turns on.** What you want after a recording is to watch it;
+            // what you want after a screenshot is to send it. So this opens the editor rather than
+            // revealing a file in Finder.
             StudioEditorController.shared.open(bundle)
         }
     }

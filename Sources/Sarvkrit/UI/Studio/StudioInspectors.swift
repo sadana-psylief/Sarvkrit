@@ -188,13 +188,38 @@ struct CameraInspector: View {
     @ObservedObject var model: StudioDocumentModel
 
     var body: some View {
-        SectionHeader("Camera")
+        SectionHeader("Shape")
         Picker("Shape", selection: Binding(
             get: { model.project.camera.shape },
             set: { value in model.edit { $0.camera.shape = value } })) {
             ForEach(CameraSettings.Shape.allCases, id: \.self) { Text($0.title).tag($0) }
         }
 
+        if model.project.camera.shape == .squircle {
+            slider("Roundness", value: Binding(
+                get: { model.project.camera.cornerRadiusFraction },
+                set: { value in model.editLive { $0.camera.cornerRadiusFraction = value } }),
+                   range: 0...0.5)
+        }
+
+        slider("Size", value: Binding(
+            get: { model.project.camera.sizeFraction },
+            set: { value in model.editLive { $0.camera.sizeFraction = value } }),
+               range: 0.1...0.4)
+
+        slider("Margin", value: Binding(
+            get: { model.project.camera.marginFraction },
+            set: { value in model.editLive { $0.camera.marginFraction = value } }),
+               range: 0...0.1)
+
+        SectionHeader("Corner")
+        // Nine positions as a grid rather than a menu: where the camera goes is a spatial
+        // question, and a list of nine phrases is a worse way to answer one.
+        CornerGrid(selection: Binding(
+            get: { model.project.camera.corner },
+            set: { value in model.edit { $0.camera.corner = value } }))
+
+        SectionHeader("Behaviour")
         Picker("While zoomed", selection: Binding(
             get: { model.project.camera.sizeDuringZoom },
             set: { value in model.edit { $0.camera.sizeDuringZoom = value } })) {
@@ -205,20 +230,155 @@ struct CameraInspector: View {
             .font(.system(size: Theme.Typography.caption))
             .foregroundStyle(.secondary)
 
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Size").font(.system(size: Theme.Typography.caption)).foregroundStyle(.secondary)
-            Slider(value: Binding(
-                get: { model.project.camera.sizeFraction },
-                set: { value in model.editLive { $0.camera.sizeFraction = value } }),
-                   in: 0.1...0.4) { editing in
-                if editing { model.beginGesture() } else { model.endGesture() }
-            }
-        }
-
         Toggle("Mirror", isOn: Binding(
             get: { model.project.camera.mirrored },
             set: { value in model.edit { $0.camera.mirrored = value } }))
         .toggleStyle(.switch).controlSize(.small)
+
+        Toggle("Shadow", isOn: Binding(
+            get: { model.project.camera.shadow != nil },
+            set: { on in
+                model.edit { $0.camera.shadow = on ? CaptureBackground.Shadow() : nil }
+            }))
+        .toggleStyle(.switch).controlSize(.small)
+
+        slider("Fade in and out", value: Binding(
+            get: { model.project.camera.fadeSeconds },
+            set: { value in model.editLive { $0.camera.fadeSeconds = value } }),
+               range: 0...2)
+
+        SectionHeader("Layout over time")
+        HStack {
+            Button("Full frame here") { model.addCameraSegment(.fullFrame) }
+            Button("Hide here") { model.addCameraSegment(.hidden) }
+        }
+        Text("A demo usually wants the camera full-frame for the intro and small for the rest.")
+            .font(.system(size: Theme.Typography.caption))
+            .foregroundStyle(.secondary)
+
+        ForEach(model.project.cameraSegments) { segment in
+            HStack {
+                Text("\(segment.layout.title) · \(String(format: "%.1f", segment.start))s")
+                    .font(.system(size: Theme.Typography.caption))
+                Spacer()
+                Button { model.removeCameraSegment(segment.id) } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain).clickableCursor()
+                .accessibilityLabel("Remove this camera layout")
+            }
+        }
+    }
+
+    private func slider(_ title: String, value: Binding<Double>,
+                        range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+            Slider(value: value, in: range) { editing in
+                if editing { model.beginGesture() } else { model.endGesture() }
+            }
+        }
+    }
+}
+
+/// Nine positions, laid out where they mean.
+struct CornerGrid: View {
+    @Binding var selection: CaptureBackground.Alignment
+
+    private let rows: [[CaptureBackground.Alignment]] = [
+        [.topLeading, .top, .topTrailing],
+        [.leading, .centre, .trailing],
+        [.bottomLeading, .bottom, .bottomTrailing],
+    ]
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ForEach(rows.indices, id: \.self) { row in
+                HStack(spacing: 4) {
+                    ForEach(rows[row], id: \.self) { corner in
+                        Button { selection = corner } label: {
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(selection == corner
+                                      ? Color.accentColor.opacity(0.7)
+                                      : Color(nsColor: .quaternaryLabelColor).opacity(0.5))
+                                .frame(width: 26, height: 20)
+                        }
+                        .buttonStyle(.plain)
+                        .clickableCursor()
+                        .accessibilityLabel(corner.rawValue)
+                        .accessibilityAddTraits(selection == corner ? [.isSelected] : [])
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Audio levels for whichever tracks the recording has.
+struct AudioInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    private var hasMicrophone: Bool {
+        FileManager.default.fileExists(atPath: model.bundle.microphoneURL.path)
+    }
+
+    private var hasSystemAudio: Bool {
+        FileManager.default.fileExists(atPath: model.bundle.systemAudioURL.path)
+    }
+
+    var body: some View {
+        SectionHeader("Audio")
+
+        if !hasMicrophone && !hasSystemAudio {
+            Text("This recording has no audio. Choose a microphone, or switch on system audio, "
+                 + "before you record.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+            return AnyView(EmptyView())
+        }
+
+        return AnyView(VStack(alignment: .leading, spacing: Theme.Space.md) {
+            if hasMicrophone {
+                // Two volumes, because "mute the video I was demonstrating but keep my narration"
+                // is the common case and one number cannot say it.
+                clipSlider("Narration", value: { $0.volume }, set: { $0.volume = $1 })
+            }
+            if hasSystemAudio {
+                clipSlider("System audio", value: { $0.systemAudioVolume },
+                           set: { $0.systemAudioVolume = $1 })
+            }
+            if hasMicrophone {
+                Button("Remove silences") { model.removeSilencesFromMicrophone() }
+                Text("Inserts real cuts you can undo — not a filter, so the timeline still shows "
+                     + "exactly what will be exported.")
+                    .font(.system(size: Theme.Typography.caption))
+                    .foregroundStyle(.secondary)
+            }
+        })
+    }
+
+    private func clipSlider(_ title: String,
+                            value: @escaping (Clip) -> Double,
+                            set: @escaping (inout Clip, Double) -> Void) -> some View {
+        let current = model.project.timeline.clips.first.map(value) ?? 1
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+            Slider(value: Binding(
+                get: { current },
+                set: { level in
+                    model.editLive { project in
+                        for index in project.timeline.clips.indices {
+                            set(&project.timeline.clips[index], level)
+                        }
+                    }
+                }), in: 0...2) { editing in
+                if editing { model.beginGesture() } else { model.endGesture() }
+            }
+        }
     }
 }
 

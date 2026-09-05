@@ -49,7 +49,8 @@ protocol ScreenRecording: AnyObject {
     var elapsed: TimeInterval { get }
     var droppedFrames: Int { get }
 
-    func start(_ request: RecordingRequest) async throws
+    /// - Parameter setup: the camera and microphone the user chose in the pre-record bar, if any.
+    func start(_ request: RecordingRequest, setup: RecordingSetup?) async throws
     func pause()
     func resume()
     /// - Returns: the finished bundle, or nil if nothing usable was written.
