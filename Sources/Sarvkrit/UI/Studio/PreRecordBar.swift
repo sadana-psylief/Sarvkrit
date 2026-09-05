@@ -83,6 +83,8 @@ final class PreRecordModel: ObservableObject {
                          microphoneIDs: microphones.map(\.uniqueID))
         cameraDenied = AVCaptureDevice.authorizationStatus(for: .video) == .denied
         microphoneDenied = AVCaptureDevice.authorizationStatus(for: .audio) == .denied
+        // Re-read every time the bar appears, so granting the permission in System Settings and
+        // coming back shows the camera rather than the stale refusal.
     }
 
     func startPreview() {
@@ -182,7 +184,7 @@ private struct PreRecordBarView: View {
                 .frame(width: 140)
             }
             if model.cameraDenied {
-                deniedNote("Camera access is off in System Settings.")
+                deniedNote("Camera access is off.", requirement: .camera)
             }
         }
     }
@@ -201,7 +203,7 @@ private struct PreRecordBarView: View {
             .labelsHidden()
             .frame(width: 150)
             if model.microphoneDenied {
-                deniedNote("Microphone access is off in System Settings.")
+                deniedNote("Microphone access is off.", requirement: .microphone)
             }
         }
     }
@@ -241,11 +243,21 @@ private struct PreRecordBarView: View {
         }
     }
 
-    private func deniedNote(_ text: String) -> some View {
-        Text(text)
+    /// **A refusal with a way out of it.** Saying "check System Settings" and stopping there is
+    /// the failure the README names: a control that reports a problem it will not help you fix.
+    /// `Requirement` already knows which pane each grant lives in.
+    private func deniedNote(_ text: String, requirement: Requirement) -> some View {
+        HStack(spacing: 4) {
+            Text(text)
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.orange)
+            Button("Open Settings") {
+                NSWorkspace.shared.open(requirement.settingsURL)
+            }
+            .buttonStyle(.link)
             .font(.system(size: Theme.Typography.caption))
-            .foregroundStyle(.orange)
-            .frame(maxWidth: 160, alignment: .leading)
+        }
+        .frame(maxWidth: 190, alignment: .leading)
     }
 }
 

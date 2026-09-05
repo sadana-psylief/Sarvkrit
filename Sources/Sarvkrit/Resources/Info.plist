@@ -22,7 +22,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>CFBundleURLName</key>
-			<string>ai.hercules.sarvkrit.capture</string>
+			<string>ai.psylief.sarvkrit.capture</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>sarvkrit</string>
