@@ -49,9 +49,23 @@ by hand.
 brew install --cask sadana-psylief/tap/sarvkrit
 ```
 
+The first install from this tap prints a tap-trust warning and asks you to confirm. That is
+Homebrew's default for anything outside its own repositories, not something specific to Sarvkrit.
+
 Already have Sarvkrit in `/Applications`? Homebrew refuses to write over an app it did not install,
-so adopt the existing copy instead — `brew install --cask --adopt sadana-psylief/tap/sarvkrit` —
-and `brew upgrade --cask sarvkrit` from then on.
+so hand the existing copy over with one of:
+
+```sh
+brew install --cask --force sadana-psylief/tap/sarvkrit    # any existing copy
+brew install --cask --adopt sadana-psylief/tap/sarvkrit    # only if it is already this version
+```
+
+`--adopt` keeps the bundle exactly where it is and just puts Homebrew in charge of it, but it
+compares `CFBundleShortVersionString` and `CFBundleVersion` first and refuses with *"the existing App
+is different"* if they don't match — so it works only when your copy is already the version the cask
+installs. `--force` replaces whatever is there and always works; settings live in `~/Library` and the
+Accessibility grant is keyed to the bundle ID, signature and path, none of which change. Either way
+it is `brew upgrade --cask sarvkrit` from then on.
 
 <!-- TODO(notarize): drop the paragraph below, and the postflight_steps block in the tap's
      Casks/sarvkrit.rb that it describes, once `make notarize` has run for real. -->
