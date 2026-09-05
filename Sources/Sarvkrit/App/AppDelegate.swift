@@ -311,10 +311,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RecordingHUDController.shared.dismiss()
             feature.noteRecording(false)
             guard let bundle else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([bundle.root])
-            ToastPresenter.shared.show(
-                dropped > 0 ? "Saved — \(dropped) frames dropped" : "Recording saved",
-                symbolName: "record.circle")
+            if dropped > 0 {
+                ToastPresenter.shared.show("\(dropped) frames dropped",
+                                           symbolName: "exclamationmark.triangle")
+            }
+            StudioEditorController.shared.open(bundle)
         }
     }
 
