@@ -26,6 +26,29 @@ targets:
       - path: Sources/Sarvkrit
         excludes:
           - "Resources/Info.plist"
+
+      # The two update-check files live outside Sources/Sarvkrit on purpose. That path is swept
+      # recursively into Copy Bundle Resources — which is why Info.plist above has to be excluded
+      # — and a .plist or .sh landing in Contents/Resources by accident is a failure with no
+      # visible symptom. Keeping them out of the tree means there is nothing to exclude.
+      #
+      # `wrapper` is the .app root, not Contents/, so the subpath carries Contents/ itself.
+      # SMAppService.agent(plistName:) reads Contents/Library/LaunchAgents/ and nowhere else.
+      - path: Sources/LaunchAgent/ai.psylief.sarvkrit.updatecheck.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
+      - path: Sources/LaunchAgent/check-for-update.sh
+        buildPhase: resources
+    postBuildScripts:
+      # Belt and braces on the executable bit. Git tracks mode 755 and the copy preserves it, but
+      # a non-executable script is the quietest failure in this feature: launchd fails the spawn
+      # and the app shows nothing at all, because the file it reads simply never appears.
+      - name: Ensure the update-check script is executable
+        basedOnDependencyAnalysis: false
+        script: |
+          chmod +x "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/check-for-update.sh"
     settings:
       base:
         PRODUCT_NAME: Sarvkrit

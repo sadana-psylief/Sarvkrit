@@ -13,8 +13,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
 
-    func show() {
+    func show(selecting pane: String? = nil) {
         let state = AppState.shared
+        if let pane { state.pendingSidebarSelection = pane }
+        // The window's own onAppear only fires the first time it is built; this covers every
+        // later open, so Settings and About are never showing a stale answer.
+        state.updates.refresh()
 
         if window == nil {
             let window = NSWindow(

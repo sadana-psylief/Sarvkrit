@@ -18,6 +18,7 @@ final class AppState: ObservableObject {
     let features: [Feature]
     let store: FeatureStore
     let permissions: PermissionsManager
+    let updates: UpdateChecker
     private let tap = EventTapService()
 
     /// A feature the user enabled that isn't actually running. In practice this means
@@ -87,6 +88,61 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Whether the update check is actually running in the background.
+    ///
+    /// This reads and writes the *achieved* state, not the requested one. A user can refuse the
+    /// background item in System Settings, after which `register()` does nothing — and a switch
+    /// sitting ON while nothing runs is the worst possible outcome for a feature whose whole job
+    /// is telling you about updates. `UpdateCheckAgent.needsApproval` is what the pane shows
+    /// alongside it to explain a refusal.
+    var automaticUpdateChecks: Bool {
+        get { storedAutomaticUpdateChecks }
+        set {
+            guard newValue != storedAutomaticUpdateChecks else { return }
+            objectWillChange.send()
+            // Intent is recorded separately and first, so it survives a refusal. Stored as its
+            // negative so that "on" is the absence of a key: the feature ships enabled, and that
+            // way it needs no first-run migration for anyone upgrading from a build without it.
+            storedWantsAutomaticUpdateChecks = newValue
+            defaults.set(!newValue, forKey: Self.updateChecksDisabledKey)
+            // Only now the XPC to the background-item daemon, never in a getter — same reason as
+            // `launchAtLogin` above. What comes back is what was achieved.
+            storedAutomaticUpdateChecks = UpdateCheckAgent.set(newValue)
+        }
+    }
+
+    /// What the user asked for, as distinct from what happened.
+    ///
+    /// The launch-time reconcile needs this: without it there is no way to tell "never registered
+    /// yet" from "switched off on purpose", and the app would quietly turn the check back on for
+    /// someone who had just turned it off.
+    var wantsAutomaticUpdateChecks: Bool { storedWantsAutomaticUpdateChecks }
+
+    /// Re-read the agent's real status. Called after `AppDelegate` reconciles at launch, since
+    /// registering there would otherwise leave this switch showing the pre-launch answer.
+    func refreshUpdateAgentStatus() {
+        let achieved = UpdateCheckAgent.isEnabled
+        guard achieved != storedAutomaticUpdateChecks else { return }
+        objectWillChange.send()
+        storedAutomaticUpdateChecks = achieved
+    }
+
+    /// Where the main window should open next. Consumed and cleared by `MainWindowView`.
+    ///
+    /// The update banner lives in the menu bar panel, which cannot show a sheet — the panel
+    /// dismisses as focus moves — so it has to open the window on a specific pane instead.
+    var pendingSidebarSelection: String? {
+        get { storedPendingSidebarSelection }
+        set {
+            guard newValue != storedPendingSidebarSelection else { return }
+            objectWillChange.send()
+            storedPendingSidebarSelection = newValue
+        }
+    }
+
+    private var storedAutomaticUpdateChecks: Bool
+    private var storedWantsAutomaticUpdateChecks: Bool
+    private var storedPendingSidebarSelection: String?
     private var storedSelectedTrayTabID: String?
     private var storedShowMenuBarIcon: Bool
     private var storedLaunchAtLogin: Bool
@@ -95,6 +151,7 @@ final class AppState: ObservableObject {
     private static let menuBarIconKey = "showMenuBarIcon"
     private static let onboardingKey = "hasCompletedOnboarding"
     private static let trayTabKey = "selectedTrayTab"
+    private static let updateChecksDisabledKey = "updates.automaticChecksDisabled"
     private let defaults: UserDefaults
     private var cancellables: Set<AnyCancellable> = []
 
@@ -102,15 +159,25 @@ final class AppState: ObservableObject {
         features: [Feature] = FeatureRegistry.makeAll(),
         store: FeatureStore = FeatureStore(),
         permissions: PermissionsManager = PermissionsManager(),
+        updates: UpdateChecker? = nil,
         defaults: UserDefaults = .standard
     ) {
         self.features = features
         self.store = store
         self.permissions = permissions
+        self.updates = updates ?? UpdateChecker(defaults: defaults)
         self.defaults = defaults
         self.storedShowMenuBarIcon = defaults.object(forKey: Self.menuBarIconKey) as? Bool ?? true
         self.storedHasCompletedOnboarding = defaults.bool(forKey: Self.onboardingKey)
         self.storedSelectedTrayTabID = defaults.string(forKey: Self.trayTabKey)
+        self.storedPendingSidebarSelection = nil
+        // Registering the background item is deliberately NOT done here. Tests construct
+        // AppState directly, and nothing in a test run should be planting login items on the
+        // machine it runs on. AppDelegate owns that, and gates it on AppIdentity.isRunningTests.
+        self.storedWantsAutomaticUpdateChecks = !defaults.bool(forKey: Self.updateChecksDisabledKey)
+        // Read once at startup, exactly like `launchAtLogin` above, so no status read ever
+        // happens inside a render pass. AppDelegate refreshes it after it has reconciled.
+        self.storedAutomaticUpdateChecks = UpdateCheckAgent.isEnabled
         // Read once at startup. After this the value only changes when the user changes it,
         // and the setter is what talks to SMAppService.
         self.storedLaunchAtLogin = LaunchAtLogin.isEnabled
@@ -129,6 +196,12 @@ final class AppState: ObservableObject {
         // The store is NOT forwarded: every write to it goes through `setEnabled` below, which
         // notifies once itself. Forwarding as well made a single toggle publish twice.
         permissions.objectWillChange
+            .sink { [weak self] in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
+        // Same reason, same caveat: UpdateChecker announces only when its answer actually
+        // changes, so forwarding it cannot double-publish the way forwarding the store would.
+        self.updates.objectWillChange
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &cancellables)
 

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Must match this file's name, and must be prefixed by the app's bundle ID.
+	     SMAppService.agent(plistName:) looks for this file in Contents/Library/LaunchAgents/
+	     and nowhere else; get either wrong and the only symptom is status == .notFound. -->
+	<key>Label</key>
+	<string>ai.psylief.sarvkrit.updatecheck</string>
+
+	<!-- Bundle-relative, which launchd only honours for plists installed through SMAppService.
+	     That is the point: the app has to keep working from /Applications, from a build
+	     directory, or from wherever someone dropped it, and an absolute path can't do that. -->
+	<key>BundleProgram</key>
+	<string>Contents/Resources/check-for-update.sh</string>
+
+	<!-- Without this the job shows up in Login Items as a bare "ai.psylief.sarvkrit.updatecheck"
+	     with nothing to say what it belongs to. The whole premise of doing the network access
+	     out here rather than in the app is that it's visible and switchable, so the row being
+	     attributable to Sarvkrit is the feature, not decoration. -->
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>ai.psylief.sarvkrit</string>
+	</array>
+
+	<key>RunAtLoad</key>
+	<true/>
+
+	<!-- Six hours, not twenty-four. An interval firing is *missed* if the Mac is asleep when it
+	     comes due (man 5 launchd.plist), so a daily timer on a laptop that closes overnight can
+	     skip indefinitely. This asks "is it time yet?" four times a day; the 20h throttle in the
+	     script is what makes it actually fetch once. It also catches up right after a lid-open. -->
+	<key>StartInterval</key>
+	<integer>21600</integer>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+</dict>
+</plist>

@@ -5,6 +5,11 @@ enum SidebarItem: Hashable {
     case feature(String)
     case general
     case about
+
+    /// Names for the panes another part of the app can ask the window to open on. Strings rather
+    /// than the enum itself because `AppState` is in Core and must not depend on the UI layer.
+    static let generalID = "general"
+    static let aboutID = "about"
 }
 
 /// The full window: features in the sidebar, a grouped `Form` in the detail pane. Stock
@@ -46,7 +51,25 @@ struct MainWindowView: View {
             minWidth: Theme.Size.windowMin.width,
             minHeight: Theme.Size.windowMin.height
         )
-        .onAppear { selection = selection ?? defaultSelection }
+        .onAppear {
+            selection = selection ?? defaultSelection
+            // Opening the window is one of the four moments the update feed is re-read. The
+            // window is built once and reused, so onAppear alone would only fire the first time;
+            // MainWindowController.show() covers every later open.
+            app.updates.refresh()
+            consumePendingSelection()
+        }
+        .onChange(of: app.pendingSidebarSelection) { _, _ in consumePendingSelection() }
+    }
+
+    /// The menu bar panel cannot show a sheet — it dismisses as focus moves — so the update
+    /// banner opens this window on a named pane instead. The request is consumed once and
+    /// cleared, so re-opening the window later lands wherever the user last was.
+    private func consumePendingSelection() {
+        guard let requested = app.pendingSidebarSelection else { return }
+        if requested == SidebarItem.generalID { selection = .general }
+        if requested == SidebarItem.aboutID { selection = .about }
+        app.pendingSidebarSelection = nil
     }
 
     @ViewBuilder
