@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The canvas tab: background, padding, radius, shadow.
@@ -130,5 +131,233 @@ struct CursorInspector: View {
         Text("Replaces the zooms Sarvkrit found. Ones you made or edited are left alone.")
             .font(.system(size: Theme.Typography.caption))
             .foregroundStyle(.secondary)
+    }
+}
+
+/// Masks and highlights.
+struct MaskInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    var body: some View {
+        SectionHeader("Masks")
+        Button("Add one here") { model.addMaskAtPlayhead() }
+
+        if model.project.masks.isEmpty {
+            Text("Cover something you don't want in the recording — an API key, a customer name, "
+                 + "a sidebar.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+        }
+
+        ForEach(model.project.masks) { mask in
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Picker("", selection: Binding(
+                    get: { mask.mode },
+                    set: { value in model.setMaskMode(mask.id, value) })) {
+                    ForEach(StudioMask.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+
+                // **Said, not implied.** A person choosing "Blur" over a password should be told
+                // that it comes back — the README makes this argument at length and the UI is
+                // where it has to land.
+                if let caveat = mask.mode.caveat {
+                    Label(caveat, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: Theme.Typography.caption))
+                        .foregroundStyle(.orange)
+                }
+
+                HStack {
+                    Text(String(format: "%.1fs – %.1fs", mask.start, mask.end))
+                        .font(.system(size: Theme.Typography.caption))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button { model.removeMask(mask.id) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.plain).clickableCursor()
+                        .accessibilityLabel("Remove this mask")
+                }
+            }
+            .padding(.vertical, Theme.Space.xs)
+            ModuleSeparator()
+        }
+    }
+}
+
+/// The camera.
+struct CameraInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    var body: some View {
+        SectionHeader("Camera")
+        Picker("Shape", selection: Binding(
+            get: { model.project.camera.shape },
+            set: { value in model.edit { $0.camera.shape = value } })) {
+            ForEach(CameraSettings.Shape.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+
+        Picker("While zoomed", selection: Binding(
+            get: { model.project.camera.sizeDuringZoom },
+            set: { value in model.edit { $0.camera.sizeDuringZoom = value } })) {
+            ForEach(CameraSettings.ZoomSizing.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        // The default is the one people do not expect, so it says why.
+        Text("A zoom exists to show something. The camera getting smaller keeps it out of the way.")
+            .font(.system(size: Theme.Typography.caption))
+            .foregroundStyle(.secondary)
+
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Size").font(.system(size: Theme.Typography.caption)).foregroundStyle(.secondary)
+            Slider(value: Binding(
+                get: { model.project.camera.sizeFraction },
+                set: { value in model.editLive { $0.camera.sizeFraction = value } }),
+                   in: 0.1...0.4) { editing in
+                if editing { model.beginGesture() } else { model.endGesture() }
+            }
+        }
+
+        Toggle("Mirror", isOn: Binding(
+            get: { model.project.camera.mirrored },
+            set: { value in model.edit { $0.camera.mirrored = value } }))
+        .toggleStyle(.switch).controlSize(.small)
+    }
+}
+
+/// Captions, and the transcript that produces them.
+struct CaptionsInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+    @State private var vocabulary = ""
+    @State private var isWorking = false
+    @State private var problem: String?
+
+    var body: some View {
+        SectionHeader("Captions")
+
+        if model.project.captions.isEmpty {
+            TextField("Words to expect", text: $vocabulary)
+                .textFieldStyle(.roundedBorder)
+            // Three lines of code, and the difference between "Sarvkrit" and "sav credit".
+            Text("Product names, library names, jargon — anything a recogniser would guess wrong.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+
+            Button(isWorking ? "Working…" : "Write captions") { transcribe() }
+                .disabled(isWorking)
+
+            Text("Worked out on this Mac. Nothing is uploaded.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+        } else {
+            Text("\(model.project.captions.count) lines")
+                .font(.system(size: Theme.Typography.body))
+            Toggle("Highlight word by word", isOn: Binding(
+                get: { model.project.captionStyle.highlight == .word },
+                set: { value in
+                    model.edit { $0.captionStyle.highlight = value ? .word : .none }
+                }))
+            .toggleStyle(.switch).controlSize(.small)
+            Button("Export subtitles…") { exportSubtitles() }
+        }
+
+        if let problem {
+            Label(problem, systemImage: "exclamationmark.triangle")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private func transcribe() {
+        isWorking = true
+        problem = nil
+        let words = vocabulary.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        Task {
+            do {
+                try await model.transcribe(vocabulary: words)
+            } catch Transcriber.TranscriptionError.onDeviceUnavailable(let locale) {
+                // Said plainly, and nothing is sent anywhere as a fallback. That is the whole
+                // point of choosing this API over one that would quietly succeed.
+                problem = "No offline model for \(locale). Sarvkrit won't upload your audio to "
+                    + "work around it."
+            } catch Transcriber.TranscriptionError.noAudio {
+                problem = "This recording has no microphone track."
+            } catch {
+                problem = "Couldn't write captions."
+            }
+            isWorking = false
+        }
+    }
+
+    private func exportSubtitles() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Captions.srt"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let text = Transcriber.subtitles(model.project.captions, format: .srt)
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
+/// Keystrokes, and the audio-derived edits.
+struct KeystrokesInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    var body: some View {
+        SectionHeader("Keystrokes")
+        Toggle("Show the keys I pressed", isOn: Binding(
+            get: { model.project.keystrokes.isEnabled },
+            set: { value in model.edit { $0.keystrokes.isEnabled = value } }))
+        .toggleStyle(.switch).controlSize(.small)
+
+        Toggle("Include single keys", isOn: Binding(
+            get: { model.project.keystrokes.showsBareKeys },
+            set: { value in model.edit { $0.keystrokes.showsBareKeys = value } }))
+        .toggleStyle(.switch).controlSize(.small)
+        Text("Off by default: ⌘C and ⌃⇧R are what a demo needs to show. Nothing typed into a "
+             + "password field was recorded either way.")
+            .font(.system(size: Theme.Typography.caption))
+            .foregroundStyle(.secondary)
+
+        SectionHeader("Tidy up")
+        let suggestions = model.typingSuggestions
+        if suggestions.isEmpty {
+            Text("No typing worth speeding up in this one.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+        } else {
+            Button("Speed up \(suggestions.count) typing \(suggestions.count == 1 ? "part" : "parts")") {
+                model.applyAllTypingSuggestions()
+            }
+            Text("Watching someone type is boring at 1×. Suggested, not applied — undo works.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+        }
+
+        Button("Remove silences") { model.removeSilencesFromMicrophone() }
+            .disabled(!FileManager.default.fileExists(atPath: model.bundle.microphoneURL.path))
+    }
+}
+
+/// Device frames.
+struct DeviceFrameInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    var body: some View {
+        SectionHeader("Device frame")
+        Picker("Frame", selection: Binding(
+            get: { model.project.deviceFrame.frameID ?? "" },
+            set: { value in
+                model.edit { $0.deviceFrame.frameID = value.isEmpty ? nil : value }
+            })) {
+            Text("None").tag("")
+            ForEach(DeviceFrame.all) { Text($0.name).tag($0.id) }
+        }
+
+        if let resolved = model.project.deviceFrame.resolved() {
+            Picker("Colour", selection: Binding(
+                get: { model.project.deviceFrame.colourwayID ?? resolved.colourway.id },
+                set: { value in model.edit { $0.deviceFrame.colourwayID = value } })) {
+                ForEach(resolved.frame.colourways) { Text($0.name).tag($0.id) }
+            }
+        }
     }
 }

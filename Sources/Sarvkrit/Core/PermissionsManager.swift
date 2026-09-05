@@ -2,7 +2,9 @@ import ApplicationServices
 import AppKit
 import Combine
 import CoreGraphics
+import AVFoundation
 import Foundation
+import Speech
 
 /// Tracks the TCC grants the app can actually ask about.
 ///
@@ -108,6 +110,12 @@ final class PermissionsManager: ObservableObject {
         case .accessibility: requestAccess()
         case .screenRecording: requestScreenRecordingAccess()
         case .audioCapture: break
+        case .camera:
+            AVCaptureDevice.requestAccess(for: .video) { _ in }
+        case .microphone:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        case .speechRecognition:
+            SFSpeechRecognizer.requestAuthorization { _ in }
         }
         openSystemSettings(for: requirement)
     }
@@ -130,6 +138,12 @@ final class PermissionsManager: ObservableObject {
         case .accessibility: return isTrusted
         case .screenRecording: return canCaptureScreen
         case .audioCapture: return true
+        case .camera:
+            return AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+        case .microphone:
+            return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        case .speechRecognition:
+            return SFSpeechRecognizer.authorizationStatus() == .authorized
         }
     }
 }

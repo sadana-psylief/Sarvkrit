@@ -12,13 +12,14 @@ import Foundation
 final class StudioDocumentModel: ObservableObject {
 
     enum Inspector: String, CaseIterable, Identifiable {
-        case canvas, cursor, camera, captions, audio, keystrokes
+        case canvas, cursor, masks, camera, captions, audio, keystrokes
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .canvas: return "Canvas"
+            case .masks: return "Masks"
             case .cursor: return "Cursor"
             case .camera: return "Camera"
             case .captions: return "Captions"
@@ -30,6 +31,7 @@ final class StudioDocumentModel: ObservableObject {
         var symbolName: String {
             switch self {
             case .canvas: return "rectangle.inset.filled"
+            case .masks: return "eye.slash"
             case .cursor: return "cursorarrow"
             case .camera: return "video"
             case .captions: return "captions.bubble"
@@ -199,5 +201,139 @@ final class StudioDocumentModel: ObservableObject {
 
     func step(seconds: Double) {
         playhead = min(max(0, playhead + seconds), max(0, duration - 0.001))
+    }
+
+    // MARK: - Trimming
+
+    /// Cuts the dead air out, as one undoable step.
+    ///
+    /// **A one-shot, not a live filter.** A filter would mean the timeline no longer shows what
+    /// will be exported, which breaks the promise the whole editor rests on. This inserts real
+    /// cuts the user can then adjust or undo like any other.
+    ///
+    /// - Returns: how many stretches were removed, so the caller can say so rather than appearing
+    ///   to do nothing when a recording has no silence in it.
+    @discardableResult
+    func removeSilences(envelope: [Float], sampleRate: Double) -> Int {
+        let found = SilenceDetector.silences(in: envelope, sampleRate: sampleRate)
+        guard !found.isEmpty else { return 0 }
+        edit { project in
+            // Applied back to front, so removing one stretch does not shift the next one's
+            // coordinates out from under it.
+            for range in found.reversed() {
+                project.timeline = Self.cutting(project.timeline, source: range)
+            }
+        }
+        return found.count
+    }
+
+    /// The typing runs worth offering to speed up.
+    var typingSuggestions: [TypingDetector.Suggestion] {
+        TypingDetector.runs(in: events.keys)
+    }
+
+    /// Accepts one suggestion: splits around the run and speeds the middle up.
+    func applyTypingSuggestion(_ suggestion: TypingDetector.Suggestion) {
+        edit { project in
+            project.timeline = Self.speedingUp(project.timeline,
+                                               source: suggestion.start..<suggestion.end,
+                                               speed: suggestion.suggestedSpeed)
+        }
+    }
+
+    func applyAllTypingSuggestions() {
+        let runs = typingSuggestions
+        guard !runs.isEmpty else { return }
+        edit { project in
+            for run in runs.reversed() {
+                project.timeline = Self.speedingUp(project.timeline,
+                                                   source: run.start..<run.end,
+                                                   speed: run.suggestedSpeed)
+            }
+        }
+    }
+
+    /// Removes a span of *source* time from the edit by splitting around it and deleting the middle.
+    private static func cutting(_ timeline: Timeline,
+                                source range: Range<TimeInterval>) -> Timeline {
+        guard let leading = timeline.outputTime(forSource: range.lowerBound),
+              let trailing = timeline.outputTime(forSource: range.upperBound) else {
+            return timeline
+        }
+        let afterFirst = timeline.split(at: leading)
+        guard let secondCut = afterFirst.outputTime(forSource: range.upperBound) else {
+            return afterFirst
+        }
+        let afterSecond = afterFirst.split(at: secondCut)
+        guard let middle = afterSecond.sourceTime(forOutput: (leading + trailing) / 2)?.clip else {
+            return afterSecond
+        }
+        return afterSecond.delete(id: middle.id)
+    }
+
+    /// Splits around a span of source time and sets the middle clip's speed.
+    private static func speedingUp(_ timeline: Timeline, source range: Range<TimeInterval>,
+                                   speed: Double) -> Timeline {
+        guard let leading = timeline.outputTime(forSource: range.lowerBound),
+              let trailing = timeline.outputTime(forSource: range.upperBound) else {
+            return timeline
+        }
+        let afterFirst = timeline.split(at: leading)
+        guard let secondCut = afterFirst.outputTime(forSource: range.upperBound) else {
+            return afterFirst
+        }
+        let afterSecond = afterFirst.split(at: secondCut)
+        guard let middle = afterSecond.sourceTime(forOutput: (leading + trailing) / 2)?.clip else {
+            return afterSecond
+        }
+        return afterSecond.setSpeed(id: middle.id, speed)
+    }
+
+    // MARK: - Captions
+
+    /// Runs transcription over the microphone track.
+    func transcribe(locale: Locale = .current, vocabulary: [String] = []) async throws {
+        let captions = try await Transcriber.transcribe(url: bundle.microphoneURL,
+                                                        locale: locale,
+                                                        vocabulary: vocabulary)
+        edit { $0.captions = captions }
+    }
+
+    // MARK: - Presets
+
+    func apply(_ preset: StudioPreset) {
+        edit { preset.apply(to: &$0) }
+    }
+
+    // MARK: - Masks
+
+    func addMaskAtPlayhead() {
+        let start = sourceTime
+        let size = project.canvasSize
+        edit {
+            let box = CGRect(x: size.width * 0.3, y: size.height * 0.4,
+                             width: size.width * 0.4, height: size.height * 0.15)
+            $0.masks.append(StudioMask(rects: [box], start: start, end: start + 3))
+        }
+    }
+
+    func setMaskMode(_ id: StudioMask.ID, _ mode: StudioMask.Mode) {
+        edit {
+            guard let index = $0.masks.firstIndex(where: { $0.id == id }) else { return }
+            $0.masks[index].mode = mode
+        }
+    }
+
+    func removeMask(_ id: StudioMask.ID) {
+        edit { $0.masks.removeAll { $0.id == id } }
+    }
+
+    /// Reads the microphone envelope, then cuts the dead air.
+    func removeSilencesFromMicrophone() {
+        let url = bundle.microphoneURL
+        Task { [weak self] in
+            guard let envelope = try? await AudioEnvelope.read(url: url) else { return }
+            await MainActor.run { self?.removeSilences(envelope: envelope, sampleRate: 100) }
+        }
     }
 }

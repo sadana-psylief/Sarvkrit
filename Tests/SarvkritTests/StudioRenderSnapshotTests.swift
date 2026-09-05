@@ -162,4 +162,114 @@ final class StudioRenderSnapshotTests: XCTestCase {
                                                        sources: FrameSources(screen: nil)))
         XCTAssertGreaterThan(frame.width, 0)
     }
+
+    // MARK: - The later layers
+
+    /// A mask must actually obscure. This is the layer where "it drew something" is not enough:
+    /// the region has to stop showing what was underneath it.
+    func testAMaskObscuresWhatIsUnderIt() throws {
+        var masked = project()
+        masked.masks = [StudioMask(mode: .secureBlur,
+                                   rects: [CGRect(x: 100, y: 100, width: 300, height: 150)],
+                                   start: 0, end: 10)]
+        let hidden = try render(masked, at: 3)
+        XCTAssertNotEqual(png(try render(project(), at: 3)), png(hidden), "the mask drew nothing")
+        try write(hidden, named: "studio-mask")
+    }
+
+    /// The same four colours in the opposite corners: the mean is identical, the picture is not.
+    private func scrambledScreen() throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 800, height: 500, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let colours = [CGColor(red: 0.95, green: 0.8, blue: 0.3, alpha: 1),
+                       CGColor(red: 0.3, green: 0.5, blue: 0.9, alpha: 1),
+                       CGColor(red: 0.3, green: 0.7, blue: 0.4, alpha: 1),
+                       CGColor(red: 0.9, green: 0.3, blue: 0.3, alpha: 1)]
+        for (index, colour) in colours.enumerated() {
+            context.setFillColor(colour)
+            context.fill(CGRect(x: index % 2 == 0 ? 0 : 400, y: index < 2 ? 0 : 250,
+                                width: 400, height: 250))
+        }
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    /// The inverse mode: everything outside is dimmed, so the frame changes outside the region
+    /// rather than inside it.
+    func testAHighlightDimsEverythingElse() throws {
+        var lit = project()
+        lit.masks = [StudioMask(mode: .highlight,
+                                rects: [CGRect(x: 300, y: 200, width: 200, height: 100)],
+                                start: 0, end: 10)]
+        let frame = try render(lit, at: 3)
+        XCTAssertNotEqual(png(try render(project(), at: 3)), png(frame))
+        try write(frame, named: "studio-highlight")
+    }
+
+    func testKeystrokePillsAreDrawn() throws {
+        var typed = project()
+        typed.keystrokes.isEnabled = true
+        let log = EventLog(cursor: events().cursor,
+                           keys: [KeyEvent(t: 2.9, label: "⌘⇧R", isModifierCombination: true)])
+        let frame = try render(typed, at: 3, events: log)
+        XCTAssertNotEqual(png(try render(project(), at: 3, events: log)), png(frame),
+                          "no keystroke pill was drawn")
+        try write(frame, named: "studio-keystrokes")
+    }
+
+    func testTheCameraIsDrawn() throws {
+        let camera = try XCTUnwrap(CGContext(
+            data: nil, width: 400, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        camera.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.75, alpha: 1))
+        camera.fill(CGRect(x: 0, y: 0, width: 400, height: 400))
+
+        let frame = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen(),
+                                  camera: try XCTUnwrap(camera.makeImage()))))
+        XCTAssertNotEqual(png(try render(project(), at: 3)), png(frame), "no camera was drawn")
+        try write(frame, named: "studio-camera")
+    }
+
+    /// A camera hidden for a stretch must genuinely disappear, not merely fade.
+    func testAHiddenCameraSegmentDrawsNoCamera() throws {
+        var hidden = project()
+        hidden.cameraSegments = [CameraSegment(start: 0, end: 10, layout: .hidden)]
+        let camera = try XCTUnwrap(CGContext(
+            data: nil, width: 400, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        camera.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.75, alpha: 1))
+        camera.fill(CGRect(x: 0, y: 0, width: 400, height: 400))
+
+        let frame = try XCTUnwrap(StudioRenderer.frame(
+            of: hidden, atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen(),
+                                  camera: try XCTUnwrap(camera.makeImage()))))
+        XCTAssertEqual(png(try render(hidden, at: 3)), png(frame))
+    }
+
+    /// **The security property, measured where it lives.**
+    ///
+    /// `secureBlur` deliberately keeps the region's mean colour — that is what makes a redaction
+    /// sit in its surroundings rather than look like a sticker pasted on. What must never survive
+    /// is *structure*. So the second screen holds exactly the same pixels rearranged: identical
+    /// mean by construction, completely different picture.
+    ///
+    /// Asserted on the mean itself rather than on a whole rendered frame, deliberately. A frame
+    /// comparison also captures the shadow, the corners and the cursor, so a failure would name
+    /// the frame rather than the redaction — and a security property is the last thing to test
+    /// through a confound.
+    func testASecureBlurCarriesNoStructureFromThePixelsUnderIt() throws {
+        let region = CGRect(x: 0, y: 0, width: 800, height: 500)
+        let one = try XCTUnwrap(StudioRenderer.averageColour(of: try screen(), in: region))
+        let other = try XCTUnwrap(StudioRenderer.averageColour(of: try scrambledScreen(),
+                                                               in: region))
+        XCTAssertEqual(one.r, other.r, accuracy: 0.002, "red leaked structure")
+        XCTAssertEqual(one.g, other.g, accuracy: 0.002, "green leaked structure")
+        XCTAssertEqual(one.b, other.b, accuracy: 0.002, "blue leaked structure")
+    }
 }

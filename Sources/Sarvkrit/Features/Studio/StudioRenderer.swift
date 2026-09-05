@@ -107,6 +107,12 @@ enum StudioRenderer {
                                           sources: .init(base: sources.screen,
                                                          wallpaper: sources.wallpaper))
 
+        // A device frame insets the recording rather than growing the canvas, so turning it on
+        // does not change how much of the picture is visible.
+        let frame = DeviceFrameRenderer.layout(project.deviceFrame, imageRect: imageRect)
+        if let frame { DeviceFrameRenderer.drawBody(frame, in: context) }
+        let screenRect = frame?.screenRect ?? imageRect
+
         let transform = ZoomResolver.transform(
             at: sourceTime,
             segments: project.visibleZooms,
@@ -114,21 +120,33 @@ enum StudioRenderer {
             frameSize: project.canvasSize)
 
         context.saveGState()
-        context.addPath(BackgroundCompositor.clipPath(imageRect: imageRect, style: style))
+        if let frame {
+            context.addPath(frame.screen)
+        } else {
+            context.addPath(BackgroundCompositor.clipPath(imageRect: screenRect, style: style))
+        }
         context.clip()
-        drawScreen(project: project, transform: transform, imageRect: imageRect,
+        drawScreen(project: project, transform: transform, imageRect: screenRect,
                    sources: sources, in: context)
 
         // 4 and 5 — click effect and cursor, both inside the screen's clip so a pointer near the
         // edge is cut by the rounded corner exactly as the content is.
+        drawMasks(project: project, sourceTime: sourceTime, transform: transform,
+                  imageRect: screenRect, screen: sources.screen, in: context)
         drawClicks(project: project, sourceTime: sourceTime, events: events,
-                   transform: transform, imageRect: imageRect, in: context)
+                   transform: transform, imageRect: screenRect, in: context)
         drawCursor(project: project, sourceTime: sourceTime, events: events,
-                   transform: transform, imageRect: imageRect, sources: sources, in: context)
+                   transform: transform, imageRect: screenRect, sources: sources, in: context)
         context.restoreGState()
+
+        if let frame { DeviceFrameRenderer.drawRim(frame, in: context) }
 
         // 6 and 7 — camera and captions, in canvas space: they belong to the finished video, not
         // to the recording, so a zoom must not move them.
+        drawCamera(project: project, sourceTime: sourceTime, transform: transform,
+                   canvas: canvas, camera: sources.camera, in: context)
+        drawKeystrokes(project: project, sourceTime: sourceTime, events: events,
+                       canvas: canvas, in: context)
         drawCaptions(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
     }
 
@@ -328,5 +346,185 @@ enum StudioRenderer {
         }) else { return }
         CaptionRenderer.draw(caption, spokenWords: caption.spokenWordCount(at: sourceTime),
                              canvas: canvas, style: project.captionStyle, in: context)
+    }
+}
+
+// MARK: - The remaining layers
+
+extension StudioRenderer {
+
+    /// Masks, drawn inside the screen's clip so they move with the zoom exactly as the content
+    /// they are hiding does.
+    ///
+    /// **The safe direction is opaque.** A mask that fails to resolve — its window gone, its
+    /// filter unavailable — falls back to a solid fill rather than to nothing, because the one
+    /// outcome that must never happen is uncovering what it was hiding.
+    static func drawMasks(project: StudioProject, sourceTime: TimeInterval,
+                          transform: ZoomTransform, imageRect: CGRect,
+                          screen: CGImage?, in context: CGContext) {
+        let live = project.masks.filter { $0.covers(sourceTime) }
+        guard !live.isEmpty else { return }
+
+        for mask in live {
+            let rects = mask.rects.compactMap { box -> CGRect? in
+                canvasRect(box.rect, project: project, transform: transform, imageRect: imageRect)
+            }
+            guard !rects.isEmpty else { continue }
+
+            if mask.mode == .highlight {
+                // The inverse: everything *outside* is dimmed. Drawn as one even-odd fill so the
+                // regions punch through a single wash rather than each darkening the last.
+                let path = CGMutablePath()
+                path.addRect(imageRect)
+                for rect in rects {
+                    if mask.isEllipse { path.addEllipse(in: rect) } else { path.addRect(rect) }
+                }
+                context.saveGState()
+                context.addPath(path)
+                context.setFillColor(CGColor(red: 0, green: 0, blue: 0,
+                                             alpha: CGFloat(mask.dimming)))
+                context.fillPath(using: .evenOdd)
+                context.restoreGState()
+                continue
+            }
+
+            for (index, rect) in rects.enumerated() {
+                drawObscured(mask: mask, rect: rect,
+                             sourceRect: mask.rects[index].rect, screen: screen, in: context)
+            }
+        }
+    }
+
+    private static func drawObscured(mask: StudioMask, rect: CGRect, sourceRect: CGRect,
+                                     screen: CGImage?, in context: CGContext) {
+        context.saveGState()
+        let shape = CGMutablePath()
+        if mask.isEllipse { shape.addEllipse(in: rect) } else { shape.addRect(rect) }
+        context.addPath(shape)
+        context.clip()
+
+        switch mask.mode {
+        case .secureBlur, .solid, .highlight:
+            // `secureBlur`'s contract, kept: nothing survives but the region's mean colour, and the
+            // texture over it comes from the seed rather than from the pixels. A blur that can be
+            // inverted is not a redaction, and the README says so at length.
+            let mean = averageColour(of: screen, in: sourceRect)
+                ?? RGBAColour(r: 0.1, g: 0.1, b: 0.12)
+            context.setFillColor(mean.cgColor)
+            context.fill(rect)
+            if mask.mode == .secureBlur {
+                drawSeededTexture(seed: mask.seed, in: rect, context: context)
+            }
+        case .smoothBlur, .pixellate:
+            let mean = averageColour(of: screen, in: sourceRect)
+                ?? RGBAColour(r: 0.1, g: 0.1, b: 0.12)
+            context.setFillColor(mean.cgColor)
+            context.fill(rect)
+        }
+        context.restoreGState()
+    }
+
+    /// Grain from a seeded generator. Deterministic, so the same project exports identically twice,
+    /// and carrying no information about what it covers.
+    private static func drawSeededTexture(seed: UInt64, in rect: CGRect, context: CGContext) {
+        var state = seed | 1
+        func next() -> Double {
+            state ^= state << 13; state ^= state >> 7; state ^= state << 17
+            return Double(state % 1000) / 1000
+        }
+        let cell = max(6, min(rect.width, rect.height) / 8)
+        var y = rect.minY
+        while y < rect.maxY {
+            var x = rect.minX
+            while x < rect.maxX {
+                context.setFillColor(CGColor(red: 1, green: 1, blue: 1,
+                                             alpha: CGFloat(next() * 0.06)))
+                context.fill(CGRect(x: x, y: y, width: cell, height: cell))
+                x += cell
+            }
+            y += cell
+        }
+    }
+
+    /// The mean of the region the mask actually covers.
+    ///
+    /// **The rect is in recording pixels, not canvas points.** Taking it from the whole image — as
+    /// this did first — makes a small mask show the average of the entire screen, which is both
+    /// wrong-looking and a quiet way for the redaction to stop matching its surroundings.
+    static func averageColour(of image: CGImage?, in rect: CGRect) -> RGBAColour? {
+        guard let image else { return nil }
+        let region = rect.integral.intersection(
+            CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let cropped = region.isEmpty ? image : (image.cropping(to: region) ?? image)
+        guard let grid = BackgroundCompositor.grid(from: cropped, side: 8) else { return nil }
+        let mean = grid.cells.reduce(into: (0.0, 0.0, 0.0)) { sum, cell in
+            sum.0 += cell.r; sum.1 += cell.g; sum.2 += cell.b
+        }
+        let count = Double(max(1, grid.cells.count))
+        return RGBAColour(r: mean.0 / count, g: mean.1 / count, b: mean.2 / count)
+    }
+
+    /// The camera, in canvas space: it belongs to the finished video rather than to the recording,
+    /// so a zoom must not move it.
+    static func drawCamera(project: StudioProject, sourceTime: TimeInterval,
+                           transform: ZoomTransform, canvas: CGSize,
+                           camera: CGImage?, in context: CGContext) {
+        guard let camera,
+              let state = CameraLayoutResolver.state(at: sourceTime,
+                                                     segments: project.cameraSegments,
+                                                     settings: project.camera,
+                                                     canvas: canvas,
+                                                     zoom: transform.scale) else { return }
+
+        let path = CGPath.rounded(state.rect, cornerRadius: state.cornerRadius)
+        if let shadow = project.camera.shadow {
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: -shadow.offsetY),
+                              blur: shadow.radius,
+                              color: CGColor(red: 0, green: 0, blue: 0,
+                                             alpha: CGFloat(shadow.opacity)))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
+        }
+
+        context.saveGState()
+        context.setAlpha(CGFloat(state.opacity))
+        context.addPath(path)
+        context.clip()
+        if project.camera.mirrored {
+            // Front cameras look wrong un-mirrored — people expect the reflection they rehearsed in.
+            context.translateBy(x: state.rect.midX * 2, y: 0)
+            context.scaleBy(x: -1, y: 1)
+        }
+        context.drawFlipped(camera, in: BlurredBackdrop.fill(
+            CGSize(width: camera.width, height: camera.height), into: state.rect.size)
+            .offsetBy(dx: state.rect.minX, dy: state.rect.minY))
+        context.restoreGState()
+    }
+
+    /// Recorded keys, as pills.
+    static func drawKeystrokes(project: StudioProject, sourceTime: TimeInterval,
+                               events: EventLog, canvas: CGSize, in context: CGContext) {
+        guard project.keystrokes.isEnabled else { return }
+        let pills = KeystrokeOverlay.pills(at: sourceTime, keys: events.keys,
+                                           settings: project.keystrokes)
+        guard !pills.isEmpty else { return }
+        KeystrokeRenderer.draw(pills, settings: project.keystrokes, canvas: canvas, in: context)
+    }
+
+    /// Recording pixels to canvas points for a rectangle, through the crop and the zoom.
+    private static func canvasRect(_ rect: CGRect, project: StudioProject,
+                                   transform: ZoomTransform, imageRect: CGRect) -> CGRect? {
+        let cropped = project.cropRect ?? CGRect(origin: .zero, size: project.canvasSize)
+        let visible = ZoomResolver.sourceRect(for: transform, frameSize: cropped.size)
+        guard visible.width > 0, visible.height > 0 else { return nil }
+        let scaleX = imageRect.width / visible.width
+        let scaleY = imageRect.height / visible.height
+        return CGRect(x: imageRect.minX + (rect.minX - cropped.minX - visible.minX) * scaleX,
+                      y: imageRect.minY + (rect.minY - cropped.minY - visible.minY) * scaleY,
+                      width: rect.width * scaleX,
+                      height: rect.height * scaleY)
     }
 }

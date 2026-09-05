@@ -93,11 +93,15 @@ struct StudioEditorView: View {
 
     private func isAvailable(_ tab: StudioDocumentModel.Inspector) -> Bool {
         switch tab {
-        case .canvas, .cursor: return true
+        case .canvas, .cursor, .masks: return true
         case .camera: return FileManager.default.fileExists(atPath: model.bundle.cameraURL.path)
         case .audio: return FileManager.default.fileExists(atPath: model.bundle.microphoneURL.path)
             || FileManager.default.fileExists(atPath: model.bundle.systemAudioURL.path)
-        case .captions: return !model.project.captions.isEmpty
+        // Enabled whenever there is audio to work from — the tab is where you *make* captions,
+        // so gating it on already having them would hide the only way to get any.
+        case .captions:
+            return FileManager.default.fileExists(atPath: model.bundle.microphoneURL.path)
+                || !model.project.captions.isEmpty
         case .keystrokes: return !model.events.keys.isEmpty
         }
     }
@@ -107,10 +111,16 @@ struct StudioEditorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.lg) {
                 switch model.inspector {
-                case .canvas: CanvasInspector(model: model)
+                case .canvas:
+                    CanvasInspector(model: model)
+                    DeviceFrameInspector(model: model)
                 case .cursor: CursorInspector(model: model)
-                default:
-                    SectionHeader(model.inspector.title)
+                case .masks: MaskInspector(model: model)
+                case .camera: CameraInspector(model: model)
+                case .captions: CaptionsInspector(model: model)
+                case .keystrokes: KeystrokesInspector(model: model)
+                case .audio:
+                    SectionHeader("Audio")
                     Text("Nothing was recorded for this.")
                         .font(.system(size: Theme.Typography.body))
                         .foregroundStyle(.secondary)

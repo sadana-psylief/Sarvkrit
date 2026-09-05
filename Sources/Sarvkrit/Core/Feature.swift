@@ -72,12 +72,22 @@ enum Requirement: Hashable, CaseIterable {
     /// restarted. Denial isn't an error either: ScreenCaptureKit simply reports no displays. See
     /// `ScreenRecordingRelaunch`.
     case screenRecording
+    /// Recording you alongside the screen.
+    case camera
+    /// Narration. Separate from `audioCapture`, which is what *other apps* are playing.
+    case microphone
+    /// Captions. Needed even though recognition never leaves this Mac — macOS gates the API, not
+    /// the network.
+    case speechRecognition
 
     var title: String {
         switch self {
         case .accessibility: return "Accessibility access"
         case .audioCapture: return "System audio recording"
         case .screenRecording: return "Screen Recording access"
+        case .camera: return "Camera access"
+        case .microphone: return "Microphone access"
+        case .speechRecognition: return "Speech Recognition access"
         }
     }
 
@@ -86,6 +96,15 @@ enum Requirement: Hashable, CaseIterable {
         switch self {
         case .accessibility:
             return "Sarvkrit can't watch for keys or clicks until you allow it in System Settings."
+        case .camera:
+            return "Recording yourself alongside your screen means using the camera. The video is "
+                 + "written to your Mac and never sent anywhere."
+        case .microphone:
+            return "Recording narration means using the microphone. The audio is written to your "
+                 + "Mac and never sent anywhere."
+        case .speechRecognition:
+            return "Captions are worked out on this Mac. macOS still asks, because it gates the "
+                 + "recognition API rather than the network — nothing is uploaded."
         case .audioCapture:
             return "Setting an app's volume means routing its audio through Sarvkrit, which macOS "
                  + "treats as recording it."
@@ -100,7 +119,8 @@ enum Requirement: Hashable, CaseIterable {
     /// False for audio: there is no query, so the only evidence is silence where sound should be.
     var isQueryable: Bool {
         switch self {
-        case .accessibility, .screenRecording: return true
+        case .accessibility, .screenRecording, .camera, .microphone, .speechRecognition:
+            return true
         case .audioCapture: return false
         }
     }
@@ -115,7 +135,8 @@ enum Requirement: Hashable, CaseIterable {
     /// noticing silence instead.
     var isRequestable: Bool {
         switch self {
-        case .accessibility, .screenRecording: return true
+        case .accessibility, .screenRecording, .camera, .microphone, .speechRecognition:
+            return true
         case .audioCapture: return false
         }
     }
@@ -137,6 +158,15 @@ enum Requirement: Hashable, CaseIterable {
         case .screenRecording:
             return URL(string:
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+        case .camera:
+            return URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
+        case .microphone:
+            return URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        case .speechRecognition:
+            return URL(string:
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!
         }
     }
 }

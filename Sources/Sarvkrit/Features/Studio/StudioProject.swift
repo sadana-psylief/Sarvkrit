@@ -27,6 +27,11 @@ struct StudioProject: Codable, Equatable {
     var cursor = CursorSettings()
     var captions: [Caption] = []
     var captionStyle = CaptionStyle()
+    var masks: [StudioMask] = []
+    var camera = CameraSettings()
+    var cameraSegments: [CameraSegment] = []
+    var keystrokes = KeystrokeSettings()
+    var deviceFrame = DeviceFrameSelection()
     /// Shown in the editor, never rendered into the video.
     var speakerNotes = ""
 
@@ -67,6 +72,7 @@ struct StudioProject: Codable, Equatable {
     private enum Key: String, CaseIterable {
         case formatVersion, canvasSize, timeline, background, aspect, cropRect
         case zooms, cursor, captions, captionStyle, speakerNotes
+        case masks, camera, cameraSegments, keystrokes, deviceFrame
     }
 
     init(from decoder: Decoder) throws {
@@ -87,6 +93,11 @@ struct StudioProject: Codable, Equatable {
         cursor = read(.cursor, CursorSettings())
         captions = read(.captions, [Caption]())
         captionStyle = read(.captionStyle, CaptionStyle())
+        masks = read(.masks, [StudioMask]())
+        camera = read(.camera, CameraSettings())
+        cameraSegments = read(.cameraSegments, [CameraSegment]())
+        keystrokes = read(.keystrokes, KeystrokeSettings())
+        deviceFrame = read(.deviceFrame, DeviceFrameSelection())
         speakerNotes = read(.speakerNotes, "")
 
         let known = Set(Key.allCases.map(\.rawValue))
@@ -110,6 +121,11 @@ struct StudioProject: Codable, Equatable {
         try container.encode(cursor, forKey: StudioCodingKey(Key.cursor.rawValue))
         try container.encode(captions, forKey: StudioCodingKey(Key.captions.rawValue))
         try container.encode(captionStyle, forKey: StudioCodingKey(Key.captionStyle.rawValue))
+        try container.encode(masks, forKey: StudioCodingKey(Key.masks.rawValue))
+        try container.encode(camera, forKey: StudioCodingKey(Key.camera.rawValue))
+        try container.encode(cameraSegments, forKey: StudioCodingKey(Key.cameraSegments.rawValue))
+        try container.encode(keystrokes, forKey: StudioCodingKey(Key.keystrokes.rawValue))
+        try container.encode(deviceFrame, forKey: StudioCodingKey(Key.deviceFrame.rawValue))
         try container.encode(speakerNotes, forKey: StudioCodingKey(Key.speakerNotes.rawValue))
 
         // Written back last and untouched. Anything this build added under the same name would be
