@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireShelf()
         wireCutPasteToasts()
         wireScreenshots()
+        wireRecording()
         wirePinToScreen()
         // Installed unconditionally, before anything can put a window on screen. This is the one
         // shortcut that must never be missing when it is needed.
@@ -216,6 +217,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The capture itself is async because ScreenCaptureKit is; the hotkey fires on the main
     /// thread and hands off to a Task rather than blocking it, since a capture of a large display
     /// takes long enough to be felt as a stutter if it ran inline.
+    /// The recorder reaches its HUD through these closures. Nothing under `Features/` imports
+    /// the UI layer, which is why they exist at all.
+    private func wireRecording() {
+        guard let feature = AppState.shared.features
+            .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+
+        feature.startStop = { MainActor.assumeIsolated { Self.toggleRecording(feature) } }
+        feature.recordArea = { MainActor.assumeIsolated { Self.toggleRecording(feature) } }
+        feature.pauseResume = {
+            MainActor.assumeIsolated {
+                guard feature.recorder.isRecording else { return }
+                RecordingHUDController.shared.onPauseResume?()
+            }
+        }
+        feature.markMoment = {
+            MainActor.assumeIsolated {
+                guard feature.recorder.isRecording else { return }
+                feature.recorder.flag()
+                ToastPresenter.shared.show("Marked", symbolName: "flag")
+            }
+        }
+
+        RecordingHUDController.shared.onStop = {
+            MainActor.assumeIsolated { Self.stopRecording(feature) }
+        }
+        RecordingHUDController.shared.onPauseResume = {
+            MainActor.assumeIsolated {
+                let recorder = feature.recorder
+                guard recorder.isRecording else { return }
+                if recorder.isPaused { recorder.resume() } else { recorder.pause() }
+            }
+        }
+        RecordingHUDController.shared.onDiscard = {
+            Task { @MainActor in
+                await feature.recorder.discard()
+                RecordingHUDController.shared.dismiss()
+                feature.noteRecording(false)
+                ToastPresenter.shared.show("Discarded", symbolName: "trash")
+            }
+        }
+    }
+
+    /// **A second press stops rather than starting a second recording** — the same rule the
+    /// screenshot path applies to a scrolling capture already in progress.
+    @MainActor
+    private static func toggleRecording(_ feature: ScreenRecordingFeature) {
+        guard !feature.recorder.isRecording else { return stopRecording(feature) }
+
+        var request = RecordingRequest(
+            source: .display,
+            destination: RecordingBundle.defaultDirectory()
+                .appendingPathComponent("\(Self.recordingName()).\(RecordingBundle.fileExtension)"))
+        request.fps = feature.framesPerSecond
+        request.capturesSystemAudio = feature.capturesSystemAudio
+        request.hidesDesktopIcons = feature.hidesDesktopIcons
+
+        Task { @MainActor in
+            do {
+                try FileManager.default.createDirectory(
+                    at: RecordingBundle.defaultDirectory(), withIntermediateDirectories: true)
+                try await feature.recorder.start(request)
+                feature.noteRecording(true)
+                RecordingHUDController.shared.show(
+                    elapsed: { feature.recorder.elapsed },
+                    dropped: { feature.recorder.droppedFrames })
+            } catch RecordingError.noDisplays {
+                // Denial has no error to catch; ScreenCaptureKit just reports nothing. macOS does
+                // not hand a running process a new grant either, so the answer is a relaunch.
+                if ScreenRecordingRelaunch.looksLikeStaleGrant(
+                    preflightGranted: AppState.shared.permissions.canCaptureScreen,
+                    capturedDisplayCount: 0) {
+                    ScreenRecordingRelaunch.relaunch()
+                } else {
+                    AppState.shared.permissions.request(.screenRecording)
+                }
+            } catch RecordingError.outOfSpace(let free) {
+                let gigabytes = Double(free) / 1_000_000_000
+                ToastPresenter.shared.show(String(format: "Only %.1f GB free", gigabytes),
+                                           symbolName: "externaldrive.badge.exclamationmark")
+            } catch {
+                ToastPresenter.shared.show("Couldn't start recording",
+                                           symbolName: "exclamationmark.triangle")
+            }
+        }
+    }
+
+    @MainActor
+    private static func stopRecording(_ feature: ScreenRecordingFeature) {
+        Task { @MainActor in
+            let dropped = feature.recorder.droppedFrames
+            let bundle = try? await feature.recorder.finish()
+            RecordingHUDController.shared.dismiss()
+            feature.noteRecording(false)
+            guard let bundle else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([bundle.root])
+            ToastPresenter.shared.show(
+                dropped > 0 ? "Saved — \(dropped) frames dropped" : "Recording saved",
+                symbolName: "record.circle")
+        }
+    }
+
+    private static func recordingName() -> String {
+        CaptureFilename.make(pattern: "Recording {date} at {time}", mode: .fullscreen,
+                             date: Date(), counter: 0)
+    }
+
     private func wireScreenshots() {
         guard let screenshots = AppState.shared.features
             .compactMap({ $0 as? ScreenshotFeature }).first else { return }
