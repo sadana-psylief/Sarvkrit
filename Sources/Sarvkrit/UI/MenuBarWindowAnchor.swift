@@ -4,6 +4,30 @@ import SwiftUI
 
 /// Hands the enclosing `NSWindow` to a callback, and reports its own height as SwiftUI lays it out.
 ///
+/// **Why the panel snaps between sizes instead of animating, which is not for want of trying.**
+/// An animated window resize needs the window and its content to be different heights for the
+/// duration, and SwiftUI *centres* a root that does not fill its bounds — measured, a 350pt root
+/// sat 92pt down inside a 533pt host, exactly half the difference. So every frame of an animation
+/// would show a blank band above the content, or clip the header when the window is the shorter of
+/// the two.
+///
+/// The obvious fix is to make the root fill the window and pin the content to the top. It cannot
+/// be done from in here: `MenuBarExtra` sizes *and positions* its own window from what the root
+/// will accept, and a root that accepts anything breaks it two different ways, both measured:
+///
+///   - `.frame(minHeight: 0, maxHeight: .infinity, alignment: .top)` — the panel was created
+///     **10pt tall**, the system placed that, and it opened in the middle of the screen with the
+///     content hanging outside the material. Naming an explicit `idealHeight` does not help, so
+///     the size is taken from the *minimum*, not the ideal.
+///   - `.frame(maxHeight: .infinity, alignment: .top)` — created at the right size, but SwiftUI
+///     then settled on a height this probe disagreed with and re-asserted it indefinitely: the
+///     window held at 400pt around 363pt of content, corrected and undone every couple of seconds.
+///
+/// Neither shows up in a `fittingSize` test, because the *ideal* height is right in both cases.
+/// The panel's root is therefore left exactly as SwiftUI sizes it, and nothing may be layered
+/// outside it. Animating this properly means owning the window — an `NSStatusItem` and our own
+/// `NSPanel`, the way `ShelfPanel` and `ClipboardPickerPanel` already do it — not a modifier.
+///
 /// `MenuBarExtra` vends no window reference, so this is the only way to reach the panel's window.
 /// Installed as a `.background` of the dropdown's content: a background takes the size of what it
 /// backs without contributing any of its own, so the probe cannot perturb the layout it exists to
@@ -86,7 +110,16 @@ final class MenuBarWindowAnchor {
     /// SwiftUI's own idea of how tall the content is, straight from the probe's layout pass.
     private var contentHeight: CGFloat = 0
     /// Set while *we* are the ones resizing, so the `didResize` that follows can't recurse.
+    ///
+    /// Worth knowing that this guards less than it looks: the observers below are registered with
+    /// `queue: .main`, which delivers on the main *operation queue* and so a runloop turn later
+    /// than the `setFrame` that caused it — by which point a flag cleared synchronously is already
+    /// false. Harmless today, because the `didResize` that gets through finds the window already
+    /// where it belongs and does nothing. Anything that ever holds the window away from the
+    /// content height, an animation above all, would need a flag that spans the whole operation.
     private var isAdjusting = false
+    /// Set between a content report and the coalesced pass that acts on it.
+    private var pinScheduled = false
 
     private init() {}
 
@@ -131,10 +164,22 @@ final class MenuBarWindowAnchor {
 
     /// The content's height, reported by the probe as SwiftUI lays it out. **This is the trigger
     /// that matters:** it is the only signal a shrink produces.
+    ///
+    /// Records and defers rather than resizing on the spot, because this arrives from inside the
+    /// probe's `layout()`. Resizing a window there changes the hosting view's bounds mid-layout
+    /// and re-enters `layout()`; deferring means one correction per runloop turn however many
+    /// layout passes a change produces.
     func note(contentHeight height: CGFloat) {
         guard abs(height - contentHeight) > MenuBarPanelPlacement.moveTolerance else { return }
         contentHeight = height
-        pin()
+
+        guard !pinScheduled else { return }
+        pinScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pinScheduled = false
+            self.pin()
+        }
     }
 
     private func observe(
