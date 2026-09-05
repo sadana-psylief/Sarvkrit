@@ -1,6 +1,58 @@
 import CoreGraphics
 import Foundation
 
+/// Flat colours for a background, in two tiers.
+///
+/// **This is where pastels belong.** The annotation palette deliberately is not pastel — a mark
+/// has to carry on a white screenshot, and a pale arrow is decoration you have to hunt for. A
+/// background is the opposite case: it sits *behind* the shot, its whole job is to stay back, and
+/// low contrast is the point rather than a defect. So the same soft shades that would be wrong on
+/// an arrow are exactly right here.
+///
+/// Two rows rather than one long list, because they are two different decisions: which colour,
+/// and how loud.
+enum BackgroundPalette {
+    /// Saturated. The same family as the annotation palette, so a deck built from both agrees
+    /// with itself.
+    static let solid: [RGBAColour] = [
+        RGBAColour(hex: "17171A"),      // ink
+        RGBAColour(hex: "FFFFFF"),      // paper
+        RGBAColour(hex: "E5484D"),      // crimson
+        RGBAColour(hex: "F76B15"),      // ember
+        RGBAColour(hex: "FFC53D"),      // amber
+        RGBAColour(hex: "30A46C"),      // jade
+        RGBAColour(hex: "0B7FE0"),      // azure
+        RGBAColour(hex: "8E4EC6"),      // violet
+    ]
+
+    /// The quiet tier.
+    static let pastel: [RGBAColour] = [
+        RGBAColour(hex: "3E3E44"),      // charcoal
+        RGBAColour(hex: "ECECEF"),      // mist
+        RGBAColour(hex: "F7C8CA"),      // blush
+        RGBAColour(hex: "F9D4B4"),      // peach
+        RGBAColour(hex: "FBE7B0"),      // straw
+        RGBAColour(hex: "BFE3CE"),      // sage
+        RGBAColour(hex: "BFD9F5"),      // sky
+        RGBAColour(hex: "DACCF2"),      // lilac
+    ]
+
+    static let solidNames = ["Ink", "Paper", "Crimson", "Ember", "Amber", "Jade", "Azure", "Violet"]
+    static let pastelNames = ["Charcoal", "Mist", "Blush", "Peach", "Straw", "Sage", "Sky", "Lilac"]
+}
+
+/// The blurred-from-the-screenshot backdrops offered in the picker.
+///
+/// Three, matching the reference: the blur as it comes, and two darkened — which is what makes a
+/// pale screenshot read against its own colours instead of dissolving into them.
+enum BlurredBackdropPresets {
+    static let all: [(name: String, blur: CaptureBackground.Blur)] = [
+        ("Blurred", CaptureBackground.Blur(amount: 0.06, tint: 0)),
+        ("Blurred, dark", CaptureBackground.Blur(amount: 0.06, tint: -0.4)),
+        ("Blurred, darker", CaptureBackground.Blur(amount: 0.06, tint: -0.68)),
+    ]
+}
+
 /// The built-in backgrounds.
 ///
 /// **Twenty gradients as data, not twenty PNGs.** Images large enough for a 6K canvas would add
@@ -108,6 +160,48 @@ enum BackgroundCatalogue {
         entry("graphite", "Graphite", ["1E1E22", "26262B", "2C2C32",
                               "232328", "2C2C32", "34343B",
                               "2A2A30", "34343B", "3C3C44"]),
+
+        // Twelve more, and none of the twenty above are touched — their ids are in saved
+        // documents. These are hue-rotations of the reference's own compositions rather than
+        // new inventions: what makes those twenty read well is *structure* — which corner is
+        // dark, where the hot lobe sits, how far the hue travels across the square — and that
+        // survives a rotation where a blank page rarely produces it.
+        entry("amethyst", "Amethyst", ["BE50F1", "6D3BC8", "2B5170",
+                              "9841E2", "7C44DB", "4B669A",
+                              "573DB9", "5C64B1", "797EC3"]),
+        entry("tide", "Tide", ["1B8D94", "308B9D", "408FAA",
+                              "4F9BBD", "5995C4", "5F8ECD",
+                              "7199D8", "707BD6", "826FCE"]),
+        entry("emerald", "Emerald", ["145066", "00435B", "006979",
+                              "1C7B88", "056677", "058B90",
+                              "139995", "109D97", "19AC93"]),
+        entry("iris", "Iris", ["9366FC", "7861FB", "6865F2",
+                              "A657FC", "8A5CFC", "6B53F7",
+                              "B94FFC", "974CFC", "7F51F4"]),
+        entry("prism", "Prism", ["C191D4", "7552CF", "3625C0",
+                              "5ED1C1", "9F7EDF", "3723D9",
+                              "04E8B2", "1ADAD4", "1F3EB8"]),
+        entry("abyss", "Abyss", ["1E0007", "2A0008", "530214",
+                              "3B030C", "3D0615", "91245A",
+                              "7E1C28", "7F3554", "D86CB3"]),
+        entry("shell", "Shell", ["67BDB4", "7CCAC7", "81CACD",
+                              "8EBDC9", "AFCAD8", "B0C1D5",
+                              "AB93C0", "CEA8D6", "DCACDE"]),
+        entry("vault", "Vault", ["1E2548", "352183", "312177",
+                              "212550", "322372", "6B2AC8",
+                              "211F5C", "322177", "6B2AC9"]),
+        entry("fathom", "Fathom", ["06353E", "11555C", "17AAA1",
+                              "0C0B24", "132F52", "2A64A0",
+                              "6A0B58", "081C52", "1833A5"]),
+        entry("orchid", "Orchid", ["7BDEF0", "7ADBEF", "4A6DD7",
+                              "86BEE3", "9AA3C9", "9678C6",
+                              "C267F9", "BD56FB", "DA9AFC"]),
+        entry("cove", "Cove", ["4490A9", "00B390", "00B48F",
+                              "E96852", "A15666", "F45F81",
+                              "F99CC3", "FB617C", "FC8A8D"]),
+        entry("fuchsia", "Fuchsia", ["953ECF", "AADAEA", "C2B7C3",
+                              "ED22C6", "FD47F6", "63308C",
+                              "C82FB3", "22073E", "610178"]),
     ]
 
     /// Builds an entry, **deriving** its hues and lightness from the colours themselves.
@@ -167,7 +261,7 @@ extension CaptureBackground.Fill {
         switch self {
         case .mesh(let spec): return spec.isWellFormed ? spec : nil
         case .builtIn(let id): return BackgroundCatalogue.mesh(for: id)
-        case .none, .solid, .gradient, .image, .unknown: return nil
+        case .none, .solid, .gradient, .image, .blurred, .unknown: return nil
         }
     }
 }

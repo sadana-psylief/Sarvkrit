@@ -5,32 +5,78 @@ import SwiftUI
 struct BackgroundInspector: View {
     @ObservedObject var model: EditorDocumentModel
     @ObservedObject var presets: BackgroundPresetStore
+    @ObservedObject var wallpapers: WallpaperStore = .shared
     @State private var presetName = ""
+    @State private var isNamingPreset = false
+    @State private var showsEveryGradient = false
+    /// The frame the user last had, so "None" does not throw their padding away.
+    ///
+    /// Optional, because the fallback before anything has been chosen has to be sized to *this*
+    /// capture — and a `@State` default cannot see the model.
+    @State private var remembered: CaptureBackground?
 
-    private var style: CaptureBackground { model.document.background ?? CaptureBackground() }
+    private var style: CaptureBackground { model.document.background ?? remembered ?? initial }
+
+    /// The shorter side of what will actually be composited.
+    ///
+    /// `contentRect`, not the base image: `AnnotationRenderer.composition(for:)` lays out against
+    /// the cropped rect, so a cropped capture would otherwise get a shadow and slider limits
+    /// sized to pixels it no longer has.
+    private var shortSide: CGFloat {
+        let size = model.document.contentRect.size
+        return max(min(size.width, size.height), 1)
+    }
+
+    /// What a background looks like before anybody has touched it.
+    ///
+    /// **The shadow has to be sized here, not just on the slider.** `CaptureBackground()` carries
+    /// an absolute 40-pixel radius, which was chosen for a capture about a thousand pixels across
+    /// — on a 4K shot it is invisible, so every new background started with no shadow anybody
+    /// could see and the two-layer treatment would only have made an invisible shadow nicer.
+    private var initial: CaptureBackground {
+        var style = CaptureBackground()
+        style.shadow = Self.shadow(50, shortSide: shortSide)
+        return style
+    }
 
     private func update(_ change: (inout CaptureBackground) -> Void) {
         var next = style
         change(&next)
+        remembered = next
         model.edit { $0.background = next }
+    }
+
+    /// Applies a fill, turning the background on if it was off.
+    ///
+    /// **Clears Auto Balance**, because picking a background by hand is the user taking over — the
+    /// same convention as nudging the brightness slider on a Mac with auto-brightness on. Without
+    /// this the balance ran on every edit and wrote its own choice straight back over the one just
+    /// made, so with the checkbox ticked every swatch in the panel appeared to do nothing at all.
+    private func choose(_ fill: CaptureBackground.Fill) {
+        update {
+            $0.fill = fill
+            $0.isAutoBalanced = false
+        }
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                Toggle("Add a background", isOn: Binding(
-                    get: { model.document.background != nil },
-                    set: { on in model.edit { $0.background = on ? CaptureBackground() : nil } }))
+                presetControls
+                noneButton
 
-                // **The presets show whether or not one is applied.** Gating them behind the
-                // toggle meant opening the panel showed a single unticked checkbox and nothing
+                // **The swatches show whether or not a background is applied.** Gating them
+                // behind a checkbox meant opening the panel showed one unticked box and nothing
                 // else — no sign that twenty gradients were behind it, and no reason to guess
-                // that ticking the box was worth doing. Picking a swatch turns it on.
-                swatches
+                // that ticking it was worth doing. Picking any swatch turns it on.
+                section("Gradients", trailing: { gradientDisclosure }) { gradientSwatches }
+                section("Wallpapers") { wallpaperSwatches }
+                section("Blurred") { blurredSwatches }
+                section("Plain colour") { plainColours }
+
                 if model.document.background != nil {
                     meshEditor
                     controls
-                    presetControls
                 }
             }
             .padding(Theme.Space.md)
@@ -38,23 +84,199 @@ struct BackgroundInspector: View {
         .frame(width: 240)
     }
 
-    private var swatches: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
-                  spacing: 6) {
-            ForEach(BackgroundCatalogue.entries) { entry in
-                Button { update { $0.fill = .builtIn(id: entry.id) } } label: {
+    // MARK: - Sections
+
+    @ViewBuilder
+    private func section<Content: View, Trailing: View>(
+        _ title: String,
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() },
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text(title).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                trailing()
+            }
+            content()
+        }
+    }
+
+    private var noneButton: some View {
+        Button {
+            // Nil, not a `.none` fill: to a user "None" means no frame at all, and a transparent
+            // border with a shadow round it is a third state nobody asked for. The frame itself
+            // is remembered, so picking a fill again brings back the padding and corners rather
+            // than resetting them — which is the actual complaint about the old checkbox.
+            //
+            // Remembered *here*, not only on edit: a document opened with padding 120 and then
+            // sent straight to None had never been through `update`, so it came back at the
+            // default 64.
+            remembered = style
+            model.edit { $0.background = nil }
+        } label: {
+            Text("None").frame(maxWidth: .infinity)
+        }
+        .controlSize(.large)
+        .clickableCursor()
+        .disabled(model.document.background == nil)
+    }
+
+    @ViewBuilder private var gradientDisclosure: some View {
+        if BackgroundCatalogue.entries.count > Self.collapsedGradientCount {
+            Button(showsEveryGradient ? "Show less" : "Show more") {
+                showsEveryGradient.toggle()
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(Color.accentColor)
+            .clickableCursor()
+        }
+    }
+
+    /// Two rows collapsed. Twenty swatches pushed every slider below the fold, so the padding and
+    /// shadow controls were invisible until you scrolled past a wall of gradients.
+    private static let collapsedGradientCount = 10
+
+    private var gradientSwatches: some View {
+        let entries = showsEveryGradient
+            ? BackgroundCatalogue.entries
+            : Array(BackgroundCatalogue.entries.prefix(Self.collapsedGradientCount))
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
+                         spacing: 6) {
+            ForEach(entries) { entry in
+                Button { choose(.builtIn(id: entry.id)) } label: {
                     GradientSwatch(mesh: entry.mesh)
                         .frame(height: 30)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .strokeBorder(isSelected(entry) ? Color.accentColor : .clear,
-                                          lineWidth: 2))
+                        .modifier(SwatchChrome(isSelected: isSelected(entry)))
                 }
                 .buttonStyle(.plain)
                 .clickableCursor()
                 .help(entry.name)
             }
         }
+    }
+
+    private var wallpaperSwatches: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
+                  spacing: 6) {
+            ForEach(wallpapers.fileNames, id: \.self) { name in
+                Button { choose(.image(fileName: name)) } label: {
+                    FillSwatch(fill: .image(fileName: name),
+                               sources: .init(wallpaper: wallpapers.image(named: name)))
+                        .frame(height: 30)
+                        .modifier(SwatchChrome(isSelected: isWallpaperSelected(name)))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+                .help(name)
+                .contextMenu {
+                    Button("Remove", role: .destructive) { removeWallpaper(name) }
+                }
+            }
+            Button(action: importWallpaper) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
+                    .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(Color(nsColor: .separatorColor),
+                                      style: SwiftUI.StrokeStyle(lineWidth: 1, dash: [3, 3])))
+            }
+            .buttonStyle(.plain)
+            .clickableCursor()
+            .help("Add an image")
+            .accessibilityLabel("Add a wallpaper")
+        }
+    }
+
+    private var blurredSwatches: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
+                  spacing: 6) {
+            ForEach(BlurredBackdropPresets.all, id: \.name) { preset in
+                Button { choose(.blurred(preset.blur)) } label: {
+                    FillSwatch(fill: .blurred(preset.blur), sources: .init(base: model.base))
+                        .frame(height: 30)
+                        .modifier(SwatchChrome(isSelected: isBlurSelected(preset.blur)))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+                .help("\(preset.name) — made from this screenshot")
+            }
+        }
+    }
+
+    private var plainColours: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            colourRow(BackgroundPalette.solid, names: BackgroundPalette.solidNames)
+            colourRow(BackgroundPalette.pastel, names: BackgroundPalette.pastelNames)
+        }
+    }
+
+    private func colourRow(_ colours: [RGBAColour], names: [String]) -> some View {
+        HStack(spacing: 6) {
+            ForEach(Array(colours.enumerated()), id: \.offset) { index, colour in
+                Button { choose(.solid(colour)) } label: {
+                    Circle()
+                        .fill(Color(nsColor: NSColor(cgColor: colour.cgColor) ?? .white))
+                        .frame(width: 20, height: 20)
+                        // Not `separatorColor` at a half point: white and mist are near enough to
+                        // the panel that a hairline loses them entirely, and an invisible swatch
+                        // is one you cannot pick.
+                        .overlay(Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 1))
+                        .overlay(Circle()
+                            .strokeBorder(isSolidSelected(colour) ? Color.accentColor : .clear,
+                                          lineWidth: 2)
+                            .padding(-3))
+                }
+                .buttonStyle(.plain)
+                .clickableCursor()
+                .help(index < names.count ? names[index] : "Colour")
+            }
+        }
+    }
+
+    // MARK: - Selection
+
+    private func isWallpaperSelected(_ name: String) -> Bool {
+        if case .image(let fileName) = style.fill, model.document.background != nil {
+            return fileName == name
+        }
+        return false
+    }
+
+    private func isBlurSelected(_ blur: CaptureBackground.Blur) -> Bool {
+        if case .blurred(let current) = style.fill, model.document.background != nil {
+            return current == blur
+        }
+        return false
+    }
+
+    private func isSolidSelected(_ colour: RGBAColour) -> Bool {
+        if case .solid(let current) = style.fill, model.document.background != nil {
+            return current == colour
+        }
+        return false
+    }
+
+    // MARK: - Wallpapers
+
+    private func importWallpaper() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = WallpaperStore.readableTypes
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+        guard panel.runModal() == .OK, let url = panel.url,
+              let name = wallpapers.add(contentsOf: url) else { return }
+        choose(.image(fileName: name))
+    }
+
+    private func removeWallpaper(_ name: String) {
+        // If the document is using it, drop back to a gradient rather than leaving it pointing at
+        // a file that is now gone.
+        if isWallpaperSelected(name) { choose(.builtIn(id: "dusk")) }
+        wallpapers.remove(name)
     }
 
     /// The applied background's control grid, as editable colours.
@@ -114,58 +336,210 @@ struct BackgroundInspector: View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             labelled("Padding", value: "\(Int(style.padding))") {
                 Slider(value: Binding(get: { style.padding },
-                                      set: { value in update { $0.padding = value } }),
-                       in: 0...240)
+                                      set: { value in
+                                          // The other thing Auto Balance chooses — see `choose`.
+                                          update { $0.padding = value; $0.isAutoBalanced = false }
+                                      }),
+                       in: 0...maxPadding)
+            }
+            labelled("Inset", value: "\(Int(style.inset))") {
+                Slider(value: Binding(get: { style.inset },
+                                      set: { value in update { $0.inset = value } }),
+                       in: 0...maxInset)
+            }
+            .help("Shrink the screenshot without growing the canvas")
+
+            Toggle("Auto balance", isOn: Binding(
+                get: { style.isAutoBalanced },
+                set: { on in
+                    // The only place the balance actually runs. Turning it off leaves the fill and
+                    // padding it chose in place — undoing them would throw away a choice the user
+                    // may well have been keeping.
+                    var next = style
+                    next.isAutoBalanced = on
+                    if on { next = BackgroundCompositor.autoBalanced(model.base, base: next) }
+                    remembered = next
+                    model.edit { $0.background = next }
+                }))
+            .help("Keep the background and padding suited to this screenshot")
+
+            labelled("Shadow", value: "\(Int(shadowAmount))") {
+                Slider(value: Binding(get: { shadowAmount },
+                                      set: { value in update { $0.shadow = Self.shadow(value, shortSide: shortSide) } }),
+                       in: 0...100)
             }
             labelled("Corners", value: "\(Int(style.cornerRadius))") {
                 Slider(value: Binding(get: { style.cornerRadius },
                                       set: { value in update { $0.cornerRadius = value } }),
-                       in: 0...64)
+                       in: 0...maxCorner)
             }
-            Toggle("Shadow", isOn: Binding(
-                get: { style.shadow != nil },
-                set: { on in update { $0.shadow = on ? CaptureBackground.Shadow() : nil } }))
-            Picker("Shape", selection: Binding(get: { style.aspect },
-                                               set: { value in update { $0.aspect = value } })) {
-                ForEach(AspectRatio.allCases) { Text($0.title).tag($0) }
+
+            HStack(alignment: .top, spacing: Theme.Space.md) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Alignment").font(.caption).foregroundStyle(.secondary)
+                    alignmentGrid
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ratio").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: Binding(get: { style.aspect },
+                                                  set: { value in update { $0.aspect = value } })) {
+                        ForEach(AspectRatio.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                }
             }
-            Button("Auto Balance") {
-                model.edit { $0.background = BackgroundCompositor.autoBalanced(model.base) }
-            }
-            .help("Pick a background and padding that suit this screenshot")
         }
     }
 
-    private var presetControls: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Divider()
-            if !presets.presets.isEmpty {
-                ForEach(presets.presets) { preset in
-                    HStack {
-                        Button(preset.name) { model.edit { $0.background = preset.style } }
-                            .buttonStyle(.link)
-                        Spacer()
-                        Button { presets.remove(id: preset.id) } label: {
-                            Image(systemName: "trash")
+    /// The shadow as one 0-100 number.
+    ///
+    /// The panel offered a bare on/off switch while `Shadow` carried four properties nobody could
+    /// reach, so the only shadow available was the default one. Radius and opacity move together
+    /// here because they are one perceptual thing — "how much shadow" — and separate sliders for
+    /// them is a lighting rig, not a screenshot tool. Zero means off, so the toggle is still in
+    /// there at the end of the track.
+    private var shadowAmount: Double { Self.shadowAmount(for: style.shadow, shortSide: shortSide) }
+
+    static func shadowAmount(for shadow: CaptureBackground.Shadow?, shortSide: CGFloat) -> Double {
+        guard let shadow, shortSide > 0 else { return 0 }
+        return min(shadow.radius / (shortSide * radiusPerUnit), 100)
+    }
+
+    // **Every one of these was a fixed number against a value measured in image pixels**, so all
+    // three were roughly half as useful on a Retina capture and a tenth as useful on a 4K one —
+    // which is what "corners can have a wider range" was about. Relative to the capture, they mean
+    // the same thing at any size. Corners reaches half the shorter side, which is a full stadium;
+    // `CGPath.rounded` caps it there anyway, so the slider cannot ask for an invalid path.
+    private var maxPadding: CGFloat { shortSide / 2 }
+    private var maxInset: CGFloat { shortSide / 4 }
+    private var maxCorner: CGFloat { shortSide / 2 }
+
+    /// Radius as a fraction of the shorter side, per point of the slider.
+    ///
+    /// Set so that 50 on a 500-pixel capture is a 40-pixel radius — which is exactly what
+    /// `CaptureBackground.Shadow()` has always been, so the slider's midpoint still means the
+    /// shadow everybody is used to.
+    private static let radiusPerUnit = 0.0016
+
+    /// The curve is set so the *default* shadow round-trips: `Shadow()` reads as 50, and 50 gives
+    /// back `Shadow()`. Without that, opening the panel and nudging the slider back to where it
+    /// started would leave a different picture than the one you opened.
+    static func shadow(_ amount: Double, shortSide: CGFloat) -> CaptureBackground.Shadow? {
+        guard amount > 0.5, shortSide > 0 else { return nil }
+        let radius = amount * shortSide * radiusPerUnit
+        return CaptureBackground.Shadow(radius: radius,
+                                        offsetY: radius * 0.5,
+                                        opacity: 0.12 + amount / 100 * 0.46,
+                                        colour: coolBlack)
+    }
+
+    /// Shadows are not neutral black.
+    ///
+    /// A pure-black shadow over a coloured background reads as a grey smear; a hair of blue in it
+    /// reads as shade. Applied only where a shadow is being made — a document that stored its own
+    /// colour keeps it.
+    private static let coolBlack = RGBAColour(r: 0.04, g: 0.05, b: 0.10)
+
+    /// Nine anchors, laid out as the thing they describe.
+    ///
+    /// A picker listing "Top Leading, Top, Top Trailing…" makes you read nine phrases and build
+    /// the grid in your head. The grid *is* the control.
+    private var alignmentGrid: some View {
+        VStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { row in
+                HStack(spacing: 3) {
+                    ForEach(0..<3, id: \.self) { column in
+                        let alignment = Self.alignments[row * 3 + column]
+                        Button { update { $0.alignment = alignment } } label: {
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(style.alignment == alignment
+                                      ? Color.accentColor
+                                      : Color(nsColor: .unemphasizedSelectedContentBackgroundColor))
+                                .frame(width: 20, height: 16)
                         }
                         .buttonStyle(.plain)
                         .clickableCursor()
-                        .help("Delete “\(preset.name)”")
-                        .accessibilityLabel("Delete preset \(preset.name)")
+                        .help(Self.alignmentNames[row * 3 + column])
+                        .accessibilityLabel(Self.alignmentNames[row * 3 + column])
                     }
-                    .font(.caption)
                 }
             }
-            HStack {
-                TextField("Preset name", text: $presetName)
-                Button("Save") {
-                    guard !presetName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    presets.add(name: presetName, style: style)
-                    presetName = ""
-                }
-            }
-            .font(.caption)
         }
+    }
+
+    private static let alignments: [CaptureBackground.Alignment] = [
+        .topLeading, .top, .topTrailing,
+        .leading, .centre, .trailing,
+        .bottomLeading, .bottom, .bottomTrailing,
+    ]
+    private static let alignmentNames = [
+        "Top left", "Top", "Top right",
+        "Left", "Centre", "Right",
+        "Bottom left", "Bottom", "Bottom right",
+    ]
+
+    /// Saved looks: a menu and a "+", rather than a growing list of links.
+    ///
+    /// The list was fine at two presets and pushed every gradient below the fold at ten. A menu
+    /// costs one line whatever it holds, which is the shape the reference uses for the same
+    /// reason.
+    private var presetControls: some View {
+        HStack(spacing: 6) {
+            Menu {
+                if presets.presets.isEmpty {
+                    Text("No saved backgrounds")
+                } else {
+                    ForEach(presets.presets) { preset in
+                        Button(preset.name) {
+                            remembered = preset.style
+                            model.edit { $0.background = preset.style }
+                        }
+                    }
+                    Divider()
+                    Menu("Delete") {
+                        ForEach(presets.presets) { preset in
+                            Button(preset.name) { presets.remove(id: preset.id) }
+                        }
+                    }
+                }
+            } label: {
+                Text(presets.presets.isEmpty ? "Presets…" : "Presets (\(presets.presets.count))")
+            }
+
+            Button {
+                presetName = ""
+                isNamingPreset = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .clickableCursor()
+            .help("Save this background as a preset")
+            .accessibilityLabel("Save preset")
+            .popover(isPresented: $isNamingPreset) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Save background").font(.caption).foregroundStyle(.secondary)
+                    TextField("Name", text: $presetName)
+                        .frame(width: 160)
+                        .onSubmit(savePreset)
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { isNamingPreset = false }
+                        Button("Save", action: savePreset)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(presetName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+                .padding(12)
+            }
+        }
+    }
+
+    private func savePreset() {
+        let name = presetName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        presets.add(name: name, style: style)
+        presetName = ""
+        isNamingPreset = false
     }
 
     private func labelled<Content: View>(_ title: String, value: String,
@@ -177,6 +551,63 @@ struct BackgroundInspector: View {
                 Text(value).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
             content()
+        }
+    }
+}
+
+/// The rounded corners and selection ring every swatch in this panel wears.
+///
+/// One modifier rather than the same four lines on each grid, because a swatch that rounds
+/// differently from its neighbour is the kind of thing nobody reports and everybody sees.
+struct SwatchChrome: ViewModifier {
+    let isSelected: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor : .clear, lineWidth: 2))
+    }
+}
+
+/// A preview of any fill, drawn through the compositor.
+///
+/// `GradientSwatch` can only show a mesh, and three of the picker's sections are not meshes. This
+/// takes the `Fill` itself and hands it to `BackgroundCompositor.drawFill` — the same call the
+/// export makes — so a wallpaper thumbnail and a blurred backdrop are previews of the real thing
+/// rather than approximations of it. `SwatchAgreementTests` pins that property for the mesh
+/// swatch; the reason it holds here is that there is only one drawing routine to agree with.
+struct FillSwatch: NSViewRepresentable {
+    let fill: CaptureBackground.Fill
+    let sources: BackgroundCompositor.Sources
+
+    func makeNSView(context: Context) -> SwatchView { SwatchView(fill: fill, sources: sources) }
+
+    func updateNSView(_ view: SwatchView, context: Context) {
+        view.fill = fill
+        view.sources = sources
+    }
+
+    final class SwatchView: NSView {
+        var fill: CaptureBackground.Fill { didSet { needsDisplay = true } }
+        var sources: BackgroundCompositor.Sources { didSet { needsDisplay = true } }
+
+        init(fill: CaptureBackground.Fill, sources: BackgroundCompositor.Sources) {
+            self.fill = fill
+            self.sources = sources
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not used from a nib") }
+
+        /// Flipped, like every other consumer of the compositor — see `GradientSwatch`, which
+        /// shipped upside down for exactly as long as its stops were symmetric enough to hide it.
+        override var isFlipped: Bool { true }
+
+        override func draw(_ dirtyRect: NSRect) {
+            guard let context = NSGraphicsContext.current?.cgContext else { return }
+            BackgroundCompositor.drawFill(fill, in: bounds, context: context, sources: sources)
         }
     }
 }

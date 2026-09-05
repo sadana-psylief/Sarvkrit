@@ -3,22 +3,41 @@ import Foundation
 
 /// The shape of an arrow.
 ///
-/// **Built to measurements taken off a reference arrow, not to taste.** The first version here was
-/// a stroked line with a triangle on the end, which always reads as clip art; the second was my
-/// own guess at a tapered shape and grew spurs. These proportions come from measuring a real one,
-/// with `W` throughout meaning the shaft's full width where it meets the head — the number the
-/// user is setting when they choose a thickness.
+/// **Built to measurements taken off a reference arrow, not to taste.** `W` throughout means the
+/// shaft's full width where it meets the head — the number the user is setting when they choose a
+/// thickness.
 ///
 /// The geometry that matters, arrow pointing +x with the shaft/head junction at the origin:
 ///
-/// - **tip** at `(3.0W, 0)`
-/// - **barb tips** at `(-0.3W, ±1.425W)` — *behind* the junction, which is what makes the head
+/// - **tip** at `(2.8W, 0)`
+/// - **barb tips** at `(-0.3W, ±2.25W)` — *behind* the junction, which is what makes the head
 ///   look swept rather than like a triangle sitting on a stick
-/// - **shaft edge at the junction** `(0, ±0.5W)`, tapering **linearly** back to `±0.175W` at the
-///   tail, which ends in a semicircular cap
+/// - **shaft edge** a constant `±0.5W` from the junction back to the tail, which ends in a
+///   semicircular cap
 ///
 /// The back edge is a straight line from each barb tip forward to the shaft edge. Curving it, as
 /// an earlier attempt did, produces a fishtail.
+///
+/// **Re-measured off `markup.mp4`, September 2026, replacing an earlier set.** The old numbers
+/// tapered the shaft from `±0.175W` at the tail to `±0.5W` at the neck and gave the head a
+/// `1.425W` half-span. Measuring the reference properly — exact-Euclidean distance transform for
+/// the widths, and a scan back from the tip along the head axis for the junction — says the shaft
+/// is a constant width end to end and the head is `2.25W` to a side, over half again as wide.
+/// The taper was the visible error: it drew the tail at a third of its true width.
+///
+/// A constant-width shaft with a triangular head is structurally the "stroked line with a
+/// triangle on the end" an earlier version of this comment dismissed as clip art, so it is worth
+/// saying what keeps it from reading that way, because all three are easy to lose:
+///
+/// - the tail ends in a **semicircular cap**, not a square one;
+/// - the back edge runs **straight from each barb tip forward to the neck**, with the barbs set
+///   back behind the junction, so the head is swept rather than stuck on;
+/// - head and shaft are **one closed path**, so there is no seam where they meet.
+///
+/// `barbSetback` is the one proportion the reference frame could not settle — three pixels of
+/// setback against an eight-pixel shaft is inside the anti-aliasing error, and the measurement
+/// could not even fix its sign. It keeps its previous `0.3W` rather than take a number the
+/// evidence does not support.
 enum ArrowGeometry {
 
     /// How an arrow should be painted. Two of the four styles are outlines and two are strokes,
@@ -47,17 +66,19 @@ enum ArrowGeometry {
         let w = max(strokeWidth, 0.5)
         var metrics: Metrics
         switch head {
-        case .filled, .curved:
-            metrics = Metrics(tailHalf: w * 0.175, neckHalf: w * 0.5,
-                              headLength: w * 3.0, headHalf: w * 1.425, barbSetback: w * 0.3)
-        case .thin:
-            // Less taper and a narrower head: a dart rather than a brush stroke.
-            metrics = Metrics(tailHalf: w * 0.34, neckHalf: w * 0.45,
-                              headLength: w * 3.2, headHalf: w * 1.15, barbSetback: w * 0.22)
-        case .open:
-            // Handled as a stroked chevron; these are only used for hit-testing bounds.
+        case .filled, .curved, .open:
+            // `.open` is drawn by `chevronPath` and never reaches here through `shape`, but it
+            // shares these so anything that asks for an arrow's metrics directly gets an answer
+            // rather than a special case. (The previous `.open` branch claimed it was used for
+            // hit-testing bounds; `AnnotationGeometry.bounds(of:)` has never called it.)
             metrics = Metrics(tailHalf: w * 0.5, neckHalf: w * 0.5,
-                              headLength: w * 3.3, headHalf: w * 1.65, barbSetback: 0)
+                              headLength: w * 2.8, headHalf: w * 2.25, barbSetback: w * 0.3)
+        case .thin:
+            // The one style that keeps a taper, and a narrower head: a dart rather than a brush
+            // stroke. Scaled by the same factor the measured head grew, so the four styles stay
+            // as far apart as they were.
+            metrics = Metrics(tailHalf: w * 0.34, neckHalf: w * 0.45,
+                              headLength: w * 3.0, headHalf: w * 1.8, barbSetback: w * 0.22)
         }
 
         // The shaft must survive. Below five widths of length there is no room for a full head, so
@@ -196,7 +217,10 @@ enum ArrowGeometry {
 
     /// The open style: a constant-width shaft with a two-stroke chevron at the tip.
     ///
-    /// Measured at head strokes `3.3 × strokeWidth` long, splayed `±30°` from the axis.
+    /// The barbs trace the *filled* head's outline, so open and solid read as the same arrow at
+    /// the same size: a `2.25W` half-span across a `2.8W` length is `hypot(2.25, 2.8) = 3.6W` of
+    /// barb at `atan(2.25 / 2.8) = 38.8°`. They used to be `3.3W` at `±30°`, a 1.65W half-span —
+    /// a visibly narrower head than the one beside it in the style picker.
     static func chevronPath(from start: CGPoint, to end: CGPoint,
                             curvature: CGFloat, strokeWidth: CGFloat) -> CGPath {
         let spine = spinePoints(from: start, to: end, curvature: curvature)
@@ -209,8 +233,8 @@ enum ArrowGeometry {
         path.move(to: spine[0])
         for point in spine.dropFirst() { path.addLine(to: point) }
 
-        let barbLength = w * 3.3
-        let angle = CGFloat.pi / 6      // 30°
+        let barbLength = w * 3.6
+        let angle = CGFloat.pi * 38.8 / 180
         for sign in [CGFloat(1), -1] {
             let cosA = cos(angle), sinA = sin(angle) * sign
             // Rotate the reversed direction by ±30° to get each barb.

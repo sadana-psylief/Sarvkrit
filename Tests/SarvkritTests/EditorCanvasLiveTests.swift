@@ -43,7 +43,7 @@ final class EditorCanvasLiveTests: XCTestCase {
     }
 
     private func write(_ rep: NSBitmapImageRep, named name: String) throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"]
+        guard let directory = PreviewDirectory.path
         else { return }
         let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
         try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
@@ -150,6 +150,26 @@ final class EditorCanvasLiveTests: XCTestCase {
 
         let rep = try draw(model)
         try write(rep, named: "arrow-handles")
+        XCTAssertGreaterThan(distinctColours(rep).count, 3)
+    }
+
+    /// The open style's halo, which is the awkward one.
+    ///
+    /// Every other style hands the halo a single closed outline. The chevron is three overlapping
+    /// subpaths — shaft and two barbs — and the halo clips the arrow's own interior out with the
+    /// even-odd rule, which is exactly the rule that turns an overlap into a hole. Rendered and
+    /// looked at rather than reasoned about.
+    func testASelectedOpenArrowHaloesWithoutPinholes() throws {
+        let model = EditorDocumentModel(base: try base())
+        var arrow = ArrowElement(start: CGPoint(x: 120, y: 300), end: CGPoint(x: 470, y: 130))
+        arrow.head = .open
+        arrow.stroke.colour = RGBAColour(r: 0.95, g: 0.24, b: 0.20)
+        arrow.stroke.width = 9
+        model.edit { $0.add(.arrow(arrow)) }
+        model.selection = model.document.elements.last?.id
+
+        let rep = try draw(model)
+        try write(rep, named: "arrow-handles-open")
         XCTAssertGreaterThan(distinctColours(rep).count, 3)
     }
 

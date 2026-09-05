@@ -91,7 +91,7 @@ final class MeshRendererTests: XCTestCase {
 final class MeshCatalogueSheetTests: XCTestCase {
 
     func testWriteTheCatalogueSheet() throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"] else {
+        guard let directory = PreviewDirectory.path else {
             throw XCTSkip("set SARVKRIT_PREVIEW_DIR to write the sheet")
         }
         let tile = 150, gap = 10, columns = 5
@@ -329,24 +329,73 @@ final class ExportBandingTests: XCTestCase {
     }
 }
 
+private extension NSColor {
+    /// This colour as it resolves in a given appearance.
+    ///
+    /// A dynamic catalog colour asked for its `cgColor` outside a drawing context answers for
+    /// whatever appearance happens to be current, which in a test is not the one being
+    /// photographed.
+    func withAppearance(_ appearance: NSAppearance?) -> NSColor {
+        guard let appearance else { return self }
+        var resolved = self
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = NSColor(cgColor: self.usingColorSpace(.sRGB)?.cgColor ?? self.cgColor)
+                ?? self
+        }
+        return resolved
+    }
+}
+
 /// The colour grid, rendered and looked at.
 @MainActor
 final class BackgroundInspectorTests: XCTestCase {
 
     func testWriteTheInspector() throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"] else {
+        guard let directory = PreviewDirectory.path else {
             throw XCTSkip("set SARVKRIT_PREVIEW_DIR to write the preview")
         }
         let base = MeshRenderer.image(BackgroundCatalogue.entries[0].mesh, width: 400, height: 300)!
-        let model = EditorDocumentModel(base: base)
-        model.edit { $0.background = CaptureBackground() }
-        let view = NSHostingView(rootView: BackgroundInspector(model: model,
-                                                               presets: BackgroundPresetStore()))
-        view.frame = NSRect(x: 0, y: 0, width: 240, height: 560)
-        view.layoutSubtreeIfNeeded()
-        let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: rep)
-        let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
-        try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("inspector.png"))
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let model = EditorDocumentModel(base: base)
+            model.edit { $0.background = CaptureBackground() }
+            let view = NSHostingView(rootView: BackgroundInspector(
+                model: model,
+                presets: BackgroundPresetStore(directory: temporaryDirectory()),
+                wallpapers: WallpaperStore(directory: temporaryDirectory())))
+            // Tall enough that the scroll view is not the thing being photographed. The panel had
+            // grown past the old 560 and everything below the mesh editor was simply off the
+            // bottom of the picture, which is a poor way to check a panel's design.
+            view.frame = NSRect(x: 0, y: 0, width: 240, height: 980)
+            // **Explicit, or the labels come out invisible.** An `NSHostingView` with no window
+            // resolves `.secondary` against no appearance at all, and every caption in the panel
+            // rendered as nothing — which reads in the PNG exactly like a missing label.
+            view.appearance = NSAppearance(named: appearance)
+            // **And a ground to stand on.** A hosting view paints no background of its own, so in
+            // dark mode the whole panel was white-on-white and looked, in the PNG, like a picker
+            // with no labels and no sliders. In the app it sits on the window's material; here
+            // that has to be said out loud.
+            view.wantsLayer = true
+            view.layer?.backgroundColor = NSColor.windowBackgroundColor
+                .withAppearance(NSAppearance(named: appearance)).cgColor
+            let window = NSWindow(contentRect: view.frame, styleMask: [.borderless],
+                                  backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: appearance)
+            window.contentView = view
+            view.layoutSubtreeIfNeeded()
+            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: rep)
+            let data = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            try data.write(to: URL(fileURLWithPath: directory)
+                .appendingPathComponent("inspector-\(appearance.rawValue).png"))
+        }
+    }
+
+    /// A throwaway folder, so the preview never shows whatever presets or wallpapers happen to be
+    /// on the machine running it.
+    private func temporaryDirectory() -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sarvkrit-preview-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 }

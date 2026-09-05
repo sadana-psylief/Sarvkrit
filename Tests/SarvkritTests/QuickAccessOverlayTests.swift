@@ -81,7 +81,7 @@ final class QuickAccessOverlayTests: XCTestCase {
                           hovered.representation(using: .png, properties: [:]),
                           "hovering drew nothing — the controls are not being rendered")
 
-        if let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"] {
+        if let directory = PreviewDirectory.path {
             try XCTUnwrap(hovered.representation(using: .png, properties: [:]))
                 .write(to: URL(fileURLWithPath: directory).appendingPathComponent("qao-hover.png"))
         }

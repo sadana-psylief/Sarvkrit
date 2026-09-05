@@ -210,7 +210,18 @@ enum AnnotationGeometry {
             let xs = points.map(\.x), ys = points.map(\.y)
             let box = CGRect(x: xs.min()!, y: ys.min()!,
                              width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
-            return box.insetBy(dx: -strokeWidth(of: element) / 2, dy: -strokeWidth(of: element) / 2)
+            // `flatten` returns the arrow's *spine*, so half a stroke width covers the shaft but
+            // not the head, whose barbs reach 2.25 widths to each side. Inset by that instead, or
+            // the box — and the marquee that uses it — cuts the corners off the arrowhead.
+            let reach: CGFloat
+            if case .arrow(let arrow) = element.kind {
+                reach = ArrowGeometry.metrics(for: arrow.head,
+                                              strokeWidth: arrow.stroke.width,
+                                              length: ArrowGeometry.polylineLength(points)).headHalf
+            } else {
+                reach = strokeWidth(of: element) / 2
+            }
+            return box.insetBy(dx: -reach, dy: -reach)
         }
     }
 

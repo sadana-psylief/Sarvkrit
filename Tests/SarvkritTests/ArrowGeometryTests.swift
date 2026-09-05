@@ -17,13 +17,18 @@ final class ArrowGeometryTests: XCTestCase {
     }
 
     /// The measured reference proportions, which are the whole point of this file.
+    ///
+    /// **Re-measured off `markup.mp4` (frame t=15.0s, native resolution).** The previous numbers
+    /// came from a different reference arrow and got two things wrong: they tapered the shaft
+    /// from 0.35W at the tail to W at the neck, and they drew a head 2.85W across. Measured, the
+    /// shaft is a constant W end to end and the head is 4.5W across.
     func testTheProportionsMatchTheMeasuredReference() {
         let w: CGFloat = 12
         let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: w, length: 400)
         XCTAssertEqual(metrics.neckHalf, w * 0.5, accuracy: 0.001, "shaft is W at the junction")
-        XCTAssertEqual(metrics.tailHalf, w * 0.175, accuracy: 0.001, "and 0.35W at the tail")
-        XCTAssertEqual(metrics.headLength, w * 3.0, accuracy: 0.001)
-        XCTAssertEqual(metrics.headHalf, w * 1.425, accuracy: 0.001, "2.85W barb to barb")
+        XCTAssertEqual(metrics.tailHalf, w * 0.5, accuracy: 0.001, "and W at the tail — no taper")
+        XCTAssertEqual(metrics.headLength, w * 2.8, accuracy: 0.001)
+        XCTAssertEqual(metrics.headHalf, w * 2.25, accuracy: 0.001, "4.5W barb to barb")
         XCTAssertEqual(metrics.barbSetback, w * 0.3, accuracy: 0.001,
                        "the barbs sit behind the junction — that is what makes it look swept")
     }
@@ -51,10 +56,21 @@ final class ArrowGeometryTests: XCTestCase {
         XCTAssertGreaterThan(box.width, 100)
     }
 
-    func testTheShaftTapersFromTailToNeck() {
-        // The property that gives the mark direction before you even notice the head — and the
-        // thing a stroked line physically cannot do.
-        let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: 10, length: 200)
+    func testTheDefaultShaftIsConstantWidth() {
+        // Measured off the reference: the shaft is one width from the tail cap to the neck. It
+        // used to taper 0.35W -> W, which drew the tail at a third of its true width and made
+        // the whole mark read spindlier than the reference.
+        for head in [ArrowElement.Head.filled, .curved] {
+            let metrics = ArrowGeometry.metrics(for: head, strokeWidth: 10, length: 200)
+            XCTAssertEqual(metrics.tailHalf, metrics.neckHalf, accuracy: 0.001,
+                           "\(head) should not taper")
+        }
+    }
+
+    func testTheThinStyleStillTapers() {
+        // The one style that keeps a taper, so the four remain visibly different marks rather
+        // than four widths of the same one.
+        let metrics = ArrowGeometry.metrics(for: .thin, strokeWidth: 10, length: 200)
         XCTAssertLessThan(metrics.tailHalf, metrics.neckHalf)
     }
 
@@ -91,7 +107,10 @@ final class ArrowGeometryTests: XCTestCase {
     }
 
     func testTheHeadNeverBecomesWiderThanItIsLong() {
-        // A head wider than it is long stops reading as a point and starts reading as a fin.
+        // Half-span against length, not full span: measured, the head is 4.5W across and 2.8W
+        // long, so it *is* wider than it is long. What must hold is that each barb stays inside
+        // the head's reach — past that the barbs splay forward and the point stops reading.
+        // The margin is now 0.80, where the old narrow head sat at 0.475.
         for width in [CGFloat(2), 6, 14, 26, 40] {
             for length in [CGFloat(30), 90, 400] {
                 let metrics = ArrowGeometry.metrics(for: .filled, strokeWidth: width,

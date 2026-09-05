@@ -4,10 +4,28 @@ import XCTest
 
 final class BackgroundCatalogueTests: XCTestCase {
 
-    func testThereAreTwentyBackgroundsAndTheirIdsAreUnique() {
-        XCTAssertEqual(BackgroundCatalogue.entries.count, 20)
+    func testEveryBackgroundHasItsOwnIdAndName() {
+        // The count is no longer the point — it was twenty, it is thirty-two, and it will grow
+        // again. What must hold is that no two share an id, because the id is what a saved
+        // document stores, and that no two share a name, because the name is the only thing
+        // distinguishing one 30pt swatch from another in the picker's tooltip.
+        XCTAssertGreaterThanOrEqual(BackgroundCatalogue.entries.count, 20)
         let ids = BackgroundCatalogue.entries.map(\.id)
-        XCTAssertEqual(Set(ids).count, ids.count)
+        XCTAssertEqual(Set(ids).count, ids.count, "duplicate id")
+        let names = BackgroundCatalogue.entries.map(\.name)
+        XCTAssertEqual(Set(names).count, names.count, "duplicate name")
+    }
+
+    /// The twenty that shipped are load-bearing: their ids are in documents already saved, and
+    /// re-tuning one in place would change a background somebody already chose.
+    func testTheOriginalTwentyAreStillThereUnderTheirOwnIds() {
+        let original = ["dusk", "ember", "mint", "ocean", "sand", "slate", "paper", "ink",
+                        "blossom", "citrus", "forest", "lavender", "rose", "steel", "aurora",
+                        "cocoa", "sky", "plum", "moss", "graphite"]
+        let ids = Set(BackgroundCatalogue.entries.map(\.id))
+        for id in original {
+            XCTAssertTrue(ids.contains(id), "\(id) went missing")
+        }
     }
 
     func testEveryEntryHasAUsableMesh() {

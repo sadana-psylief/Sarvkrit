@@ -111,7 +111,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         AnnotationRenderer.drawBackground(model.document,
                                           canvasSize: composition.canvasSize,
                                           imageRect: composition.imageRect,
-                                          in: context)
+                                          in: context,
+                                          sources: model.backgroundSources)
 
         var shown = model.document
         // The in-progress mark is drawn but never stored, so an abandoned drag leaves nothing.
@@ -126,6 +127,11 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         context.translateBy(x: composition.imageRect.minX, y: composition.imageRect.minY)
         AnnotationRenderer.draw(shown, base: model.base, in: context,
                                 filterCache: model.filterCache, quality: .interactive)
+        if let selection = model.selection,
+           let element = model.document.elements.first(where: { $0.id == selection }),
+           case .arrow(let arrow) = element.kind {
+            drawArrowHalo(arrow, in: context)
+        }
         context.restoreGState()
         context.restoreGState()
 
@@ -133,6 +139,52 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
            let element = model.document.elements.first(where: { $0.id == selection }) {
             drawHandles(for: element, in: context)
         }
+    }
+
+    /// A glow tracing the selected arrow's outline.
+    ///
+    /// An arrow gets no dashed box — a rectangle implies a resize it does not have — which left
+    /// nothing at all saying it was selected except three small handles. This traces the actual
+    /// silhouette instead, head included.
+    ///
+    /// Drawn by stroking the arrow's own outline with the arrow's interior clipped away.
+    ///
+    /// A centred stroke puts half its width outside the silhouette and half inside; clipping the
+    /// inside out leaves exactly the outer half, which is the glow. Painted *after* the marks
+    /// rather than before them, because `AnnotationRenderer.draw` lays the screenshot down first
+    /// and a halo drawn ahead of it is simply covered up — which is what the first version did.
+    ///
+    /// Line width is in image pixels, hence the division by zoom: the glow should be the same
+    /// size on screen at 50% as at 400%, the way a focus ring is.
+    private func drawArrowHalo(_ arrow: ArrowElement, in context: CGContext) {
+        let glow: CGFloat = 4                       // view points, outside the silhouette
+        let path: CGPath
+        switch ArrowGeometry.shape(from: arrow.start, to: arrow.end,
+                                   curvature: arrow.curvature,
+                                   head: arrow.head, strokeWidth: arrow.stroke.width) {
+        case .fill(let filled):
+            path = filled
+        case .stroke(let stroked, let lineWidth):
+            // The open style is a thin chevron, so its halo has to clear its own stroke too.
+            path = stroked.copy(strokingWithWidth: lineWidth, lineCap: .round,
+                                lineJoin: .round, miterLimit: 10)
+        }
+
+        context.saveGState()
+        let outside = CGMutablePath()
+        outside.addRect(CGRect(origin: .zero, size: model.document.imageSize)
+            .insetBy(dx: -1000, dy: -1000))
+        outside.addPath(path)
+        context.addPath(outside)
+        context.clip(using: .evenOdd)
+
+        context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.5).cgColor)
+        context.setLineWidth(glow * 2 / max(transform.zoom, 0.01))
+        context.setLineJoin(.round)
+        context.setLineCap(.round)
+        context.addPath(path)
+        context.strokePath()
+        context.restoreGState()
     }
 
     /// Handles are drawn in **view** space so they stay a constant physical size at any zoom.
@@ -175,17 +227,26 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             context.setLineDash(phase: 0, lengths: [])
         }
 
+        let isArrow: Bool
+        if case .arrow = element.kind { isArrow = true } else { isArrow = false }
+
         for (handle, rect) in viewHandles(for: element, bounds: bounds) {
-            context.setFillColor(NSColor.white.cgColor)
-            // The bow reads as round, so it is obviously not one of the square resize grips —
-            // it bends the arrow rather than resizing anything.
-            if handle == .curve {
+            // An arrow's handles move points; a box's handles resize. Round says the first,
+            // square says the second, and an arrow has no square handles at all.
+            //
+            // The bow is a different colour again, because it is the only handle whose job you
+            // cannot guess: the two ends obviously move the ends, and nothing about a third grip
+            // sitting on the line says "drag me sideways and the arrow bends".
+            let round = isArrow || handle == .curve
+            context.setFillColor(handle == .curve
+                                 ? NSColor.systemPink.cgColor : NSColor.white.cgColor)
+            context.setStrokeColor(handle == .curve
+                                   ? NSColor.white.cgColor : NSColor.controlAccentColor.cgColor)
+            if round {
                 context.fillEllipse(in: rect)
-                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
                 context.strokeEllipse(in: rect)
             } else {
                 context.fill(rect)
-                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
                 context.stroke(rect)
             }
         }
@@ -217,9 +278,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         }
         if model.tool == .counter {
             model.edit {
+                // The number has to be readable on whatever fill was picked. `textColour` used to
+                // be left at its `.white` default and never recomputed, so white-on-amber was a
+                // counter you could not read.
                 $0.add(.counter(CounterElement(centre: point,
                                                radius: 22 * max($0.scale, 1),
-                                               fill: model.colour)))
+                                               fill: model.colour,
+                                               textColour: model.colour.readableForeground)))
             }
             delegate?.canvasDidEdit(self)
             return
@@ -296,7 +361,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .ellipse:
             draft = .ellipse(ShapeElement(rect: rect, stroke: stroke))
         case .highlighter:
-            draft = .highlighter(HighlightElement(rect: rect, colour: model.colour))
+            draft = .highlighter(HighlightElement(rect: rect, colour: model.colour.asMarker))
         case .spotlight:
             draft = .spotlight(SpotlightElement(rect: rect))
         case .blur:

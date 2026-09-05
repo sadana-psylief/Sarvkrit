@@ -154,7 +154,7 @@ final class TextPresetTests: XCTestCase {
     /// Writes the seven, rendered, to the scratchpad — the same "photograph it and look" step that
     /// caught four layout bugs the unit tests were happy with.
     func testWriteAPreviewSheetForVisualInspection() throws {
-        guard let directory = ProcessInfo.processInfo.environment["SARVKRIT_PREVIEW_DIR"] else {
+        guard let directory = PreviewDirectory.path else {
             throw XCTSkip("set SARVKRIT_PREVIEW_DIR to write the sheet")
         }
         var elements: [AnnotationElement] = []

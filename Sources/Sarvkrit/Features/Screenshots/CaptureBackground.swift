@@ -71,8 +71,53 @@ struct CaptureBackground: Codable, Equatable {
         case builtIn(id: String)
         /// A user image, copied into the store — a filename, never a path that can move.
         case image(fileName: String)
+        /// The screenshot itself, scaled to fill and blurred past recognition.
+        ///
+        /// **The one fill that cannot be described without the picture**, which is why it carries
+        /// a tint rather than a colour: it has to be derived at draw time from whatever image it
+        /// is drawn behind, and the same document over a different capture is a different
+        /// backdrop. That is the point — it always matches.
+        case blurred(Blur)
         /// A fill written by a newer build. Held verbatim and written back unchanged.
         case unknown(type: String, raw: Data)
+    }
+
+    /// How a blurred-from-the-screenshot backdrop is treated after blurring.
+    struct Blur: Codable, Equatable {
+        /// Blur radius as a fraction of the shorter side, so a 4K capture and a 400px one blur to
+        /// the same *look* rather than the same pixel count.
+        var amount: Double = 0.06
+        /// Lightened above zero, darkened below. The reference offers a light backdrop and two
+        /// dark ones; this is the axis between them.
+        var tint: Double = 0
+    }
+
+    /// Where the screenshot sits when the canvas is larger than it needs to be.
+    ///
+    /// Only has anything to do when there *is* slack — an aspect target that grew the canvas, or
+    /// an inset that shrank the image. With neither, every case lands in the same place, which is
+    /// correct rather than a bug: there is nowhere else to put it.
+    enum Alignment: String, Codable, CaseIterable, Identifiable, Equatable {
+        case topLeading, top, topTrailing
+        case leading, centre, trailing
+        case bottomLeading, bottom, bottomTrailing
+
+        var id: String { rawValue }
+
+        /// Fraction of the free space that goes *before* the image, horizontally and vertically.
+        var unitPoint: CGPoint {
+            switch self {
+            case .topLeading: return CGPoint(x: 0, y: 0)
+            case .top: return CGPoint(x: 0.5, y: 0)
+            case .topTrailing: return CGPoint(x: 1, y: 0)
+            case .leading: return CGPoint(x: 0, y: 0.5)
+            case .centre: return CGPoint(x: 0.5, y: 0.5)
+            case .trailing: return CGPoint(x: 1, y: 0.5)
+            case .bottomLeading: return CGPoint(x: 0, y: 1)
+            case .bottom: return CGPoint(x: 0.5, y: 1)
+            case .bottomTrailing: return CGPoint(x: 1, y: 1)
+            }
+        }
     }
 
     struct Shadow: Codable, Equatable {
@@ -91,6 +136,18 @@ struct CaptureBackground: Codable, Equatable {
     var aspect: AspectRatio = .original
     /// Gap between images when the combiner uses this style.
     var spacing: CGFloat = 24
+    /// Shrinks the screenshot *within* the canvas without growing the canvas.
+    ///
+    /// Distinct from `padding`, which does the opposite: padding grows the canvas and leaves the
+    /// screenshot the size it was. Image pixels, taken off each side, with the aspect preserved.
+    var inset: CGFloat = 0
+    var alignment: Alignment = .centre
+    /// Whether the fill and padding should be re-derived from the capture whenever it changes.
+    ///
+    /// **A standing preference, not a record of a past click.** It was written by
+    /// `BackgroundCompositor.autoBalanced` and persisted, and then nothing anywhere read it — the
+    /// UI offered a one-shot button instead, so the flag described something that had happened
+    /// rather than something that should keep happening.
     var isAutoBalanced: Bool = false
 }
 
