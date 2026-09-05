@@ -22,32 +22,22 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     override nonisolated init() { super.init() }
 
     private var stream: SCStream?
-    private var writer: AVAssetWriter?
-    private var videoInput: AVAssetWriterInput?
+    /// Not main-actor: `SCStream` hands frames to its own queue and this is written from there.
+    /// See `RecordingWriter` for the crash that made this explicit.
+    private nonisolated(unsafe) var writer: RecordingWriter?
     private var bundle: RecordingBundle?
     private var manifest: RecordingManifest?
     private let events = EventRecorder()
     private var displayLink: CADisplayLink?
 
-    /// The presentation timestamp of the first frame. Everything is measured from it, so the
-    /// events and the picture cannot drift apart.
-    private var firstFrame: CMTime?
-    /// Accumulated across pauses, so the output has no gap and elapsed time means recorded time.
-    private var pausedFor: CMTime = .zero
-    private var pausedAt: CMTime?
-    private var lastFrame: CMTime = .zero
-
     private(set) var isRecording = false
-    private(set) var droppedFrames = 0
-    private(set) var isPaused = false
 
     /// Maps a global AppKit point into the recording's pixel space. Nil means outside.
     private var mapPoint: ((CGPoint) -> CGPoint?)?
 
-    var elapsed: TimeInterval {
-        guard let firstFrame else { return 0 }
-        return CMTimeGetSeconds(CMTimeSubtract(CMTimeSubtract(lastFrame, firstFrame), pausedFor))
-    }
+    var elapsed: TimeInterval { writer?.elapsed ?? 0 }
+    var droppedFrames: Int { writer?.droppedFrames ?? 0 }
+    var isPaused: Bool { writer?.isPaused ?? false }
 
     var recordsKeystrokes: Bool {
         get { events.recordsKeystrokes }
@@ -84,7 +74,7 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         // the app died in the middle of, and that is the only signal a crash leaves.
         try bundle.write(manifest)
 
-        try makeWriter(bundle: bundle, size: pixels)
+        writer = try RecordingWriter(url: bundle.screenURL, size: pixels, fps: request.fps)
 
         self.bundle = bundle
         self.manifest = manifest
@@ -98,7 +88,6 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         try await stream.startCapture()
         self.stream = stream
         isRecording = true
-        droppedFrames = 0
         startCursorSampling()
         log.info("recording started \(configuration.width, privacy: .public)x\(configuration.height, privacy: .public)")
     }
@@ -171,34 +160,6 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
 
     // MARK: - Writing
 
-    private func makeWriter(bundle: RecordingBundle, size: CGSize) throws {
-        guard let writer = try? AVAssetWriter(outputURL: bundle.screenURL, fileType: .mov) else {
-            throw RecordingError.cannotWrite
-        }
-        // **Fragments, and this is what makes a crash survivable.** The writer flushes a
-        // self-contained fragment every two seconds, so a file whose `finishWriting` never ran is
-        // still playable up to the last one — rather than a header-less block nothing can open.
-        writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
-
-        let settings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.hevc,
-            AVVideoWidthKey: Int(size.width),
-            AVVideoHeightKey: Int(size.height),
-            AVVideoCompressionPropertiesKey: [
-                AVVideoQualityKey: 0.9,
-                AVVideoExpectedSourceFrameRateKey: 60,
-            ],
-        ]
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
-        input.expectsMediaDataInRealTime = true
-        guard writer.canAdd(input) else { throw RecordingError.cannotWrite }
-        writer.add(input)
-        guard writer.startWriting() else { throw RecordingError.cannotWrite }
-
-        self.writer = writer
-        self.videoInput = input
-    }
-
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer,
                             of type: SCStreamOutputType) {
         guard type == .screen, buffer.isValid else { return }
@@ -206,7 +167,9 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         // recording of a still screen being enormous and being small; the next real frame simply
         // carries a longer duration.
         guard Self.isComplete(buffer) else { return }
-        MainActor.assumeIsolated { append(buffer) }
+        // Straight to the writer, on this queue. **No hop to the main actor**: the previous version
+        // asserted its way onto it with `MainActor.assumeIsolated` and trapped on the first frame.
+        writer?.append(buffer)
     }
 
     private nonisolated static func isComplete(_ buffer: CMSampleBuffer) -> Bool {
@@ -215,28 +178,6 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
               let raw = attachments.first?[.status] as? Int,
               let status = SCFrameStatus(rawValue: raw) else { return false }
         return status == .complete
-    }
-
-    private func append(_ buffer: CMSampleBuffer) {
-        guard let writer, let videoInput, !isPaused else { return }
-        let timestamp = CMSampleBufferGetPresentationTimeStamp(buffer)
-
-        if firstFrame == nil {
-            firstFrame = timestamp
-            writer.startSession(atSourceTime: timestamp)
-            // One clock. The events are anchored to the same instant the picture starts, which is
-            // the whole reason the cursor lands on what it clicked.
-            events.anchor(to: ProcessInfo.processInfo.systemUptime)
-        }
-        lastFrame = timestamp
-
-        guard videoInput.isReadyForMoreMediaData else {
-            // Dropped at the tail rather than blocking the stream. Counted, and reported when the
-            // recording stops — a stuttering file produced silently is the failure to avoid.
-            droppedFrames += 1
-            return
-        }
-        if !videoInput.append(buffer) { droppedFrames += 1 }
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -260,19 +201,14 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     // MARK: - Pause, finish, discard
 
     func pause() {
-        guard isRecording, !isPaused else { return }
-        isPaused = true
-        pausedAt = lastFrame
+        guard isRecording else { return }
+        writer?.pause()
         events.pause()
     }
 
     func resume() {
-        guard isRecording, isPaused, let pausedAt else { return }
-        isPaused = false
-        // Rebased rather than left as a gap. A gap means every downstream time — zoom segments,
-        // captions, the timeline — would have to know about it, and none of them should.
-        pausedFor = CMTimeAdd(pausedFor, CMTimeSubtract(lastFrame, pausedAt))
-        self.pausedAt = nil
+        guard isRecording else { return }
+        writer?.resume()
         events.resume()
     }
 
@@ -286,19 +222,22 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         try? await stream?.stopCapture()
         stream = nil
 
-        videoInput?.markAsFinished()
-        await writer?.finishWriting()
+        let anchor = writer?.firstFrameHostTime
+        let duration = elapsed
+        let dropped = droppedFrames
+        await writer?.finish()
 
-        try? bundle.writeEvents(events.finish())
+        try? bundle.writeEvents(events.finish(anchoredTo: anchor))
         if var manifest {
             manifest.state = .complete
-            manifest.duration = elapsed
-            manifest.droppedFrames = droppedFrames
+            manifest.duration = duration
+            manifest.droppedFrames = dropped
             try? bundle.write(manifest)
         }
 
-        writer = nil; videoInput = nil; self.bundle = nil; manifest = nil
-        firstFrame = nil; pausedFor = .zero; pausedAt = nil; lastFrame = .zero
+        writer = nil
+        self.bundle = nil
+        manifest = nil
         return bundle
     }
 

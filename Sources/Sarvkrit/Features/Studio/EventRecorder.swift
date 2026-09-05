@@ -23,8 +23,12 @@ final class EventRecorder {
     private var displayLink: CADisplayLink?
     private var isPaused = false
 
-    /// Set once the first video frame lands, so events and frames share one clock.
-    private var startedAt: TimeInterval?
+    /// **Absolute `systemUptime`, rebased at `finish`.**
+    ///
+    /// The obvious design — subtract an anchor as each sample is taken — has an ordering hole: the
+    /// display link starts before the first video frame arrives, so the earliest samples would
+    /// have no anchor to subtract and would be thrown away or, worse, timed from zero. Storing
+    /// absolute times and rebasing once at the end removes the question.
     /// Maps a global AppKit point into the recording's own pixel space.
     private var mapPoint: ((CGPoint) -> CGPoint?)?
 
@@ -38,15 +42,6 @@ final class EventRecorder {
         installMonitors()
     }
 
-    /// Called with the presentation timestamp of the first video frame.
-    ///
-    /// **One clock, and this is where it is set.** Everything else is measured from here, so the
-    /// cursor cannot drift against the picture. Getting this wrong by 80 ms puts the pointer
-    /// visibly behind what it clicked, which reads as "the app is slow" rather than as a bug.
-    func anchor(to hostTime: TimeInterval) {
-        startedAt = hostTime
-    }
-
     func pause() { isPaused = true }
     func resume() { isPaused = false }
 
@@ -55,9 +50,34 @@ final class EventRecorder {
         flags.append(now)
     }
 
-    func finish() -> EventLog {
+    /// - Parameter anchor: `systemUptime` at the instant the first video frame landed.
+    ///
+    /// **One clock, and this is where the two halves are joined.** Getting it wrong by 80 ms puts
+    /// the pointer visibly behind what it clicked — which reads as "the app is slow" rather than
+    /// as a bug, and is the single most damaging defect this feature can have.
+    func finish(anchoredTo anchor: TimeInterval?) -> EventLog {
         removeMonitors()
-        return EventLog(cursor: samples, clicks: clicks, keys: keys, flags: flags)
+        guard let anchor else { return EventLog() }
+
+        // Anything from before the first frame belongs to no picture, so it is dropped rather than
+        // given a negative time.
+        let rebased = samples.filter { $0.t >= anchor }.map { sample -> CursorSample in
+            var moved = sample
+            moved.t -= anchor
+            return moved
+        }
+        let movedClicks = clicks.filter { $0.t >= anchor }.map { click -> ClickEvent in
+            var moved = click
+            moved.t -= anchor
+            return moved
+        }
+        let movedKeys = keys.filter { $0.t >= anchor }.map { key -> KeyEvent in
+            var moved = key
+            moved.t -= anchor
+            return moved
+        }
+        return EventLog(cursor: rebased, clicks: movedClicks, keys: movedKeys,
+                        flags: flags.filter { $0 >= anchor }.map { $0 - anchor })
     }
 
     // MARK: - Sampling
@@ -75,9 +95,9 @@ final class EventRecorder {
                                     isInside: mapped != nil))
     }
 
+    /// Absolute, not relative. See the note on the sample arrays.
     private func currentTime() -> TimeInterval? {
-        guard let startedAt else { return nil }
-        return ProcessInfo.processInfo.systemUptime - startedAt
+        ProcessInfo.processInfo.systemUptime
     }
 
     // MARK: - Monitors
