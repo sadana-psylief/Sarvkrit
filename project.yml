@@ -11,8 +11,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.1"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "1.1.0"
+    # Monotonic, and deliberately not a copy of MARKETING_VERSION: as a CFBundleVersion, "1.1.0"
+    # sorts *below* the "2" that 1.1 development carried. It only ever counts up.
+    CURRENT_PROJECT_VERSION: "3"
     DEVELOPMENT_TEAM: 77A36893HP
     CODE_SIGN_STYLE: Manual
     ALWAYS_SEARCH_USER_PATHS: NO
