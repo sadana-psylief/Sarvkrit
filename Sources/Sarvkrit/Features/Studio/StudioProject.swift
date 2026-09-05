@@ -26,6 +26,7 @@ struct StudioProject: Codable, Equatable {
     var zooms: [ZoomSegment] = []
     var cursor = CursorSettings()
     var captions: [Caption] = []
+    var captionStyle = CaptionStyle()
     /// Shown in the editor, never rendered into the video.
     var speakerNotes = ""
 
@@ -65,7 +66,7 @@ struct StudioProject: Codable, Equatable {
     /// rather than resetting everything the user had set.
     private enum Key: String, CaseIterable {
         case formatVersion, canvasSize, timeline, background, aspect, cropRect
-        case zooms, cursor, captions, speakerNotes
+        case zooms, cursor, captions, captionStyle, speakerNotes
     }
 
     init(from decoder: Decoder) throws {
@@ -85,6 +86,7 @@ struct StudioProject: Codable, Equatable {
         zooms = read(.zooms, [ZoomSegment]())
         cursor = read(.cursor, CursorSettings())
         captions = read(.captions, [Caption]())
+        captionStyle = read(.captionStyle, CaptionStyle())
         speakerNotes = read(.speakerNotes, "")
 
         let known = Set(Key.allCases.map(\.rawValue))
@@ -107,6 +109,7 @@ struct StudioProject: Codable, Equatable {
         try container.encode(zooms, forKey: StudioCodingKey(Key.zooms.rawValue))
         try container.encode(cursor, forKey: StudioCodingKey(Key.cursor.rawValue))
         try container.encode(captions, forKey: StudioCodingKey(Key.captions.rawValue))
+        try container.encode(captionStyle, forKey: StudioCodingKey(Key.captionStyle.rawValue))
         try container.encode(speakerNotes, forKey: StudioCodingKey(Key.speakerNotes.rawValue))
 
         // Written back last and untouched. Anything this build added under the same name would be
