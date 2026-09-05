@@ -68,14 +68,18 @@ final class ZoomPlannerTests: XCTestCase {
                        accuracy: 0.0001)
     }
 
-    /// A drag across most of the screen cannot be zoomed into without hiding half of itself.
-    func testAWideActivityBarelyZoomsAtAll() {
+    /// A drag across most of the screen cannot be zoomed into without hiding half of itself — so
+    /// it gets no zoom at all rather than a token one.
+    ///
+    /// **This used to assert the level clamped to the floor.** That was the implementation
+    /// showing through: a 1.2× zoom held over a wide drag is not a close-up, it is a slow drift
+    /// the viewer has to follow for nothing. A real recording produced exactly that and it was
+    /// the worst thing about the output.
+    func testAWideActivityGetsNoZoomAtAll() {
         let clicks = stride(from: CGFloat(100), through: 820, by: 180).enumerated().map {
             click(5 + Double($0.offset) * 0.3, $0.element, 500)
         }
-        let segment = plan(EventLog(clicks: clicks)).first
-        XCTAssertEqual(segment?.level ?? 0, ZoomPlanner.Tuning().levelRange.lowerBound,
-                       accuracy: 0.0001)
+        XCTAssertTrue(plan(EventLog(clicks: clicks)).isEmpty)
     }
 
     func testEveryPlannedLevelStaysInsideTheAllowedRange() {
@@ -95,12 +99,14 @@ final class ZoomPlannerTests: XCTestCase {
         }
     }
 
+    /// Moves enough to be worth following — a quarter of the frame — but stays tight enough to
+    /// earn a real zoom. Anything wider than that now produces no segment to have an anchor.
     func testAMovingActivityFollowsTheCursor() {
-        let clicks = stride(from: CGFloat(100), through: 820, by: 180).enumerated().map {
+        let clicks = stride(from: CGFloat(300), through: 540, by: 80).enumerated().map {
             click(5 + Double($0.offset) * 0.3, $0.element, 500)
         }
         guard case .followCursor = plan(EventLog(clicks: clicks)).first?.anchor else {
-            return XCTFail("a wide drag should follow the cursor")
+            return XCTFail("a moving activity should follow the cursor")
         }
     }
 
@@ -177,5 +183,62 @@ final class ZoomPlannerTests: XCTestCase {
     func testAStrayKeypressDoesNotPlanAZoom() {
         let keys = [KeyEvent(t: 10, label: "A", isModifierCombination: false)]
         XCTAssertTrue(plan(EventLog(keys: keys)).isEmpty)
+    }
+
+    // MARK: - Zooms that would be worse than nothing
+
+    /// **From a real recording.** Twenty-eight clicks spread across a twelve-second demo produced
+    /// one eleven-second segment at 1.2× — the floor — because every activity touched its
+    /// neighbour and the merged bounding box covered most of the screen. A zoom that barely zooms,
+    /// held for the whole video, is visual noise: it is not a close-up, it is a slow drift.
+    func testClicksAllOverTheScreenPlanNoZoomRatherThanOneUselessOne() {
+        let scattered = (0..<28).map { index -> ClickEvent in
+            let t: TimeInterval = 0.2 + Double(index) * 0.42
+            let x: CGFloat = CGFloat(80 + (index * 137) % 840)
+            let y: CGFloat = CGFloat(60 + (index * 211) % 880)
+            return click(t, x, y)
+        }
+        let planned = plan(EventLog(clicks: scattered), duration: 12.4)
+        for segment in planned {
+            XCTAssertGreaterThan(segment.level, ZoomPlanner.Tuning().levelRange.lowerBound + 0.01,
+                                 "a zoom was planned that barely zooms")
+        }
+    }
+
+    /// One segment covering nearly the whole recording is not a zoom, it is a crop — and it is
+    /// what the merge rules produced before they were capped.
+    func testNoSegmentSwallowsTheWholeRecording() {
+        let busy = (0..<28).map { index -> ClickEvent in
+            let t: TimeInterval = 0.2 + Double(index) * 0.42
+            let x: CGFloat = CGFloat(80 + (index * 137) % 840)
+            return click(t, x, 500)
+        }
+        for segment in plan(EventLog(clicks: busy), duration: 12.4) {
+            XCTAssertLessThan(segment.duration, 12.4 * 0.8,
+                              "one segment covered almost the entire recording")
+        }
+    }
+
+    /// Activity that genuinely continues should still be capped, so a five-minute demo of steady
+    /// clicking does not become one five-minute zoom.
+    func testAContinuousStreamOfClicksIsBrokenIntoSeveralZooms() {
+        let steady = (0..<80).map { index -> ClickEvent in
+            let t: TimeInterval = 1 + Double(index) * 0.5
+            let x: CGFloat = 500 + CGFloat((index % 3) * 20)
+            return click(t, x, 500)
+        }
+        let planned = plan(EventLog(clicks: steady), duration: 45)
+        XCTAssertGreaterThan(planned.count, 1, "continuous clicking became one endless zoom")
+        for segment in planned {
+            XCTAssertLessThanOrEqual(segment.duration,
+                                     ZoomPlanner.Tuning().maximumActivity + 0.01)
+        }
+    }
+
+    /// The case that must keep working: a tight cluster still earns a real close-up.
+    func testATightClusterStillZoomsProperly() {
+        let tight = (0..<4).map { click(5 + Double($0) * 0.3, 500, 500) }
+        let segment = plan(EventLog(clicks: tight)).first
+        XCTAssertGreaterThan(segment?.level ?? 0, 2)
     }
 }

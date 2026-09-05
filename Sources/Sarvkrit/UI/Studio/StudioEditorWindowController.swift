@@ -15,8 +15,8 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
     let model: StudioDocumentModel
     private var window: NSWindow?
     private var monitor: Any?
-    private var preview: StudioPreviewView?
-    private let exporter = StudioExporter()
+    /// Made fresh per export, so a Cancel always applies to the run it was pressed for.
+    private var activeExport: StudioExporter?
     private let onClose: (StudioEditorWindowController) -> Void
 
     /// Below this the timeline and the inspector both start hiding controls silently, which is the
@@ -40,18 +40,21 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
 
         let root = StudioEditorView(
             model: model,
+            player: model.player,
             onExport: { [weak self] in self?.export() },
+            onCancelExport: { [weak self] in
+                guard let exporter = self?.activeExport else { return }
+                Task { await exporter.cancel() }
+            },
             onPlayPause: { [weak self] in self?.togglePlayback() },
-            onScrub: { [weak self] time in self?.preview?.scrub(to: time) })
-        let hosting = NSHostingView(rootView: root)
-        window.contentView = hosting
+            onScrub: { [weak model] time in model?.player.scrub(to: time) })
+        window.contentView = NSHostingView(rootView: root)
         window.delegate = self
         window.center()
         // Cascade, so a second editor does not land exactly on the first and look like one window.
         window.setFrameOrigin(NSPoint(x: window.frame.minX + CGFloat(Self.openCount % 6) * 24,
                                       y: window.frame.minY - CGFloat(Self.openCount % 6) * 24))
         self.window = window
-        self.preview = hosting.findPreview()
 
         // Through the lease: another window may also be open, and an unconditional drop back to
         // .accessory when it closes would leave this one refusing input.
@@ -66,10 +69,7 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Playback
 
-    private func togglePlayback() {
-        guard let preview else { return }
-        if model.isPlaying { preview.pause() } else { preview.play() }
-    }
+    private func togglePlayback() { model.player.toggle() }
 
     // MARK: - Keys
 
@@ -93,7 +93,7 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         case .stepFrames(let count): model.step(frames: count)
         case .stepSeconds(let count): model.step(seconds: Double(count))
         case .shuttle(let direction):
-            preview?.setRate(Float(direction))
+            model.player.shuttle(direction)
         case .split: model.split()
         case .rippleDelete, .deleteSelection:
             if model.selectedZoom != nil { model.deleteSelectedZoom() } else {
@@ -128,8 +128,10 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         let project = model.project
         let events = model.events
         let bundle = model.bundle
+        let exporter = StudioExporter()
+        activeExport = exporter
 
-        Task { [exporter, weak self] in
+        Task { [weak self] in
             do {
                 try await exporter.export(
                     project: project, events: events, recording: bundle,
@@ -139,12 +141,19 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
                     })
                 await MainActor.run {
                     self?.model.exportProgress = nil
+                    self?.activeExport = nil
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                     ToastPresenter.shared.show("Exported", symbolName: "square.and.arrow.up")
+                }
+            } catch StudioExporter.ExportError.cancelled {
+                await MainActor.run {
+                    self?.model.exportProgress = nil
+                    self?.activeExport = nil
                 }
             } catch {
                 await MainActor.run {
                     self?.model.exportProgress = nil
+                    self?.activeExport = nil
                     ToastPresenter.shared.show("Export failed",
                                                symbolName: "exclamationmark.triangle")
                 }
@@ -164,20 +173,9 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        preview?.pause()
+        model.player.pause()
         ActivationPolicyLease.shared.release()
         onClose(self)
-    }
-}
-
-private extension NSView {
-    /// The hosting view builds the tree, so the preview has to be found rather than held.
-    func findPreview() -> StudioPreviewView? {
-        if let preview = self as? StudioPreviewView { return preview }
-        for child in subviews {
-            if let found = child.findPreview() { return found }
-        }
-        return nil
     }
 }
 

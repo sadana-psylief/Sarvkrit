@@ -1,43 +1,23 @@
-import AVFoundation
-import VideoToolbox
 import AppKit
 import CoreGraphics
-import QuartzCore
 
 /// The live canvas.
 ///
-/// **`AVPlayer` supplies the frames and the clock; `StudioRenderer` composites them.** The player's
-/// own layer is never displayed — an `AVPlayerItemVideoOutput` is attached and a display link pulls
-/// `copyPixelBuffer(forItemTime:)` each tick, which is exactly the shape that header describes.
-///
-/// The reason it is not an `AVAssetReader`: **a reader cannot seek.** A reader-based preview would
-/// have to be torn down and rebuilt on every scrub, decoding from the nearest keyframe each time —
-/// and scrubbing is what a timeline is made of. `AVAssetReader` is still right for the export,
-/// which is strictly sequential.
+/// **A renderer and nothing else.** Playback, seeking and frame decoding all live in
+/// `StudioPlayer`, which the model owns — the previous version created the player inside this view
+/// and left the window controller walking the hosting hierarchy to find it, which returned nil and
+/// silently killed every transport control.
 @MainActor
 final class StudioPreviewView: NSView {
 
     private let model: StudioDocumentModel
-    private let player: AVPlayer
-    private let output: AVPlayerItemVideoOutput
-    private var displayLink: CADisplayLink?
     private let cache = StudioRenderer.Cache()
-    private var lastDecoded: CGImage?
-
-    /// Rendering at full canvas resolution for a preview is wasted work on a 4K recording, and the
-    /// user can choose to spend even less. Never applied silently — the export is unaffected and
-    /// the UI says when it is on.
-    var qualityFraction: CGFloat = 1
+    private var observation: NSObjectProtocol?
+    private var lastToken = -1
+    private var pollTimer: Timer?
 
     init(model: StudioDocumentModel) {
         self.model = model
-        let item = AVPlayerItem(url: model.bundle.screenURL)
-        self.output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        ])
-        item.add(output)
-        self.player = AVPlayer(playerItem: item)
-        player.actionAtItemEnd = .pause
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
@@ -48,75 +28,25 @@ final class StudioPreviewView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return stopLink() }
-        startLink()
-    }
-
-    deinit { displayLink?.invalidate() }
-
-    private func startLink() {
-        stopLink()
-        // NSScreen's display link, macOS 14+. CVDisplayLink is deprecated from 15 and this is the
-        // supported replacement at our deployment target.
-        let link = (window?.screen ?? NSScreen.main)?.displayLink(target: self,
-                                                                  selector: #selector(tick))
-        link?.add(to: .main, forMode: .common)
-        displayLink = link
-    }
-
-    private func stopLink() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-
-    // MARK: - Playback
-
-    func play() {
-        seekPlayer(to: model.sourceTime)
-        player.rate = 1
-        model.isPlaying = true
-    }
-
-    func pause() {
-        player.rate = 0
-        model.isPlaying = false
-    }
-
-    func setRate(_ rate: Float) {
-        player.rate = rate
-        model.isPlaying = rate != 0
-    }
-
-    func scrub(to output: TimeInterval) {
-        model.playhead = min(max(0, output), max(0, model.duration))
-        seekPlayer(to: model.sourceTime)
-        needsDisplay = true
-    }
-
-    private func seekPlayer(to source: TimeInterval) {
-        player.seek(to: CMTime(seconds: source, preferredTimescale: 600),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
-    }
-
-    @objc private func tick() {
-        if model.isPlaying {
-            model.playhead = min(model.playhead + 1.0 / 60.0, model.duration)
-            if model.playhead >= model.duration { pause() }
-            seekPlayer(to: model.sourceTime)
+        pollTimer?.invalidate()
+        guard window != nil else { return }
+        // Redrawn from the player's frame token rather than from a timer of its own, so the
+        // picture and the composite can never disagree about which moment they are showing.
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard self.model.player.frameToken != self.lastToken || self.needsDisplay else {
+                    return
+                }
+                self.lastToken = self.model.player.frameToken
+                self.needsDisplay = true
+            }
         }
-
-        let itemTime = output.itemTime(forHostTime: CACurrentMediaTime())
-        if output.hasNewPixelBuffer(forItemTime: itemTime),
-           let buffer = output.copyPixelBuffer(forItemTime: itemTime,
-                                               itemTimeForDisplay: nil) {
-            var image: CGImage?
-            VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &image)
-            if let image { lastDecoded = image }
-        }
-        needsDisplay = true
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 
-    // MARK: - Drawing
+    deinit { pollTimer?.invalidate() }
 
     override var isFlipped: Bool { true }
 
@@ -137,11 +67,10 @@ final class StudioPreviewView: NSView {
         context.saveGState()
         context.translateBy(x: origin.x, y: origin.y)
         context.scaleBy(x: scale, y: scale)
-        // The renderer draws top-left down; this view is flipped, so the two agree already.
         StudioRenderer.draw(project: model.project,
                             sourceTime: model.sourceTime,
                             events: model.events,
-                            sources: FrameSources(screen: lastDecoded),
+                            sources: FrameSources(screen: model.player.decoded),
                             canvas: canvas,
                             imageRect: imageRect,
                             in: context,

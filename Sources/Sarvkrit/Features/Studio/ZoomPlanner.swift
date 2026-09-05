@@ -36,12 +36,30 @@ enum ZoomPlanner {
         var followThreshold: Double = 0.15
         /// At most one zoom per this many seconds. A click-heavy demo must not become a zoom storm.
         var minimumSpacing: TimeInterval = 4.0
+        /// **The cap that stops a zoom becoming a crop.**
+        ///
+        /// Merging is what keeps a busy stretch from flickering, but merged far enough it produces
+        /// one segment across the whole recording — which is not a zoom, it is a permanent change
+        /// of framing, and it is what a real twelve-second demo of twenty-eight clicks produced
+        /// before this existed.
+        var maximumActivity: TimeInterval = 7.0
+        /// A level this close to the floor is not a close-up, it is a slow drift. Below it the
+        /// segment is dropped: barely zooming for eleven seconds is worse than not zooming.
+        var levelFloorMargin: Double = 0.15
         /// Keystrokes needed before typing counts as an activity in its own right.
         var typingRun: Int = 5
         /// …with no gap longer than this between them.
         var typingInterval: TimeInterval = 2.0
 
         init() {}
+
+        /// The longest a *cluster* may run, so that once the lead-in and lead-out are added the
+        /// finished segment still respects `maximumActivity`.
+        ///
+        /// Capping the cluster at `maximumActivity` directly looks right and is not: the padding
+        /// is applied afterwards, so a seven-second cluster becomes a nine-second segment and the
+        /// limit quietly means something other than what it says.
+        var clusterBudget: TimeInterval { max(0.5, maximumActivity - leadIn - leadOut) }
     }
 
     /// A span of the recording where something was happening, and where on screen it happened.
@@ -65,7 +83,11 @@ enum ZoomPlanner {
 
         activities = merged(activities, tuning: tuning)
 
-        return activities.map { segment(for: $0, frameSize: frameSize, tuning: tuning) }
+        // Dropped rather than kept-but-weak. A zoom that barely magnifies still costs the viewer
+        // a movement to follow, and pays nothing back.
+        return activities
+            .map { segment(for: $0, frameSize: frameSize, tuning: tuning) }
+            .filter { $0.level > tuning.levelRange.lowerBound + tuning.levelFloorMargin }
     }
 
     // MARK: - Finding activities
@@ -83,7 +105,10 @@ enum ZoomPlanner {
         for press in presses.dropFirst() {
             let previous = current.points[current.points.count - 1]
             let apart = hypot(press.point.x - previous.x, press.point.y - previous.y)
-            if press.t - current.end <= tuning.clusterInterval && apart <= tuning.clusterRadius {
+            let wouldOverrun = press.t - current.start > tuning.clusterBudget
+            if press.t - current.end <= tuning.clusterInterval,
+               apart <= tuning.clusterRadius,
+               !wouldOverrun {
                 current.end = press.t
                 current.points.append(press.point)
             } else {
@@ -145,13 +170,28 @@ enum ZoomPlanner {
         for activity in activities.dropFirst() {
             let touches = activity.start - previous.end < tuning.mergeGap
             let tooSoon = activity.start - previous.start < tuning.minimumSpacing
-            if touches || tooSoon {
+            // Whatever the other two say, a merge that would push the span past `maximumActivity`
+            // is refused. Without this the rules compose into "merge everything".
+            let wouldOverrun = max(previous.end, activity.end) - previous.start
+                > tuning.maximumActivity
+
+            if (touches || tooSoon) && !wouldOverrun {
                 previous.end = max(previous.end, activity.end)
                 previous.points.append(contentsOf: activity.points)
-            } else {
-                result.append(previous)
-                previous = activity
+                continue
             }
+
+            // **Refusing to merge is not enough on its own.** The lead-in and lead-out are added
+            // before this runs, so two activities two seconds apart already overlap by the time
+            // they get here — and leaving them overlapping is worse than merging, because the
+            // renderer would pick one arbitrarily and the zoom would flicker between them.
+            // So the later one starts where the earlier one ends.
+            var trimmed = activity
+            trimmed.start = max(trimmed.start, previous.end)
+            guard trimmed.end - trimmed.start >= tuning.minimumActivity else { continue }
+
+            result.append(previous)
+            previous = trimmed
         }
         result.append(previous)
         return result

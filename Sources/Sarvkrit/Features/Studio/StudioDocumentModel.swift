@@ -46,8 +46,8 @@ final class StudioDocumentModel: ObservableObject {
 
     @Published private(set) var project: StudioProject
     @Published var inspector: Inspector = .canvas
-    @Published var playhead: TimeInterval = 0
-    @Published var isPlaying = false
+    /// Playback lives here rather than in a view, so nothing has to go looking for it.
+    let player: StudioPlayer
     @Published var selectedZoom: ZoomSegment.ID?
     @Published var selectedClip: Clip.ID?
     @Published private(set) var isDirty = false
@@ -85,7 +85,23 @@ final class StudioDocumentModel: ObservableObject {
 
         self.project = project
         self.undoStack = UndoStack(initial: project, depth: 200)
+        self.player = StudioPlayer(url: bundle.screenURL)
+
+        // The player needs to know how long the edit is and how to turn an output moment into a
+        // recording moment. Both change as the timeline is edited, so they are closures rather
+        // than copies.
+        player.duration = project.duration
+        player.sourceTime = { [weak self] output in
+            self?.project.timeline.sourceTime(forOutput: output)?.sourceTime ?? 0
+        }
     }
+
+    var playhead: TimeInterval {
+        get { player.playhead }
+        set { player.scrub(to: newValue) }
+    }
+
+    var isPlaying: Bool { player.isPlaying }
 
     var duration: TimeInterval { project.duration }
 
@@ -103,6 +119,7 @@ final class StudioDocumentModel: ObservableObject {
         guard updated != project else { return }
         undoStack.commit(updated)
         project = updated
+        player.duration = updated.duration
         isDirty = true
         saver.schedule(updated)
     }
@@ -196,11 +213,11 @@ final class StudioDocumentModel: ObservableObject {
     }
 
     func step(frames: Int, fps: Int = 60) {
-        playhead = min(max(0, playhead + Double(frames) / Double(fps)), max(0, duration - 0.001))
+        player.step(seconds: Double(frames) / Double(fps))
     }
 
     func step(seconds: Double) {
-        playhead = min(max(0, playhead + seconds), max(0, duration - 0.001))
+        player.step(seconds: seconds)
     }
 
     // MARK: - Trimming

@@ -24,6 +24,11 @@ actor StudioExporter {
 
     private var isCancelled = false
 
+    /// **One exporter, one export.** `export` used to clear this flag on entry, which quietly
+    /// dropped any Cancel that arrived while the asset was being read and the writer built — a
+    /// window of real duration, and exactly when somebody who mis-clicked Export would press it.
+    /// The caller makes a fresh exporter per run instead, so there is no flag to reset and no race
+    /// to lose.
     func cancel() { isCancelled = true }
 
     /// - Parameter onProgress: called on an arbitrary executor; hop to the main actor to show it.
@@ -33,7 +38,7 @@ actor StudioExporter {
                 preset: ExportPreset,
                 to destination: URL,
                 onProgress: @Sendable @escaping (Progress) -> Void) async throws {
-        isCancelled = false
+        guard !isCancelled else { throw ExportError.cancelled }
 
         let asset = AVURLAsset(url: recording.screenURL)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {

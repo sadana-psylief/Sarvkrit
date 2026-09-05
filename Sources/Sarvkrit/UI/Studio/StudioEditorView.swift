@@ -4,7 +4,9 @@ import SwiftUI
 /// The editor window's contents: preview, rail, inspector, transport, timeline.
 struct StudioEditorView: View {
     @ObservedObject var model: StudioDocumentModel
+    @ObservedObject var player: StudioPlayer
     let onExport: () -> Void
+    let onCancelExport: () -> Void
     let onPlayPause: () -> Void
     let onScrub: (TimeInterval) -> Void
 
@@ -50,6 +52,10 @@ struct StudioEditorView: View {
                     .font(.system(size: Theme.Typography.caption))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
+                // A progress bar with no way to stop it is a hostage situation, and an export of a
+                // long recording is exactly when somebody realises they picked the wrong preset.
+                Button("Cancel", action: onCancelExport)
+                    .accessibilityLabel("Cancel the export")
             }
 
             Button(action: onExport) {
@@ -148,11 +154,11 @@ struct StudioEditorView: View {
             Button { model.step(seconds: -1) } label: { Image(systemName: "backward.end") }
                 .buttonStyle(.plain).clickableCursor().accessibilityLabel("Back a second")
             Button(action: onPlayPause) {
-                Image(systemName: model.isPlaying ? "pause.circle" : "play.circle")
+                Image(systemName: player.isPlaying ? "pause.circle" : "play.circle")
                     .font(.system(size: 22))
             }
             .buttonStyle(.plain).clickableCursor()
-            .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
             Button { model.step(seconds: 1) } label: { Image(systemName: "forward.end") }
                 .buttonStyle(.plain).clickableCursor().accessibilityLabel("Forward a second")
 
@@ -167,7 +173,7 @@ struct StudioEditorView: View {
             .buttonStyle(.plain).clickableCursor().help("Add a zoom here (Z)")
             .accessibilityLabel("Add a zoom at the playhead")
 
-            Text(Self.clock(model.playhead) + " / " + Self.clock(model.duration))
+            Text(Self.clock(player.playhead) + " / " + Self.clock(model.duration))
                 .font(.system(size: Theme.Typography.caption, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
