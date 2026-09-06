@@ -67,6 +67,7 @@ final class CaptureOverlayGuard {
             || PinnedShotController.shared.count > 0
             || CaptureHistoryWindowController.shared.isPresenting
             || RecordingHUDController.shared.isShowing
+            || CameraPreviewWindowController.shared.isShowing
             || PreRecordBarController.shared.isShowing
     }
 
@@ -97,6 +98,7 @@ final class CaptureOverlayGuard {
         // visible, twice in a row.
         if RecordingHUDController.shared.isShowing { stopRecording?() }
         RecordingHUDController.shared.dismiss()
+        CameraPreviewWindowController.shared.dismiss()
         PreRecordBarController.shared.dismiss()
         // System-wide, not just AppKit's: the overlay hides the pointer with CGDisplayHideCursor
         // because it runs from the background, and only the matching call brings it back.

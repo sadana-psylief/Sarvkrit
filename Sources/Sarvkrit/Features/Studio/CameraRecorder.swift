@@ -17,6 +17,16 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
     private var session: AVCaptureSession?
     private var movieOutput: AVCaptureMovieFileOutput?
 
+    /// A view of the session, for the on-screen preview.
+    ///
+    /// **Built during configuration, before the graph is running.** Creating it later — while the
+    /// file output was already recording — adds a connection to a live session, which
+    /// reconfigures it and stops the take: the camera file ended 1.2 seconds in with
+    /// "Recording Stopped" and nothing said why. It is also deliberately a view of this session
+    /// rather than a second `AVCaptureSession`, which is how the pre-record bar's preview and the
+    /// recorder came to be fighting over one device.
+    private(set) var previewLayer: AVCaptureVideoPreviewLayer?
+
     /// Every blocking call into the capture graph goes through here, in order. The type's own
     /// documentation carries the crash that made it necessary.
     private let runner = CaptureSessionRunner(label: "ai.psylief.sarvkrit.camera")
@@ -69,6 +79,13 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
         session.addOutput(output)
         session.commitConfiguration()
 
+        // Before anything starts running, for the reason on the property.
+        if device != nil {
+            let preview = AVCaptureVideoPreviewLayer(session: session)
+            preview.videoGravity = .resizeAspectFill
+            previewLayer = preview
+        }
+
         self.session = session
         self.movieOutput = output
         isRecording = true
@@ -92,6 +109,7 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
         let output = movieOutput
         self.session = nil
         movieOutput = nil
+        previewLayer = nil
         // The same queue as `start`, so a stop can never overtake the start it is meant to end.
         runner.submit {
             output?.stopRecording()

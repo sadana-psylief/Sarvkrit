@@ -43,6 +43,9 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     /// Maps a global AppKit point into the recording's pixel space. Nil means outside.
     private var mapPoint: (@Sendable (CGPoint) -> CGPoint?)?
 
+    /// Nil when this recording has no camera, which is what the preview window checks.
+    func cameraPreviewLayer() -> AVCaptureVideoPreviewLayer? { camera.previewLayer }
+
     var elapsed: TimeInterval { writer?.elapsed ?? 0 }
     var droppedFrames: Int { writer?.droppedFrames ?? 0 }
     var isPaused: Bool { writer?.isPaused ?? false }

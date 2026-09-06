@@ -407,6 +407,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 RecordingHUDController.shared.show(
                     elapsed: { feature.recorder.elapsed },
                     dropped: { feature.recorder.droppedFrames })
+                // Nil when this take has no camera, so no window appears for a screen-only
+                // recording rather than an empty circle.
+                if let preview = feature.recorder.cameraPreviewLayer() {
+                    CameraPreviewWindowController.shared.show(preview)
+                }
             } catch RecordingError.noDisplays {
                 // Denial has no error to catch; ScreenCaptureKit just reports nothing. macOS does
                 // not hand a running process a new grant either, so the answer is a relaunch.
@@ -481,6 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let dropped = feature.recorder.droppedFrames
             let bundle = try? await feature.recorder.finish()
             RecordingHUDController.shared.dismiss()
+            CameraPreviewWindowController.shared.dismiss()
             feature.noteRecording(false)
             guard let bundle else { return }
             if dropped > 0 {
