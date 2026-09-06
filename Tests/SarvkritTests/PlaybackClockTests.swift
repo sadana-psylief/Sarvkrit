@@ -187,11 +187,19 @@ final class CameraTrackTimeTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(t), 7.57, accuracy: 1e-9)
     }
 
-    /// Before the camera existed there is no frame to draw, and that is not an error — `drawCamera`
-    /// already draws nothing for a nil image.
-    func testThereIsNoCameraBeforeItStarted() {
-        XCTAssertNil(PlaybackClock.cameraTime(forSource: 1.0, startOffset: offset,
-                                              cameraDuration: cameraDuration))
+    /// **The lead-in holds the camera's first frame.** For the couple of seconds before the capture
+    /// graph came up there is no true picture, and leaving the bubble out until it appears looks
+    /// exactly like the camera being broken — which is how it was reported in the first place. So
+    /// the earliest frame stands in, the way a poster frame does.
+    func testTheLeadInHoldsTheFirstCameraFrame() {
+        let t = PlaybackClock.cameraTime(forSource: 1.0, startOffset: offset,
+                                         cameraDuration: cameraDuration)
+        XCTAssertEqual(try XCTUnwrap(t), 0, accuracy: 1e-9)
+    }
+
+    /// A recording with no camera track at all still has nothing to draw.
+    func testThereIsNoCameraWithoutATrack() {
+        XCTAssertNil(PlaybackClock.cameraTime(forSource: 1.0, startOffset: 0, cameraDuration: 0))
     }
 
     /// The whole take is covered once the offset is applied: a camera that started 2.43 s late and

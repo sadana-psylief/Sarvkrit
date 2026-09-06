@@ -76,10 +76,16 @@ struct RecordingManifest: Codable, Equatable {
     /// Hand-written for the same reason `StudioProject`'s is: a missing key takes a default and
     /// never throws. A manifest is the one file that must be readable even when everything else
     /// about the recording went wrong.
+    ///
+    /// **The encoder is synthesized and this is not, so a new property is written and then silently
+    /// dropped on the way back.** That is not hypothetical: `cameraStartOffset` reached disk
+    /// correctly and read back as zero, putting the camera two and a half seconds ahead of the
+    /// action. `RecordingManifestCodingTests` round-trips every field for exactly this reason.
     private enum Key: String, CodingKey {
         case formatVersion, state, source, pixelSize, pointPixelScale, fps
         case sourceRect, displayID, startedAt, duration
-        case hasMicrophone, hasSystemAudio, hasCamera, droppedFrames, accessibilityCursorScale
+        case hasMicrophone, hasSystemAudio, hasCamera, cameraStartOffset
+        case droppedFrames, accessibilityCursorScale
     }
 
     init(from decoder: Decoder) throws {
@@ -100,6 +106,7 @@ struct RecordingManifest: Codable, Equatable {
         hasMicrophone = read(.hasMicrophone, false)
         hasSystemAudio = read(.hasSystemAudio, false)
         hasCamera = read(.hasCamera, false)
+        cameraStartOffset = read(.cameraStartOffset, 0)
         droppedFrames = read(.droppedFrames, 0)
         accessibilityCursorScale = read(.accessibilityCursorScale, 1)
     }

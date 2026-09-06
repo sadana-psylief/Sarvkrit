@@ -57,15 +57,21 @@ enum PlaybackClock {
     /// Reading the camera at the screen's own time would put the face two and a half seconds ahead
     /// of what it is reacting to.
     ///
-    /// Nil at either end is ordinary, not a failure: `StudioRenderer.drawCamera` already draws
-    /// nothing when it has no image.
+    /// **The lead-in holds the first frame rather than showing nothing.** For the couple of seconds
+    /// before the camera was running there is no true picture, and leaving the bubble out until it
+    /// appears is indistinguishable from the camera being broken — which is exactly how it was
+    /// reported. The earliest frame there is stands in, the way a poster frame does.
+    ///
+    /// After the camera stops there is nothing to hold, so nil, and that is ordinary rather than a
+    /// failure: `StudioRenderer.drawCamera` draws nothing when it has no image.
     ///
     /// - Parameter startOffset: seconds by which the camera started after the screen. Zero for
     ///   bundles recorded before that was measured, which then behave exactly as they used to.
     static func cameraTime(forSource source: TimeInterval, startOffset: TimeInterval,
                            cameraDuration: TimeInterval) -> TimeInterval? {
+        guard cameraDuration > 0 else { return nil }
         let t = source - startOffset
-        guard t >= 0, t < cameraDuration else { return nil }
-        return t
+        guard t < cameraDuration else { return nil }
+        return max(0, t)
     }
 }
