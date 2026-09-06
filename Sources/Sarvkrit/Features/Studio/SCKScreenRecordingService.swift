@@ -35,9 +35,13 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     private var displayLink: CADisplayLink?
 
     private(set) var isRecording = false
+    /// True from the moment `start` is entered until it has either succeeded or cleaned up.
+    /// `isRecording` is only set once the stream is live, and there are two `await`s before that,
+    /// so without this a second ⌃⇧R during a start walked straight past the guard.
+    private var isStarting = false
 
     /// Maps a global AppKit point into the recording's pixel space. Nil means outside.
-    private var mapPoint: ((CGPoint) -> CGPoint?)?
+    private var mapPoint: (@Sendable (CGPoint) -> CGPoint?)?
 
     var elapsed: TimeInterval { writer?.elapsed ?? 0 }
     var droppedFrames: Int { writer?.droppedFrames ?? 0 }
@@ -52,7 +56,9 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
 
     /// - Parameter setup: the camera and microphone the user chose, if any.
     func start(_ request: RecordingRequest, setup: RecordingSetup? = nil) async throws {
-        guard !isRecording else { throw RecordingError.alreadyRecording }
+        guard !isRecording, !isStarting else { throw RecordingError.alreadyRecording }
+        isStarting = true
+        defer { isStarting = false }
 
         let content = try await SCShareableContent.excludingDesktopWindows(
             true, onScreenWindowsOnly: true)
@@ -67,55 +73,81 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         try checkSpace(for: pixels, fps: request.fps)
 
         let bundle = try RecordingBundle.create(at: request.destination)
-        var manifest = RecordingManifest(source: request.source,
-                                         pixelSize: pixels,
-                                         pointPixelScale: CGFloat(filter.pointPixelScale),
-                                         fps: request.fps)
-        manifest.sourceRect = sourceRect.map(RectBox.init)
-        manifest.displayID = geometry?.displayID
-        manifest.hasSystemAudio = request.capturesSystemAudio
-        manifest.accessibilityCursorScale = Self.accessibilityCursorScale()
-        // Written before the first frame: a bundle still saying `recording` on next launch is one
-        // the app died in the middle of, and that is the only signal a crash leaves.
-        try bundle.write(manifest)
+        do {
+            var manifest = RecordingManifest(source: request.source,
+                                             pixelSize: pixels,
+                                             pointPixelScale: CGFloat(filter.pointPixelScale),
+                                             fps: request.fps)
+            manifest.sourceRect = sourceRect.map(RectBox.init)
+            manifest.displayID = geometry?.displayID
+            manifest.hasSystemAudio = request.capturesSystemAudio
+            manifest.accessibilityCursorScale = Self.accessibilityCursorScale()
+            // Written before the first frame: a bundle still saying `recording` on next launch
+            // is one the app died in the middle of, the only signal a crash leaves.
+            try bundle.write(manifest)
 
-        writer = try RecordingWriter(url: bundle.screenURL, size: pixels, fps: request.fps)
+            writer = try RecordingWriter(url: bundle.screenURL, size: pixels, fps: request.fps)
 
-        self.bundle = bundle
-        self.manifest = manifest
-        self.mapPoint = Self.mapper(sourceRect: sourceRect, geometry: geometry,
-                                    scale: CGFloat(filter.pointPixelScale), pixels: pixels)
-        events.begin(mapping: { [weak self] point in self?.mapPoint?(point) })
+            self.bundle = bundle
+            // Handed to the recorder by value. It used to reach back through `self?.mapPoint`,
+            // meaning a nonisolated monitor callback read a main-actor property; the mapper is a
+            // pure function of the geometry, so there is nothing to reach back for.
+            let mapper = Self.mapper(sourceRect: sourceRect, geometry: geometry,
+                                     scale: CGFloat(filter.pointPixelScale), pixels: pixels)
+            self.mapPoint = mapper
 
-        // Started before the stream, so the camera is already rolling when the first screen frame
-        // lands rather than a second behind it.
-        if let setup {
-            let device = setup.cameraID.flatMap { id in
-                CameraRecorder.devices().first { $0.uniqueID == id }
+            // Started before the stream, so the camera is already rolling when the first screen
+            // frame lands rather than a second behind it.
+            if let setup {
+                let device = setup.cameraID.flatMap { id in
+                    CameraRecorder.devices().first { $0.uniqueID == id }
+                }
+                let microphone = setup.microphoneID.flatMap { id in
+                    CameraRecorder.microphones().first { $0.uniqueID == id }
+                }
+                // **A microphone with no camera still has to be recorded.** Gating this on the
+                // camera meant choosing a mic alone captured nothing at all, silently — the worst
+                // possible way for narration to go missing.
+                if device != nil || microphone != nil {
+                    try? camera.start(device: device, microphone: microphone,
+                                      to: device != nil ? bundle.cameraURL : bundle.microphoneURL)
+                    manifest.hasCamera = device != nil
+                    manifest.hasMicrophone = microphone != nil
+                    try? bundle.write(manifest)
+                }
             }
-            let microphone = setup.microphoneID.flatMap { id in
-                CameraRecorder.microphones().first { $0.uniqueID == id }
-            }
-            // **A microphone with no camera still has to be recorded.** Gating this on the camera
-            // meant choosing a mic alone captured nothing at all, silently — which is the worst
-            // possible way for narration to go missing.
-            if device != nil || microphone != nil {
-                try? camera.start(device: device, microphone: microphone,
-                                  to: device != nil ? bundle.cameraURL : bundle.microphoneURL)
-                manifest.hasCamera = device != nil
-                manifest.hasMicrophone = microphone != nil
-                try? bundle.write(manifest)
-            }
+            // Assigned after the camera block, not before: the block mutates a local copy, so the
+            // old order wrote `hasCamera` to disk and kept a stale value in memory.
+            self.manifest = manifest
+
+            let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+            let frames = DispatchQueue(label: "ai.psylief.sarvkrit.recording")
+            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frames)
+            try await stream.startCapture()
+            self.stream = stream
+            isRecording = true
+            // Monitors last. Nothing before this point produces an event worth recording, and a
+            // start that failed part-way used to leave them installed for the life of the process
+            // — the app then watched every click on the Mac with no recording running.
+            events.begin(mapping: mapper)
+            startCursorSampling()
+            let size = "\(configuration.width)x\(configuration.height)"
+            log.info("recording started \(size, privacy: .public)")
+        } catch {
+            // A start that fails leaves nothing behind. It used to leave the camera running, the
+            // event monitors installed for the rest of the process, and a bundle still saying
+            // `state: "recording"` that the next launch offered to recover as a crashed take.
+            log.error("recording failed to start: \(error.localizedDescription, privacy: .public)")
+            camera.finish()
+            _ = events.finish(anchoredTo: nil)
+            writer = nil
+            stream = nil
+            self.bundle = nil
+            self.manifest = nil
+            mapPoint = nil
+            try? FileManager.default.removeItem(at: bundle.root)
+            throw error
         }
-
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .screen,
-                                   sampleHandlerQueue: DispatchQueue(label: "ai.psylief.sarvkrit.recording"))
-        try await stream.startCapture()
-        self.stream = stream
-        isRecording = true
-        startCursorSampling()
-        log.info("recording started \(configuration.width, privacy: .public)x\(configuration.height, privacy: .public)")
     }
 
     // MARK: - Filter and configuration
@@ -300,7 +332,7 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     /// Nil is the answer that matters: in area and window modes the pointer spends much of its time
     /// outside the frame, and a cursor pinned to the edge looks like a bug.
     private static func mapper(sourceRect: CGRect?, geometry: DisplaySnapshotGeometry?,
-                               scale: CGFloat, pixels: CGSize) -> (CGPoint) -> CGPoint? {
+                               scale: CGFloat, pixels: CGSize) -> @Sendable (CGPoint) -> CGPoint? {
         return { global in
             guard let geometry else {
                 // Window mode: the per-frame geometry sidecar is what resolves this properly, and

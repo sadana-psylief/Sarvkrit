@@ -60,8 +60,11 @@ enum SecureFieldCheck {
                                             &focused) == .success,
               let element = focused else { return false }
 
-        // Unsafe-looking, and it is the documented shape: the value is an AXUIElement.
-        let axElement = unsafeBitCast(element, to: AXUIElement.self)
+        // Checked, not bit-cast. `unsafeBitCast` here did no type check at all, where every other
+        // Accessibility call site in this codebase does — `SnapAreaController` and
+        // `WindowManipulator` both use exactly this pattern.
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return false }
+        let axElement = element as! AXUIElement   // swiftlint:disable:this force_cast
         for attribute in [kAXRoleAttribute, kAXSubroleAttribute] {
             var value: CFTypeRef?
             guard AXUIElementCopyAttributeValue(axElement, attribute as CFString,
