@@ -137,6 +137,11 @@ final class ScreenRecordingFeature: Feature, ObservableObject {
             }
             if status == noErr {
                 hotkeys.append(hotkey)
+                // The successes are logged too, not only the refusals, matching `ScreenshotFeature`
+                // — "did this combination actually get claimed on this Mac" is otherwise
+                // unanswerable without a debugger, and when these shortcuts went missing the launch
+                // log could not say so.
+                log.info("registered \(action.rawValue, privacy: .public) keyCode \(shortcut.keyCode, privacy: .public)")
             } else {
                 // Another app holding a combination is ordinary. Recorded so settings can say so,
                 // rather than offering a shortcut that quietly does nothing.
@@ -147,12 +152,20 @@ final class ScreenRecordingFeature: Feature, ObservableObject {
         objectWillChange.send()
     }
 
-    private func handler(for action: RecordingAction) -> (() -> Void)? {
+    /// Internal rather than private so `ScreenRecordingHotkeyBindingTests` can pin the late
+    /// binding this returns — the launch-order bug it documents had no other observable surface.
+    func handler(for action: RecordingAction) -> (() -> Void)? {
+        // **Read at fire time, not here.** `rebindHotkeys()` runs from `AppState.sync()`, which
+        // happens during `AppState.shared`'s initialiser — four lines before `wireRecording()`
+        // assigns any of these. Returning the stored closure meant returning nil four times, and
+        // `guard let handler … else { continue }` then registered nothing at all. Worse, it never
+        // recovered: `sync()` skips features already in `activeFeatureIDs`, so the only cure was
+        // toggling the feature off and on. `ScreenshotFeature` has done it this way all along.
         switch action {
-        case .startStop: return startStop
-        case .recordArea: return recordArea
-        case .pauseResume: return pauseResume
-        case .flag: return markMoment
+        case .startStop: return { [weak self] in self?.startStop?() }
+        case .recordArea: return { [weak self] in self?.recordArea?() }
+        case .pauseResume: return { [weak self] in self?.pauseResume?() }
+        case .flag: return { [weak self] in self?.markMoment?() }
         }
     }
 }

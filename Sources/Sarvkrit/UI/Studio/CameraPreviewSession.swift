@@ -19,6 +19,11 @@ final class CameraPreviewSession: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
     private let session = AVCaptureSession()
     private let renderer = PreviewFrameRenderer()
+    /// Start and stop go through one queue, in order. Two unordered detached tasks meant a bar
+    /// dismissed quickly ran `stopRunning()` on a session that had not come up yet — a no-op —
+    /// and `startRunning()` afterwards, leaving the camera light on with nothing left holding a
+    /// reference to switch it off. That is the "green light and no window" report.
+    private let runner = CaptureSessionRunner(label: "ai.psylief.sarvkrit.preview.session")
     private let onFrame: @Sendable (CGImage) -> Void
 
     init(device: AVCaptureDevice, onFrame: @escaping @Sendable (CGImage) -> Void) {
@@ -41,12 +46,13 @@ final class CameraPreviewSession: NSObject, AVCaptureVideoDataOutputSampleBuffer
         // Off the main thread: starting a capture session blocks for a noticeable moment, and
         // doing it inline stalls the bar as it appears.
         let session = self.session
-        Task.detached { session.startRunning() }
+        runner.submit { session.startRunning() }
     }
 
     func stop() {
         let session = self.session
-        Task.detached { session.stopRunning() }
+        // The same queue as the start above, so this can never overtake it.
+        runner.submit { session.stopRunning() }
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,

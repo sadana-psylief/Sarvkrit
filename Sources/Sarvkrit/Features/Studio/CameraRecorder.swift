@@ -17,6 +17,10 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
     private var session: AVCaptureSession?
     private var movieOutput: AVCaptureMovieFileOutput?
 
+    /// Every blocking call into the capture graph goes through here, in order. The type's own
+    /// documentation carries the crash that made it necessary.
+    private let runner = CaptureSessionRunner(label: "ai.psylief.sarvkrit.camera")
+
     private(set) var isRecording = false
 
     /// Every camera on this Mac.
@@ -65,26 +69,34 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
         session.addOutput(output)
         session.commitConfiguration()
 
-        // Off the main thread: starting a capture session blocks for a noticeable moment, and
-        // doing it on the main actor stalls the countdown the user is watching.
-        Task.detached { session.startRunning() }
-
-        try? FileManager.default.removeItem(at: url)
-        output.startRecording(to: url, recordingDelegate: self)
-
         self.session = session
         self.movieOutput = output
         isRecording = true
+
+        // Building the graph above is cheap. These two calls are not: `startRunning()` blocks
+        // until the graph is up, and `startRecording(to:)` blocks until the session is running.
+        // They go one after the other on one thread, off the main actor — the previous version
+        // detached the first and made the second here, and see `CaptureSessionRunner` for how
+        // that ended.
+        runner.submit {
+            session.startRunning()
+            try? FileManager.default.removeItem(at: url)
+            output.startRecording(to: url, recordingDelegate: self)
+        }
     }
 
     func finish() {
         guard isRecording else { return }
-        movieOutput?.stopRecording()
         isRecording = false
         let session = self.session
-        Task.detached { session?.stopRunning() }
+        let output = movieOutput
         self.session = nil
         movieOutput = nil
+        // The same queue as `start`, so a stop can never overtake the start it is meant to end.
+        runner.submit {
+            output?.stopRecording()
+            session?.stopRunning()
+        }
     }
 
     nonisolated func fileOutput(_ output: AVCaptureFileOutput,
