@@ -30,6 +30,9 @@ final class StudioTimelineView: NSView {
 
     private var drag: Drag = .none
 
+    private var pollTimer: Timer?
+    private var lastDrawnPlayhead: TimeInterval = -1
+
     init(model: StudioDocumentModel) {
         self.model = model
         super.init(frame: .zero)
@@ -37,6 +40,36 @@ final class StudioTimelineView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    /// Repaints when the playhead moves.
+    ///
+    /// **This view used to have no way to know.** It is an `NSView` reading `model.playhead` inside
+    /// `draw(_:)`, and it relied entirely on SwiftUI re-running the enclosing body and calling
+    /// `updateNSView`. That does not happen reliably: during playback the transport's clock text
+    /// updated to `0:40` while the playhead line stayed where it had been drawn eight seconds in.
+    /// From the outside that is "when I click play the seekbar never moves" — the picture and the
+    /// counter run, and the one thing showing you where you are does not.
+    ///
+    /// `StudioPreviewView` already solved this for the canvas with a poll of its own; this is the
+    /// same answer for the timeline, and it removes the dependency on SwiftUI's update heuristics
+    /// rather than hoping about them.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        pollTimer?.invalidate()
+        guard window != nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard self.model.playhead != self.lastDrawnPlayhead else { return }
+                self.lastDrawnPlayhead = self.model.playhead
+                self.needsDisplay = true
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    deinit { pollTimer?.invalidate() }
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }

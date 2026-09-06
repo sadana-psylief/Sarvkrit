@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let recording = AppState.shared.features
                     .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
                 Task { @MainActor in await Self.record(source, windowID: windowID, with: recording) }
+            case .playPause:
+                if !StudioEditorController.shared.togglePlayback() {
+                    Self.urlLog.error("play with no editor open")
+                }
             case .seek(let seconds):
                 if !StudioEditorController.shared.seek(to: seconds) {
                     Self.urlLog.error("seek with no editor open")

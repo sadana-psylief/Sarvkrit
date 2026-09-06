@@ -199,6 +199,14 @@ final class StudioEditorController {
         return true
     }
 
+    /// Starts or stops playback in the newest editor.
+    @discardableResult
+    func togglePlayback() -> Bool {
+        guard let controller = controllers.last else { return false }
+        controller.model.player.toggle()
+        return true
+    }
+
     /// Opens a finished recording.
     func open(_ bundle: RecordingBundle) {
         guard let manifest = try? bundle.readManifest() else { return }

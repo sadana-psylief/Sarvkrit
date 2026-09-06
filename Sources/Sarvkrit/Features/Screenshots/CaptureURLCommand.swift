@@ -52,6 +52,8 @@ enum CaptureURLCommand: Equatable {
     /// **The scriptable form of dragging the scrubber**, which is otherwise unreachable without a
     /// mouse — and therefore untestable on a machine that refuses synthetic input.
     case seek(TimeInterval)
+    /// Starts or stops playback in the open editor.
+    case playPause
 
     static let scheme = "sarvkrit"
 
@@ -67,6 +69,7 @@ enum CaptureURLCommand: Equatable {
         case .record: return "record"
         case .stopRecording: return "stop-recording"
         case .seek: return "seek"
+        case .playPause: return "play"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -91,7 +94,7 @@ enum CaptureURLCommand: Equatable {
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
             + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
-               .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0)]
+               .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -178,6 +181,7 @@ enum CaptureURLCommand: Equatable {
         if name == "open-settings" { return .openSettings }
         if name == "stop-recording" { return .stopRecording }
         if name == "seek" { return seconds(from: url).map { .seek($0) } }
+        if name == "play" { return .playPause }
         if name == "record" {
             guard let source = recordingSource(from: url) else { return nil }
             return .record(source, windowID: windowID(from: url))

@@ -338,6 +338,12 @@ final class RecordingURLCommandTests: XCTestCase {
         XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://seek?t=-3")!))
     }
 
+    /// Starting and stopping playback from a script — the literal complaint was "when I click play
+    /// the seekbar never moves", and there is no other way for me to press it.
+    func testPlayPauseIsItsOwnCommand() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://play")!), .playPause)
+    }
+
     func testStopIsItsOwnCommand() {
         XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
                        .stopRecording)
