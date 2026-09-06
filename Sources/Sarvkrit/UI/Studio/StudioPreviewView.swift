@@ -30,6 +30,12 @@ final class StudioPreviewView: NSView {
         super.viewDidMoveToWindow()
         pollTimer?.invalidate()
         guard window != nil else { return }
+        // **Restarted here, not only at construction.** The player is built before this window
+        // exists, and its display link comes from `NSScreen.main` — the screen with the key window,
+        // which at that moment is somebody else's or nothing at all. Asking again now that we are
+        // on screen makes construction order stop mattering, and moves the clock to whichever
+        // display the editor actually opened on.
+        model.player.startClock()
         // Redrawn from the player's frame token rather than from a timer of its own, so the
         // picture and the composite can never disagree about which moment they are showing.
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
@@ -70,7 +76,10 @@ final class StudioPreviewView: NSView {
         StudioRenderer.draw(project: model.project,
                             sourceTime: model.sourceTime,
                             events: model.events,
-                            sources: FrameSources(screen: model.player.decoded),
+                            sources: FrameSources(screen: model.player.decoded,
+                                                  camera: model.player.decodedCamera,
+                                                  wallpaper: FrameSources.wallpaper(
+                                                      for: model.project)),
                             canvas: canvas,
                             imageRect: imageRect,
                             in: context,

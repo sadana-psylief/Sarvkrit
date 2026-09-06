@@ -23,6 +23,20 @@ struct FrameSources {
         self.wallpaper = wallpaper
         self.customCursors = customCursors
     }
+
+    /// The wallpaper a project's background needs, if any.
+    ///
+    /// **One definition, used by the live canvas and the export both.** The screenshot editor
+    /// states why next to its own equivalent: the two disagreeing about a background is a failure
+    /// that feature has already had once, with the surround visible in the file and not on the
+    /// canvas. Studio managed the opposite of both — it passed no wallpaper anywhere, so a
+    /// wallpaper background simply rendered as nothing.
+    /// Main-actor because `WallpaperStore` is; resolved once, before any render loop.
+    @MainActor
+    static func wallpaper(for project: StudioProject) -> CGImage? {
+        guard case .image(let fileName) = project.background.fill else { return nil }
+        return WallpaperStore.shared.image(named: fileName)
+    }
 }
 
 /// Compositing one frame of a project.

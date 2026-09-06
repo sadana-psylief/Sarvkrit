@@ -45,6 +45,16 @@ struct RecordingManifest: Codable, Equatable {
     var hasMicrophone = false
     var hasSystemAudio = false
     var hasCamera = false
+    /// Seconds by which `camera.mov` began after `screen.mov`.
+    ///
+    /// **The two tracks do not start together.** `AVCaptureSession` takes a couple of seconds to
+    /// bring a camera up, so the camera file starts later and, if both are stopped at once, is
+    /// shorter by exactly this much. Composing the camera at the screen's own time puts the face
+    /// that far ahead of what it is reacting to.
+    ///
+    /// Defaults to zero, so a bundle recorded before this was measured behaves exactly as it
+    /// always did. That is what `formatVersion` is for.
+    var cameraStartOffset: TimeInterval = 0
     /// Shown when non-zero. A stuttering file produced silently is the failure to avoid.
     var droppedFrames = 0
     /// The user's Accessibility pointer size at record time.

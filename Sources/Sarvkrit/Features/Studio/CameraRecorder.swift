@@ -33,6 +33,18 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
 
     private(set) var isRecording = false
 
+    /// `systemUptime` at the instant the camera's first sample was written, or nil if it never was.
+    ///
+    /// The same clock `RecordingWriter.firstFrameHostTime` uses, so the gap between the two tracks
+    /// is a plain subtraction. Written from AVFoundation's queue, read from the main actor once the
+    /// take has ended, and guarded because of it.
+    var startedAtHostTime: TimeInterval? {
+        startLock.lock(); defer { startLock.unlock() }
+        return _startedAtHostTime
+    }
+    private let startLock = NSLock()
+    private nonisolated(unsafe) var _startedAtHostTime: TimeInterval?
+
     /// Every camera on this Mac.
     static func devices() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(
@@ -56,6 +68,8 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
     func start(device: AVCaptureDevice?, microphone: AVCaptureDevice?,
                to url: URL, height: Int = 1080) throws {
         guard !isRecording, device != nil || microphone != nil else { return }
+        // Cleared here rather than in `finish()`, which is called *before* the service reads it.
+        startLock.lock(); _startedAtHostTime = nil; startLock.unlock()
 
         let session = AVCaptureSession()
         session.beginConfiguration()
@@ -115,6 +129,18 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
             output?.stopRecording()
             session?.stopRunning()
         }
+    }
+
+    /// **The camera does not start when the screen does.** Bringing an `AVCaptureSession` up takes
+    /// a couple of seconds, so this fires that much later than the first screen frame. Recording
+    /// the moment is what lets the editor put the two tracks back in step; without it the camera
+    /// plays seconds ahead of what it is reacting to.
+    nonisolated func fileOutput(_ output: AVCaptureFileOutput,
+                                didStartRecordingTo fileURL: URL,
+                                from connections: [AVCaptureConnection]) {
+        startLock.lock()
+        _startedAtHostTime = ProcessInfo.processInfo.systemUptime
+        startLock.unlock()
     }
 
     nonisolated func fileOutput(_ output: AVCaptureFileOutput,

@@ -48,14 +48,58 @@ final class StudioExportTests: XCTestCase {
         return bundle
     }
 
-    private func sample(at seconds: Double, size: CGSize) throws -> CMSampleBuffer {
+    /// The same, plus a real `camera.mov`.
+    ///
+    /// **This fixture is the point.** Every export test before it wrote only `screen.mov`, so "is
+    /// the camera in the finished file" was not a question the suite could ask — and the answer, for
+    /// the whole life of the feature, was no: nothing ever opened `camera.mov` after recording it.
+    private func makeRecordingWithCamera(seconds: Double) throws -> RecordingBundle {
+        let bundle = try makeRecording(seconds: seconds)
+        let size = CGSize(width: 160, height: 120)
+        let writer = try RecordingWriter(url: bundle.cameraURL, size: size, fps: 60)
+        for index in 0..<Int(seconds * 60) {
+            // Near-white, so the picture-in-picture cannot be confused with the screen beneath it.
+            writer.append(try sample(at: Double(index) / 60, size: size, luma: 250))
+        }
+        let written = expectation(description: "camera written")
+        Task { await writer.finish(); written.fulfill() }
+        wait(for: [written], timeout: 20)
+
+        var manifest = try bundle.readManifest()
+        manifest.hasCamera = true
+        try bundle.write(manifest)
+        return bundle
+    }
+
+    /// The bytes of the first exported frame, for comparing two exports of the same project.
+    private func firstFrame(of url: URL) async throws -> Data {
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String:
+                                kCVPixelFormatType_32BGRA])
+        reader.add(output)
+        reader.startReading()
+        let sample = try XCTUnwrap(output.copyNextSampleBuffer())
+        let buffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer))
+        return Data(bytes: base,
+                    count: CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+    }
+
+    private func sample(at seconds: Double, size: CGSize, luma: Int? = nil) throws -> CMSampleBuffer {
         var pixelBuffer: CVPixelBuffer?
         CVPixelBufferCreate(nil, Int(size.width), Int(size.height),
                             kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
         let buffer = try XCTUnwrap(pixelBuffer)
         CVPixelBufferLockBaseAddress(buffer, [])
         if let base = CVPixelBufferGetBaseAddress(buffer) {
-            memset(base, Int32(40 + Int(seconds * 60) % 180),
+            memset(base, Int32(luma ?? (40 + Int(seconds * 60) % 180)),
                    CVPixelBufferGetBytesPerRow(buffer) * Int(size.height))
         }
         CVPixelBufferUnlockBaseAddress(buffer, [])
@@ -131,6 +175,37 @@ final class StudioExportTests: XCTestCase {
         }
         XCTAssertGreaterThan(signatures.count, 1,
                              "every exported frame is identical — the reader never advanced")
+    }
+
+    /// **The assertion that was impossible before, and the one that would have caught this.**
+    ///
+    /// The renderer's own snapshot test hands `drawCamera` a camera image directly, so it proved the
+    /// compositing worked and said nothing about whether anything ever supplied one. Nothing did:
+    /// both production call sites built `FrameSources(screen:)` and left the other three fields at
+    /// their defaults. The camera was recorded faithfully and then never read again.
+    func testTheExportContainsTheCamera() async throws {
+        let bundle = try makeRecordingWithCamera(seconds: 1)
+        let project = try project(over: bundle, seconds: 1)
+
+        let withCamera = directory.appendingPathComponent("with-camera.mp4")
+        try await StudioExporter().export(
+            project: project, events: EventLog(), recording: bundle,
+            preset: .web, to: withCamera, onProgress: { _ in })
+
+        // The same recording again with the camera switched off in its manifest, so the picture in
+        // picture is the only difference between the two files.
+        var manifest = try bundle.readManifest()
+        manifest.hasCamera = false
+        try bundle.write(manifest)
+
+        let without = directory.appendingPathComponent("without-camera.mp4")
+        try await StudioExporter().export(
+            project: project, events: EventLog(), recording: bundle,
+            preset: .web, to: without, onProgress: { _ in })
+
+        let a = try await firstFrame(of: withCamera)
+        let b = try await firstFrame(of: without)
+        XCTAssertNotEqual(a, b, "the exported file is identical with and without a camera track")
     }
 
     func testProgressReachesTheEnd() async throws {

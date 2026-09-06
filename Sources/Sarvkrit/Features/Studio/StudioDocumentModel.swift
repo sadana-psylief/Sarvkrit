@@ -85,7 +85,14 @@ final class StudioDocumentModel: ObservableObject {
 
         self.project = project
         self.undoStack = UndoStack(initial: project, depth: 200)
-        self.player = StudioPlayer(url: bundle.screenURL)
+        // Opened only when the recording actually has one, so a screen-only take pays for no
+        // decoder. Nothing read `manifest.hasCamera` before this — which is why the camera was
+        // recorded faithfully and then never shown.
+        let camera = manifest.hasCamera
+            && FileManager.default.fileExists(atPath: bundle.cameraURL.path)
+            ? bundle.cameraURL : nil
+        self.player = StudioPlayer(url: bundle.screenURL, cameraURL: camera,
+                                   cameraStartOffset: manifest.cameraStartOffset)
 
         // The player needs to know how long the edit is and how to turn an output moment into a
         // recording moment. Both change as the timeline is edited, so they are closures rather

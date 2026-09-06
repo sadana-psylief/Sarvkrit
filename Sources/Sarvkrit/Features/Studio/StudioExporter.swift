@@ -59,6 +59,40 @@ actor StudioExporter {
         readerOutput.alwaysCopiesSampleData = false
         reader.add(readerOutput)
 
+        // **The camera, read the same way.** Forward-only, pulled along to the moment each output
+        // frame needs — exactly as the screen is. Until now the exporter never opened this file at
+        // all, so a recording with a camera exported without one and nothing said why.
+        var cameraReaderOutput: AVAssetReaderTrackOutput?
+        var cameraReader: AVAssetReader?
+        var cameraStartOffset: TimeInterval = 0
+        var cameraDuration: TimeInterval = 0
+        var decodedCamera: CGImage?
+        var cameraDecodedUntil: TimeInterval = -1
+
+        if let manifest = try? recording.readManifest(), manifest.hasCamera,
+           FileManager.default.fileExists(atPath: recording.cameraURL.path) {
+            let cameraAsset = AVURLAsset(url: recording.cameraURL)
+            if let cameraTrack = try? await cameraAsset.loadTracks(withMediaType: .video).first {
+                cameraStartOffset = manifest.cameraStartOffset
+                cameraDuration = ((try? await cameraAsset.load(.duration))?.seconds).map {
+                    $0.isFinite ? $0 : 0
+                } ?? 0
+                let reader = try AVAssetReader(asset: cameraAsset)
+                let trackOutput = AVAssetReaderTrackOutput(
+                    track: cameraTrack,
+                    outputSettings: [kCVPixelBufferPixelFormatTypeKey as String:
+                                        kCVPixelFormatType_32BGRA])
+                trackOutput.alwaysCopiesSampleData = false
+                reader.add(trackOutput)
+                cameraReader = reader
+                cameraReaderOutput = trackOutput
+            }
+        }
+
+        // Resolved once, on the main actor, and by the same helper the live canvas uses — the two
+        // disagreeing about a background is a failure this app has already had.
+        let wallpaper = await MainActor.run { FrameSources.wallpaper(for: project) }
+
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination,
                                        fileType: preset.codec == .proRes422 ? .mov : .mp4)
@@ -76,6 +110,10 @@ actor StudioExporter {
         writer.add(input)
 
         guard writer.startWriting(), reader.startReading() else { throw ExportError.cannotWrite }
+        if let cameraReader, !cameraReader.startReading() {
+            // Not fatal: a camera that cannot be read costs the picture-in-picture, not the export.
+            cameraReaderOutput = nil
+        }
         writer.startSession(atSourceTime: .zero)
 
         let duration = project.duration
@@ -109,9 +147,30 @@ actor StudioExporter {
                 }
             }
 
+            if let cameraReaderOutput {
+                // Nil outside the camera's own span — it starts after the screen and can stop
+                // before it — and the renderer draws nothing for a nil image.
+                if let wanted = PlaybackClock.cameraTime(forSource: placed.sourceTime,
+                                                         startOffset: cameraStartOffset,
+                                                         cameraDuration: cameraDuration) {
+                    while cameraDecodedUntil < wanted,
+                          let sample = cameraReaderOutput.copyNextSampleBuffer() {
+                        cameraDecodedUntil = CMTimeGetSeconds(
+                            CMSampleBufferGetPresentationTimeStamp(sample))
+                        if let buffer = CMSampleBufferGetImageBuffer(sample) {
+                            decodedCamera = Self.image(from: buffer)
+                        }
+                    }
+                } else {
+                    decodedCamera = nil
+                }
+            }
+
             let frame = StudioRenderer.frame(of: project, atSource: placed.sourceTime,
                                              events: events,
-                                             sources: FrameSources(screen: decoded),
+                                             sources: FrameSources(screen: decoded,
+                                                                   camera: decodedCamera,
+                                                                   wallpaper: wallpaper),
                                              cache: cache)
             guard let frame, let buffer = Self.buffer(from: frame, size: output,
                                                       pool: adaptor.pixelBufferPool) else {

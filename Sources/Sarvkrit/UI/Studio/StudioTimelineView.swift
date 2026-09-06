@@ -216,6 +216,9 @@ final class StudioTimelineView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // The clock stops writing the playhead for the length of any timeline drag. Otherwise
+        // playback and the drag write it alternately and the handle fights the pointer.
+        model.player.beginScrubbing()
 
         if zoomTrack.contains(point), let hit = zoom(at: point) {
             model.selectedZoom = hit.segment.id
@@ -270,6 +273,7 @@ final class StudioTimelineView: NSView {
     override func mouseUp(with event: NSEvent) {
         if case .none = drag {} else if case .playhead = drag {} else { model.endGesture() }
         drag = .none
+        model.player.endScrubbing()
     }
 
     /// Editing a zoom marks it as the user's, so "Re-detect" will not take it away again.

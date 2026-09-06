@@ -285,6 +285,10 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
         camera.finish()
 
         let anchor = writer?.firstFrameHostTime
+        // Both are `systemUptime` taken at a first frame, so the gap between the tracks is the
+        // difference. Clamped at zero: a camera that somehow beat the screen is not a negative
+        // offset, it is no offset.
+        let cameraStart = camera.startedAtHostTime
         let duration = elapsed
         let dropped = droppedFrames
         await writer?.finish()
@@ -294,6 +298,11 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
             manifest.state = .complete
             manifest.duration = duration
             manifest.droppedFrames = dropped
+            if let anchor, let cameraStart {
+                manifest.cameraStartOffset = max(0, cameraStart - anchor)
+                let offset = manifest.cameraStartOffset
+                log.info("camera started \(offset, format: .fixed(precision: 3), privacy: .public)s after the screen")
+            }
             try? bundle.write(manifest)
         }
 
