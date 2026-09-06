@@ -22,7 +22,7 @@ final class StudioPlayer: ObservableObject {
 
     private let player: AVPlayer
     private let output: AVPlayerItemVideoOutput
-    private var displayLink: CADisplayLink?
+    private var clock: Timer?
     /// Host time of the previous tick, so elapsed time is measured rather than assumed.
     private var lastTickHostTime: CFTimeInterval?
     /// True while the user is dragging the playhead, so the clock does not fight the drag.
@@ -30,7 +30,7 @@ final class StudioPlayer: ObservableObject {
 
     /// Whether the clock is actually running. Observable because its absence silently disabled the
     /// entire editor: no playhead, no redraw, and no decoded frame.
-    var isTicking: Bool { displayLink != nil }
+    var isTicking: Bool { clock?.isValid ?? false }
 
     /// The most recently decoded screen frame. Held so a scrub that lands between decodes still
     /// draws the picture rather than flashing black.
@@ -97,7 +97,7 @@ final class StudioPlayer: ObservableObject {
         seek(to: 0)
     }
 
-    deinit { displayLink?.invalidate() }
+    deinit { clock?.invalidate() }
 
     // MARK: - Transport
 
@@ -154,32 +154,35 @@ final class StudioPlayer: ObservableObject {
 
     /// Starts, or restarts, the clock.
     ///
-    /// **`NSScreen.main` is the screen holding the key window, and there usually is not one.** This
-    /// player is built by `StudioEditorController.open` before its own window exists, and Sarvkrit
-    /// is an accessory app, so at the moment a recording stops the key window belongs to whatever
-    /// was being demonstrated — or to nothing at all. The optional chain then yielded nil, there was
-    /// no fallback and no retry, and `tick()` never ran once for the life of the player.
+    /// **A timer, not a display link, and that is the fix.** The previous version took a
+    /// `CADisplayLink` from `NSScreen.main` — the screen holding the *key window*. This player is
+    /// built by `StudioEditorController.open` before its own window exists, and Sarvkrit is an
+    /// accessory app, so at the moment a recording stops the key window belongs to whatever was
+    /// being demonstrated, or to nothing at all. The optional chain yielded nil, there was no
+    /// fallback and no retry, and `tick()` never ran once for the life of the player.
     ///
-    /// That is the whole editor, not just the transport: `tick()` is also the only thing that
-    /// decodes a frame, so the preview composited its background over an empty picture.
+    /// That silently disabled the whole editor rather than just the transport: `tick()` is also the
+    /// only thing that decodes a frame, so the canvas composited its background over an empty
+    /// picture. A display link also stops firing for an app with nothing on screen, which makes it
+    /// untestable and fragile for a clock that has to keep running while a window is being opened.
     ///
-    /// Called again when the preview reaches a window, so construction order stops being
-    /// load-bearing and the link follows the screen the editor is actually on.
+    /// A timer on the main run loop in `.common` mode depends on none of that. Vsync alignment
+    /// buys nothing here — every frame goes through `StudioRenderer` into a `CGContext`, and the
+    /// preview polls on a timer of its own already — and `PlaybackClock` measures the elapsed time
+    /// of each tick rather than assuming it, so an irregular interval costs nothing either.
+    ///
+    /// This removes the class of bug rather than the instance, which is the same reasoning that put
+    /// the player on the model instead of in the view hierarchy.
     func startClock() {
-        displayLink?.invalidate()
-        displayLink = nil
-        // NSScreen's display link, macOS 14+. CVDisplayLink is deprecated from 15 and this is the
-        // supported replacement at our deployment target.
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
-            log.error("no screen to drive playback from — the preview cannot update")
-            return
+        clock?.invalidate()
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         }
-        let link = screen.displayLink(target: self, selector: #selector(tick))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
+        RunLoop.main.add(timer, forMode: .common)
+        clock = timer
     }
 
-    @objc private func tick() {
+    private func tick() {
         let now = CACurrentMediaTime()
         let elapsed = lastTickHostTime.map { now - $0 } ?? 0
         lastTickHostTime = now

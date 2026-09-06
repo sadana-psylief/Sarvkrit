@@ -31,7 +31,11 @@ enum PlaybackClock {
         let span = max(0, duration)
         let moved = playhead + elapsed * Double(rate)
         let clamped = min(max(0, moved), span)
-        return Step(playhead: clamped, reachedEnd: moved >= span || moved <= 0)
+        // **Which end depends on which way we are going.** Checking both unconditionally meant the
+        // first tick of every playback — elapsed zero, playhead zero — read as having reached the
+        // start, and paused before anything moved.
+        let reachedEnd = rate < 0 ? moved <= 0 : moved >= span
+        return Step(playhead: clamped, reachedEnd: reachedEnd)
     }
 
     /// Whether the player is far enough from where the project wants it to be worth a seek.
