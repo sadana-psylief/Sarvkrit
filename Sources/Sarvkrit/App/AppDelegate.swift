@@ -103,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let urlLog = Logger(subsystem: AppIdentity.logSubsystem, category: "URLScheme")
     private static let captureLog = Logger(subsystem: AppIdentity.logSubsystem, category: "Capture")
+    private static let recordingLog = Logger(subsystem: AppIdentity.logSubsystem,
+                                             category: "Recording")
 
     /// Registers the background update check, and repairs it when it has gone missing.
     ///
@@ -224,6 +226,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
 
         feature.startStop = { MainActor.assumeIsolated { Self.toggleRecording(feature) } }
+        // ⌃⇧⎋ takes everything down, and a running recording is part of everything. It stops and
+        // keeps the take rather than discarding it: an escape hatch should not destroy work.
+        CaptureOverlayGuard.shared.stopRecording = {
+            MainActor.assumeIsolated {
+                guard feature.recorder.isRecording else { return }
+                Self.stopRecording(feature)
+            }
+        }
         // The dedicated shortcut skips straight to the area picker rather than making somebody
         // change the segmented control every time.
         feature.recordArea = {
@@ -269,6 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func toggleRecording(_ feature: ScreenRecordingFeature,
                                         forcing source: RecordingSource? = nil) {
         guard !feature.recorder.isRecording else { return stopRecording(feature) }
+        // A start already in flight is neither a stop nor a reason to put the bar back up.
+        // `isRecording` is only set once the stream is live, two `await`s later.
+        guard !feature.recorder.isStarting else { return }
         if PreRecordBarController.shared.isShowing {
             return PreRecordBarController.shared.dismiss()
         }
@@ -296,8 +309,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         case .area:
             Task { @MainActor in
-                guard let frames = try? await capturer.snapshotAllDisplays(
-                    options: CaptureOptions()) else { return }
+                let frames: [DisplayFrame]
+                do {
+                    frames = try await capturer.snapshotAllDisplays(options: CaptureOptions())
+                } catch {
+                    // Swallowed with `try?` until now, so a refused screen grant put nothing at
+                    // all on screen — which is exactly the "I do not see the area" report.
+                    let described = String(describing: error)
+                    recordingLog.error("couldn't freeze the screen to aim: \(described, privacy: .public)")
+                    let failure = RecordingFailureMessage.describe(error)
+                    ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
+                    return
+                }
                 CaptureOverlayController.shared.present(
                     frames: frames,
                     chrome: .init(showsCrosshair: true, showsMagnifier: true,
@@ -313,7 +336,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         case .window:
             Task { @MainActor in
-                guard let windows = try? await capturer.shareableWindows() else { return }
+                let windows: [CapturableWindow]
+                do {
+                    windows = try await capturer.shareableWindows()
+                } catch {
+                    let described = String(describing: error)
+                    recordingLog.error("couldn't list windows to aim: \(described, privacy: .public)")
+                    let failure = RecordingFailureMessage.describe(error)
+                    ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
+                    return
+                }
                 WindowPickerListController.shared.present(
                     windows: windows,
                     thumbnail: { _ in nil }
@@ -369,19 +401,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if ScreenRecordingRelaunch.looksLikeStaleGrant(
                     preflightGranted: AppState.shared.permissions.canCaptureScreen,
                     capturedDisplayCount: 0) {
+                    // Said out loud first. `relaunch()` terminates us, and an app that quits and
+                    // reappears with no explanation is indistinguishable from one that crashed.
+                    recordingLog.error("screen grant looks stale — relaunching")
+                    ToastPresenter.shared.show("Restarting to pick up screen access",
+                                               symbolName: "arrow.clockwise")
                     ScreenRecordingRelaunch.relaunch()
                 } else {
                     AppState.shared.permissions.request(.screenRecording)
                 }
-            } catch RecordingError.outOfSpace(let free) {
-                let gigabytes = Double(free) / 1_000_000_000
-                ToastPresenter.shared.show(String(format: "Only %.1f GB free", gigabytes),
-                                           symbolName: "externaldrive.badge.exclamationmark")
-            } catch RecordingError.windowGone {
-                ToastPresenter.shared.show("That window has gone", symbolName: "macwindow.badge.plus")
             } catch {
-                ToastPresenter.shared.show("Couldn't start recording",
-                                           symbolName: "exclamationmark.triangle")
+                // Logged as well as shown, like the screenshot path: the toast tells the user
+                // something went wrong, and only this says what. Diagnosing the last failure took
+                // a crash report because this line did not exist.
+                let described = String(describing: error)
+                recordingLog.error("couldn't start recording: \(described, privacy: .public)")
+                let failure = RecordingFailureMessage.describe(error)
+                ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
             }
         }
     }

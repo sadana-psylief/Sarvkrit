@@ -70,6 +70,12 @@ final class CaptureOverlayGuard {
             || PreRecordBarController.shared.isShowing
     }
 
+    /// Set by `AppDelegate`, because nothing in the UI layer knows about the recorder.
+    ///
+    /// Nil until then, and `dismissEverything()` tolerates that — a nil closure is how a
+    /// not-yet-wired half of the app is absent rather than crashing.
+    var stopRecording: (() -> Void)?
+
     /// Takes everything down. Safe to call at any time, including when nothing is up.
     ///
     /// Unlocks before closing so a pin that ignores mouse events cannot survive as an invisible
@@ -85,6 +91,11 @@ final class CaptureOverlayGuard {
         CaptureHistoryWindowController.shared.dismiss()
         TextResultController.shared.dismiss()
         WindowPickerListController.shared.dismiss()
+        // The recording is stopped, not merely un-displayed. Dismissing the HUD alone left
+        // `isRecording` true with nothing on screen saying so, and the next ⌃⇧R then hit the
+        // "already recording, so this is a stop" branch — a shortcut that silently did nothing
+        // visible, twice in a row.
+        if RecordingHUDController.shared.isShowing { stopRecording?() }
         RecordingHUDController.shared.dismiss()
         PreRecordBarController.shared.dismiss()
         // System-wide, not just AppKit's: the overlay hides the pointer with CGDisplayHideCursor

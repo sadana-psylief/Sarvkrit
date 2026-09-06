@@ -38,7 +38,7 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     /// True from the moment `start` is entered until it has either succeeded or cleaned up.
     /// `isRecording` is only set once the stream is live, and there are two `await`s before that,
     /// so without this a second ⌃⇧R during a start walked straight past the guard.
-    private var isStarting = false
+    private(set) var isStarting = false
 
     /// Maps a global AppKit point into the recording's pixel space. Nil means outside.
     private var mapPoint: (@Sendable (CGPoint) -> CGPoint?)?
