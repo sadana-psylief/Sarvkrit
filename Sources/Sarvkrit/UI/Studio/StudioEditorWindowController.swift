@@ -188,6 +188,17 @@ final class StudioEditorController {
 
     var openCount: Int { controllers.count }
 
+    /// The most recently opened editor, for `sarvkrit://seek`.
+    var newest: StudioEditorWindowController? { controllers.last }
+
+    /// Moves the newest editor's playhead. Returns false when there is no editor open.
+    @discardableResult
+    func seek(to output: TimeInterval) -> Bool {
+        guard let controller = controllers.last else { return false }
+        controller.model.player.scrub(to: output)
+        return true
+    }
+
     /// Opens a finished recording.
     func open(_ bundle: RecordingBundle) {
         guard let manifest = try? bundle.readManifest() else { return }

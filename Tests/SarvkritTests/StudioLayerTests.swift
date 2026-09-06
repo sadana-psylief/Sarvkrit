@@ -83,6 +83,22 @@ final class StudioLayerTests: XCTestCase {
         XCTAssertEqual(state.opacity, 1, accuracy: 0.001)
     }
 
+    /// **The camera holds still while the frame zooms.** It is drawn in canvas space, so a zoom can
+    /// never move it — but `pipRect` also scaled it, and the default `sizeDuringZoom` of `.shrink`
+    /// meant it quietly got smaller every time the auto-zoom fired. Watching your own face change
+    /// size whenever the picture pushes in reads as a bug, because it is one.
+    ///
+    /// The setting keeps all three options; only the default changed.
+    func testTheCameraDoesNotChangeSizeWhenTheFrameZooms() throws {
+        let atRest = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 1, segments: [], settings: camera(), canvas: canvas, zoom: 1))
+        let zoomed = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 1, segments: [], settings: camera(), canvas: canvas, zoom: 2.5))
+
+        XCTAssertEqual(zoomed.rect, atRest.rect,
+                       "the camera changed size or position under a zoom")
+    }
+
     func testAHiddenSegmentDrawsNoCamera() {
         let hidden = CameraSegment(start: 0, end: 5, layout: .hidden)
         XCTAssertNil(CameraLayoutResolver.state(at: 2, segments: [hidden],
@@ -110,11 +126,17 @@ final class StudioLayerTests: XCTestCase {
 
     /// **The camera shrinks when the frame zooms in, not the other way round.** A zoom exists to
     /// show something, and the camera covering it defeats the zoom.
+    ///
+    /// Asked for explicitly, because this is no longer the default — a camera that changes size
+    /// whenever the auto-zoom fires reads as a glitch. See
+    /// `testTheCameraDoesNotChangeSizeWhenTheFrameZooms`.
     func testTheCameraShrinksWhileTheFrameIsZoomed() throws {
+        var shrinking = camera()
+        shrinking.sizeDuringZoom = .shrink
         let atRest = try XCTUnwrap(CameraLayoutResolver.state(
-            at: 1, segments: [], settings: camera(), canvas: canvas, zoom: 1))
+            at: 1, segments: [], settings: shrinking, canvas: canvas, zoom: 1))
         let zoomed = try XCTUnwrap(CameraLayoutResolver.state(
-            at: 1, segments: [], settings: camera(), canvas: canvas, zoom: 2.5))
+            at: 1, segments: [], settings: shrinking, canvas: canvas, zoom: 2.5))
         XCTAssertLessThan(zoomed.rect.width, atRest.rect.width)
     }
 

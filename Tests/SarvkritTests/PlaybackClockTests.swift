@@ -79,14 +79,16 @@ final class PlaybackClockTests: XCTestCase {
 /// The clock itself, over a real file.
 final class StudioPlayerClockTests: XCTestCase {
 
-    /// **The test host has no key window, which is exactly the failing condition.** `NSScreen.main`
-    /// is nil here for the same reason it was nil when the editor opened, so a player whose clock
-    /// came from `NSScreen.main.displayLink` got nothing and never ticked again.
+    /// **The clock must not depend on window state at all.** It used to come from
+    /// `NSScreen.main.displayLink` — the screen holding the *key window* — and this player is built
+    /// before its window exists, in an accessory app that often has no key window, so it got nothing
+    /// and never ticked again.
+    ///
+    /// Deliberately asserts nothing about whether a key window happens to exist: that it no longer
+    /// matters is the whole point, and an earlier version of this test asserted the absence of one
+    /// and then broke the moment a sibling suite opened a real editor window.
     @MainActor
     func testAPlayerGetsAClockEvenWithNoKeyWindow() {
-        XCTAssertNil(NSApplication.shared.keyWindow,
-                     "precondition: this suite is meaningful only without a key window")
-
         let player = StudioPlayer(url: FileManager.default.temporaryDirectory
             .appendingPathComponent("no-such-recording.mov"))
 

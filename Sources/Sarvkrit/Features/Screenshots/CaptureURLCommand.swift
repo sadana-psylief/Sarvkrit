@@ -47,6 +47,11 @@ enum CaptureURLCommand: Equatable {
     case record(RecordingSource, windowID: CGWindowID?)
     /// Stops the recording in progress and opens it in the editor.
     case stopRecording
+    /// Moves the open editor's playhead, in seconds.
+    ///
+    /// **The scriptable form of dragging the scrubber**, which is otherwise unreachable without a
+    /// mouse — and therefore untestable on a machine that refuses synthetic input.
+    case seek(TimeInterval)
 
     static let scheme = "sarvkrit"
 
@@ -61,6 +66,7 @@ enum CaptureURLCommand: Equatable {
         case .captureRect: return "capture-area"
         case .record: return "record"
         case .stopRecording: return "stop-recording"
+        case .seek: return "seek"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -85,7 +91,7 @@ enum CaptureURLCommand: Equatable {
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
             + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
-               .cancel, .record(.display, windowID: nil), .stopRecording]
+               .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0)]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -145,6 +151,16 @@ enum CaptureURLCommand: Equatable {
         return CGWindowID(value)
     }
 
+    /// Refused rather than clamped when absent or negative: a script that computed a time wrongly
+    /// should move nothing, the same rule the rest of this parser follows.
+    private static func seconds(from url: URL) -> TimeInterval? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "t" })?.value,
+            let value = Double(raw), value >= 0, value.isFinite
+        else { return nil }
+        return value
+    }
+
     static func parse(_ url: URL) -> CaptureURLCommand? {
         guard url.scheme?.lowercased() == scheme else { return nil }
 
@@ -161,6 +177,7 @@ enum CaptureURLCommand: Equatable {
         if name == "open-from-clipboard" { return .openFromClipboard }
         if name == "open-settings" { return .openSettings }
         if name == "stop-recording" { return .stopRecording }
+        if name == "seek" { return seconds(from: url).map { .seek($0) } }
         if name == "record" {
             guard let source = recordingSource(from: url) else { return nil }
             return .record(source, windowID: windowID(from: url))

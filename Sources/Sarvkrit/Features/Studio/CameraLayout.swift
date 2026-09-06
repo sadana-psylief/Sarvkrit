@@ -18,8 +18,12 @@ struct CameraSettings: Codable, Equatable {
 
     /// What happens to the camera while the frame is zoomed in.
     enum ZoomSizing: String, Codable, CaseIterable, Equatable {
-        /// **The default, and the opposite of the instinct.** A zoom exists to show something, and
-        /// the camera covering it defeats the zoom.
+        /// A zoom exists to show something, and the camera covering it defeats the zoom.
+        ///
+        /// **No longer the default, and the argument against it is stronger.** A camera that
+        /// quietly changes size every time the auto-zoom fires reads as a glitch — you notice your
+        /// own face breathing in and out and cannot tell why. Holding still is the calmer default;
+        /// this stays for anyone who prefers the trade.
         case shrink
         case hold
         case grow
@@ -55,7 +59,8 @@ struct CameraSettings: Codable, Equatable {
     var shadow: CaptureBackground.Shadow? = CaptureBackground.Shadow()
     /// Front cameras look wrong un-mirrored.
     var mirrored = true
-    var sizeDuringZoom: ZoomSizing = .shrink
+    /// **Fixed by default.** See `ZoomSizing.shrink` for the argument this reverses.
+    var sizeDuringZoom: ZoomSizing = .hold
     var fadeSeconds: TimeInterval = 0.35
     var removesBackground = false
 

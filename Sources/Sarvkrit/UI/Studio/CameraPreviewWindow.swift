@@ -26,13 +26,15 @@ final class CameraPreviewWindowController {
     /// the screen you are demonstrating alone.
     private static let side: CGFloat = 168
     private static let margin: CGFloat = 24
-    private static let captionHeight: CGFloat = 26
 
     func show(_ layer: AVCaptureVideoPreviewLayer, settings: CameraSettings = CameraSettings()) {
         dismiss()
 
         let side = Self.side
-        let size = NSSize(width: side, height: side + Self.captionHeight)
+        // Exactly the picture, nothing around it. It carried a white outline and a caption strip
+        // before, and against a busy screen the pair read as a box drawn over the work rather than
+        // as a camera. What the caption said now lives in the right-click menu.
+        let size = NSSize(width: side, height: side)
         guard let visible = ScreenPlacement.screenUnderPointer()?.visibleFrame else { return }
 
         // `unitPoint` runs 0…1 leading-to-trailing and top-to-bottom; AppKit's origin is at the
@@ -70,27 +72,19 @@ private struct CameraPreviewWindowView: View {
     let onHide: () -> Void
 
     var body: some View {
-        VStack(spacing: 4) {
-            CameraPreviewLayerView(layer: layer, mirrored: settings.mirrored)
-                .frame(width: side, height: side)
-                .clipShape(shape)
-                .overlay(shape.strokeBorder(Color.white.opacity(0.35), lineWidth: 2))
-                .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
-
-            // **Said plainly, because the alternative is a confusing few minutes.** This window is
-            // excluded from the capture like every other window of ours, so it will not appear in
-            // the finished video — and without a label, the first question after a take is why
-            // there is a hole where the camera was.
-            Text("Preview · not in the video")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .padding(.top, 2)
-        .help("Right-click to hide. This preview is not part of the recording.")
-        .contextMenu {
-            Button("Hide Preview", action: onHide)
-        }
+        CameraPreviewLayerView(layer: layer, mirrored: settings.mirrored)
+            .frame(width: side, height: side)
+            .clipShape(shape)
+            .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+            .help("This preview is not part of the recording. Right-click to hide it.")
+            .contextMenu {
+                // **Where the caption went.** The point still has to be reachable — "why is there a
+                // hole where the camera was" is a confusing few minutes otherwise — but it does not
+                // have to sit on screen through the whole take.
+                Text("This preview is not in the recording")
+                Divider()
+                Button("Hide Preview", action: onHide)
+            }
     }
 
     /// One shape for all three settings: a circle is a rounded rectangle whose radius is half its

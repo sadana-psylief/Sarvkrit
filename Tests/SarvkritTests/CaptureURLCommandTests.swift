@@ -319,6 +319,25 @@ final class RecordingURLCommandTests: XCTestCase {
         XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=webcam")!))
     }
 
+    /// Moving the editor's playhead from a script.
+    ///
+    /// **This exists so the seekbar can be verified at all.** Three rounds of editor bugs have been
+    /// reported and none could be reproduced here, because this machine refuses synthetic input —
+    /// there is no way to drag a scrubber from a script. This is the smallest thing that makes the
+    /// picture-follows-the-handle question answerable without a mouse.
+    func testSeekTakesATimeInSeconds() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://seek?t=22.5")!),
+                       .seek(22.5))
+    }
+
+    func testSeekWithoutATimeIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://seek")!))
+    }
+
+    func testANegativeSeekIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://seek?t=-3")!))
+    }
+
     func testStopIsItsOwnCommand() {
         XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
                        .stopRecording)
