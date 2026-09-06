@@ -283,3 +283,51 @@ final class CaptureThumbnailCacheTests: XCTestCase {
         XCTAssertNil(store.thumbnail(for: item, height: 240))
     }
 }
+
+/// The recording commands.
+///
+/// **These exist so recording can be driven from a script**, which every previous round of
+/// debugging this feature needed and did not have — each one depended on somebody reproducing the
+/// failure by hand and describing what they saw.
+///
+/// The window selector is the part that matters: the failure that started all this was a *window*
+/// recording with a camera selected, and without a way to name a window a script cannot reach it.
+final class RecordingURLCommandTests: XCTestCase {
+
+    func testRecordDefaultsToTheWholeDisplay() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://record")!),
+                       .record(.display, windowID: nil))
+    }
+
+    func testEachSourceIsReachable() {
+        for source in RecordingSource.allCases {
+            XCTAssertEqual(
+                CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=\(source.rawValue)")!),
+                .record(source, windowID: nil))
+        }
+    }
+
+    func testAWindowCanBeNamedByID() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=window&window=4231")!),
+            .record(.window, windowID: 4231))
+    }
+
+    /// A source we do not have is not silently a display recording: a typo in a script should do
+    /// nothing, the same rule the rest of this parser follows.
+    func testAnUnknownSourceIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=webcam")!))
+    }
+
+    func testStopIsItsOwnCommand() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
+                       .stopRecording)
+    }
+
+    /// Both appear in the settings list, so neither is a command only its author knows about.
+    func testBothAreListed() {
+        let names = CaptureURLCommand.all.map(\.name)
+        XCTAssertTrue(names.contains("record"))
+        XCTAssertTrue(names.contains("stop-recording"))
+    }
+}

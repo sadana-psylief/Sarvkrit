@@ -65,6 +65,8 @@ struct CaptureAutomationSection: View {
         case .openFromClipboard: return "Annotate Clipboard Image"
         case .openSettings: return "Open Settings"
         case .captureRect: return "Capture Area"
+        case .record: return "Start Recording"
+        case .stopRecording: return "Stop Recording"
         case .action(let action): return action.title
         }
     }

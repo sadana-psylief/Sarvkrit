@@ -68,6 +68,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     await Self.captureRect(rect, displayIndex: displayIndex, with: screenshots)
                 }
+            case .record(let source, let windowID):
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                Task { @MainActor in await Self.record(source, windowID: windowID, with: recording) }
+            case .stopRecording:
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                guard recording.recorder.isRecording else {
+                    Self.urlLog.error("stop-recording with nothing recording")
+                    return
+                }
+                Self.stopRecording(recording)
             }
         }
     }
@@ -420,6 +432,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
             }
         }
+    }
+
+    /// Starts a recording without the pre-record bar, for `sarvkrit://record`.
+    ///
+    /// Skips the bar and the countdown deliberately: a script that has asked to record has already
+    /// made both of those decisions, and an unattended run should not wait for a click.
+    @MainActor
+    private static func record(_ source: RecordingSource, windowID: CGWindowID?,
+                               with feature: ScreenRecordingFeature) async {
+        guard !feature.recorder.isRecording, !feature.recorder.isStarting else {
+            urlLog.error("record while one is already starting or running")
+            return
+        }
+        let capturer = AppState.shared.features
+            .compactMap { $0 as? ScreenshotFeature }.first?.capturer ?? SCKScreenCaptureService()
+
+        var window: CapturableWindow?
+        if source == .window {
+            do {
+                let windows = try await capturer.shareableWindows()
+                // Named by id, or else the frontmost window that is not one of ours — a script
+                // has no way to learn a window id ahead of time, and refusing without one would
+                // make the common case unreachable.
+                window = windowID.flatMap { id in windows.first { $0.id == id } }
+                    ?? WindowListFilter.presentable(windows)
+                        .first { $0.owningBundleID != AppIdentity.bundleID }
+            } catch {
+                let described = String(describing: error)
+                urlLog.error("couldn't list windows for record: \(described, privacy: .public)")
+            }
+            guard window != nil else {
+                ToastPresenter.shared.show("No window to record",
+                                           symbolName: "macwindow.badge.plus")
+                return
+            }
+        }
+
+        // Area from a script means the whole display: there is nobody to drag a selection.
+        let effective: RecordingSource = source == .area ? .display : source
+        feature.setup.source = effective
+        start(feature, setup: feature.setup, areaRect: nil, display: nil, window: window)
     }
 
     @MainActor

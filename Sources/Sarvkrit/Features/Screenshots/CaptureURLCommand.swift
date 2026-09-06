@@ -38,6 +38,15 @@ enum CaptureURLCommand: Equatable {
     case openFromClipboard
     /// Sarvkrit's own window, on the Capture pane.
     case openSettings
+    /// Starts a recording, skipping the pre-record bar — camera, microphone and countdown are
+    /// whatever the settings already say.
+    ///
+    /// **The window selector is the point.** Recording a *window* is the case that has been
+    /// hardest to diagnose, and without a way to name one from a script it can only be reached by
+    /// hand. Nil with `.window` means the frontmost window that is not one of ours.
+    case record(RecordingSource, windowID: CGWindowID?)
+    /// Stops the recording in progress and opens it in the editor.
+    case stopRecording
 
     static let scheme = "sarvkrit"
 
@@ -50,6 +59,8 @@ enum CaptureURLCommand: Equatable {
         case .openFromClipboard: return "open-from-clipboard"
         case .openSettings: return "open-settings"
         case .captureRect: return "capture-area"
+        case .record: return "record"
+        case .stopRecording: return "stop-recording"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -74,7 +85,7 @@ enum CaptureURLCommand: Equatable {
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
             + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
-               .cancel]
+               .cancel, .record(.display, windowID: nil), .stopRecording]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -116,6 +127,24 @@ enum CaptureURLCommand: Equatable {
         return index
     }
 
+    /// Absent means the whole display, which is the right default for an unattended script.
+    /// A source we do not have returns nil rather than falling back — a typo should record
+    /// nothing, the same rule the rest of this parser follows.
+    private static func recordingSource(from url: URL) -> RecordingSource? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "source" })?.value, !raw.isEmpty
+        else { return .display }
+        return RecordingSource(rawValue: raw.lowercased())
+    }
+
+    private static func windowID(from url: URL) -> CGWindowID? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "window" })?.value,
+              let value = UInt32(raw)
+        else { return nil }
+        return CGWindowID(value)
+    }
+
     static func parse(_ url: URL) -> CaptureURLCommand? {
         guard url.scheme?.lowercased() == scheme else { return nil }
 
@@ -131,6 +160,11 @@ enum CaptureURLCommand: Equatable {
         if name == "open-annotate" { return .openAnnotate(filepath(from: url)) }
         if name == "open-from-clipboard" { return .openFromClipboard }
         if name == "open-settings" { return .openSettings }
+        if name == "stop-recording" { return .stopRecording }
+        if name == "record" {
+            guard let source = recordingSource(from: url) else { return nil }
+            return .record(source, windowID: windowID(from: url))
+        }
         if let match = names.first(where: { $0.value == name })?.key {
             // All four or none. Three of them is a script with a bug in it, and guessing the
             // fourth would take a screenshot of the wrong thing rather than saying so.
