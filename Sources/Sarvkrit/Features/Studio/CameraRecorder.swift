@@ -9,7 +9,10 @@ import os
 /// its shape, or drop it entirely — none of which is possible once it has been composited in.
 @MainActor
 final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
-    private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Recording")
+    /// Nonisolated: `os.Logger` is Sendable, and the delegate callback below arrives on
+    /// AVFoundation's own queue.
+    private nonisolated let log = Logger(subsystem: AppIdentity.logSubsystem,
+                                         category: "Recording")
 
     private var session: AVCaptureSession?
     private var movieOutput: AVCaptureMovieFileOutput?
@@ -89,9 +92,10 @@ final class CameraRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
                                 from connections: [AVCaptureConnection],
                                 error: Error?) {
         guard let error else { return }
-        MainActor.assumeIsolated {
-            log.error("camera recording failed: \(error.localizedDescription, privacy: .public)")
-        }
+        // Logged straight from AVFoundation's queue. Hopping to the main actor to write a line —
+        // and asserting our way onto it — turned "the camera recording failed" into "the app
+        // died", which is a strictly worse outcome for the same event.
+        log.error("camera recording failed: \(error.localizedDescription, privacy: .public)")
     }
 }
 

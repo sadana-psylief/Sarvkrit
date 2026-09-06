@@ -92,7 +92,7 @@ final class PreRecordModel: ObservableObject {
         guard let id = setup?.cameraID,
               let device = cameras.first(where: { $0.uniqueID == id }) else { return }
         preview = CameraPreviewSession(device: device) { [weak self] image in
-            self?.previewFrame = image
+            Task { @MainActor in self?.previewFrame = image }
         }
     }
 

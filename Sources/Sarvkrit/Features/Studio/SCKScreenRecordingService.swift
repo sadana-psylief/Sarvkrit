@@ -15,7 +15,10 @@ import os
 @MainActor
 final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput, SCStreamDelegate {
 
-    private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Recording")
+    /// Nonisolated: ScreenCaptureKit's delegate callbacks arrive on its own queue, and
+    /// `os.Logger` is Sendable.
+    private nonisolated let log = Logger(subsystem: AppIdentity.logSubsystem,
+                                         category: "Recording")
 
     /// Nonisolated so `FeatureRegistry.makeAll()` — which is not on the main actor — can build the
     /// feature that owns it. Nothing here touches the main actor until a recording starts.
@@ -204,9 +207,9 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
-        MainActor.assumeIsolated {
-            log.error("stream stopped: \(error.localizedDescription, privacy: .public)")
-        }
+        // Same trap as the frame handler had, on the path that runs when a display is unplugged
+        // mid-recording — so the error that should have ended the take cleanly ended the app.
+        log.error("stream stopped: \(error.localizedDescription, privacy: .public)")
     }
 
     // MARK: - Cursor sampling
