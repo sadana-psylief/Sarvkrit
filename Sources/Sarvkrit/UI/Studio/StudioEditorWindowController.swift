@@ -67,6 +67,12 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
 
     private static var openCount = 0
 
+    /// Brings an already-open editor forward.
+    func focus() {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
     // MARK: - Playback
 
     private func togglePlayback() { model.player.toggle() }
@@ -222,6 +228,11 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         monitor = nil
         model.player.pause()
         ActivationPolicyLease.shared.release()
+        // **Say that it was kept.** The autosave was always real and always silent, and "if I
+        // close a recording without editing, what happens is not clear" is exactly what silence
+        // buys. Named after the file, so the sentence points at something findable.
+        ToastPresenter.shared.show("\(model.bundle.root.deletingPathExtension().lastPathComponent) saved — reopen it any time",
+                                   symbolName: "tray.and.arrow.down")
         onClose(self)
     }
 }
@@ -281,8 +292,16 @@ final class StudioEditorController {
     }
 
     /// Opens a finished recording.
-    func open(_ bundle: RecordingBundle) {
-        guard let manifest = try? bundle.readManifest() else { return }
+    @discardableResult
+    func open(_ bundle: RecordingBundle) -> Bool {
+        // **The same recording twice is the same window.** Double-clicking a file twice, or
+        // opening from the list what is already on screen, must not produce two editors over one
+        // bundle — they would autosave over each other, and the last one to close would win.
+        if let existing = controllers.first(where: { $0.model.bundle.root == bundle.root }) {
+            existing.focus()
+            return true
+        }
+        guard let manifest = try? bundle.readManifest() else { return false }
         let events = (try? bundle.readEvents()) ?? EventLog()
         let model = StudioDocumentModel(bundle: bundle, manifest: manifest, events: events)
         let controller = StudioEditorWindowController(model: model) { [weak self] finished in
@@ -290,5 +309,22 @@ final class StudioEditorController {
         }
         controllers.append(controller)
         controller.show()
+        return true
+    }
+
+    /// Opens a `.sarvrec` from the Finder, the recordings list, or an Open panel.
+    ///
+    /// Says so when it cannot, rather than returning quietly: a double-click that does nothing at
+    /// all is the state this whole change exists to end.
+    func open(fileAt url: URL) {
+        guard RecordingBundle(root: url).canBeOpened else {
+            ToastPresenter.shared.show("That recording can't be opened",
+                                       symbolName: "exclamationmark.triangle")
+            return
+        }
+        if !open(RecordingBundle(root: url)) {
+            ToastPresenter.shared.show("That recording can't be opened",
+                                       symbolName: "exclamationmark.triangle")
+        }
     }
 }

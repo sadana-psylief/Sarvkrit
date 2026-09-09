@@ -163,6 +163,17 @@ struct RecordingBundle: Equatable {
         try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
     }
 
+    /// Whether this is a recording the editor can actually open.
+    ///
+    /// A `.sarvrec` with no readable manifest is a failed take: there is nothing to play and no
+    /// canvas size to lay a project out in. Checked before opening so a double-click that cannot
+    /// work says so instead of doing nothing.
+    var canBeOpened: Bool {
+        guard let manifest = try? readManifest() else { return false }
+        return manifest.duration > 0
+            && FileManager.default.fileExists(atPath: screenURL.path)
+    }
+
     func readManifest() throws -> RecordingManifest {
         try JSONDecoder().decode(RecordingManifest.self, from: Data(contentsOf: manifestURL))
     }

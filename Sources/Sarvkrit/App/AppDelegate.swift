@@ -23,9 +23,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reconcileUpdateAgent()
         observeActivation()
 
+        // Anything the Finder handed us before this point can be opened now. See
+        // `application(_:open:)` for why it has to wait.
+        hasFinishedLaunching = true
+        let waiting = pendingRecordings
+        pendingRecordings = []
+        for url in waiting { StudioEditorController.shared.open(fileAt: url) }
+
         guard !AppState.shared.hasCompletedOnboarding else { return }
         MainWindowController.shared.show()
     }
+
+    /// Recordings the Finder asked for before the app had finished starting up.
+    ///
+    /// **`application(_:open:)` fires before `applicationDidFinishLaunching` returns** when the
+    /// app is launched by double-clicking a file — which is the very first thing a Finder user
+    /// does. Opening an editor from inside a half-wired app is not worth the risk, so the URL
+    /// waits the few milliseconds until launch is done.
+    private var pendingRecordings: [URL] = []
+    private var hasFinishedLaunching = false
 
     /// The `sarvkrit://` URL scheme.
     ///
@@ -37,6 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `LSMultipleInstancesProhibited` is not in the way.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
+            // A recording opened from the Finder, an Open panel or the recordings list. Files
+            // arrive down the same delegate method as the URL scheme, so they are sorted here.
+            if url.isFileURL, url.pathExtension == RecordingBundle.fileExtension {
+                Self.urlLog.info("open recording via file")
+                if hasFinishedLaunching {
+                    StudioEditorController.shared.open(fileAt: url)
+                } else {
+                    pendingRecordings.append(url)
+                }
+                continue
+            }
             guard let command = CaptureURLCommand.parse(url) else {
                 Self.urlLog.error("ignored \(url.absoluteString, privacy: .public)")
                 continue

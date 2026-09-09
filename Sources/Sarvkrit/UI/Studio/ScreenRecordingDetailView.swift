@@ -52,6 +52,8 @@ struct ScreenRecordingDetailView: View {
                 .foregroundStyle(.secondary)
             }
 
+            RecordingsList()
+
             Section("Shortcuts") {
                 ForEach(RecordingAction.allCases) { action in
                     LabeledContent(action.title) {
