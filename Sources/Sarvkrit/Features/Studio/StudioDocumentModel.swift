@@ -122,6 +122,8 @@ final class StudioDocumentModel: ObservableObject {
     @Published private(set) var leadInNotice: TimeInterval?
 
     private var undoStack: UndoStack<StudioProject>
+    /// The pending soundtrack rebuild, so a burst of edits produces one.
+    private var soundtrackRebuild: Task<Void, Never>?
     /// The project exactly as it opened, for "undo every edit".
     ///
     /// Kept here rather than read back off the undo stack, whose history is trimmed at its depth —
@@ -234,12 +236,51 @@ final class StudioDocumentModel: ObservableObject {
         var updated = project
         change(&updated)
         guard updated != project else { return }
+        // Asked before the assignment, since the soundtrack is cut to the timeline and a trim, a
+        // speed change or a volume slider all make the loaded one play the previous edit.
+        let soundChanged = updated.timeline != project.timeline
         undoStack.commit(updated)
         project = updated
         revision &+= 1
         player.duration = updated.duration
         isDirty = true
         saver.schedule(updated)
+        if soundChanged { scheduleSoundtrackRebuild() }
+    }
+
+    /// Builds the project's soundtrack and hands it to the player.
+    ///
+    /// **The composition the exporter uses, so the editor cannot sound different from the file.**
+    /// `StudioAudio.composition` already cuts, gain-stages and speed-scales the audio to match the
+    /// timeline, in output time — building anything simpler for preview is how an editor starts
+    /// lying about what it will produce.
+    ///
+    /// Nil is an ordinary answer: a screen-only take gets no soundtrack and pays for nothing.
+    func prepareSoundtrack() async {
+        let snapshot = project
+        guard let (asset, mix) = await StudioAudio.composition(project: snapshot,
+                                                               recording: bundle) else {
+            player.setSoundtrack(asset: nil, mix: nil)
+            return
+        }
+        // The edit may have moved on while the composition was being read off disk. Rebuilding is
+        // cheaper than playing the wrong one, and `scheduleSoundtrackRebuild` will come back.
+        guard snapshot.timeline == project.timeline else { return }
+        player.setSoundtrack(asset: asset, mix: mix)
+    }
+
+    /// Rebuilds the soundtrack after the edit settles.
+    ///
+    /// Debounced because composing reads the source assets, and because a volume slider being
+    /// dragged would otherwise ask for a hundred of them.
+    func scheduleSoundtrackRebuild() {
+        soundtrackRebuild?.cancel()
+        let work = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.prepareSoundtrack()
+        }
+        soundtrackRebuild = work
     }
 
     /// A change mid-gesture. Not an undo step — dragging a slider should cost one, not fifty.
@@ -256,6 +297,9 @@ final class StudioDocumentModel: ObservableObject {
     func endGesture() {
         undoStack.endTransaction(project)
         saver.schedule(project)
+        // A gesture goes through `editLive`, which deliberately skips the rebuild so dragging a
+        // clip edge does not recompose the audio sixty times a second. It happens once, here.
+        scheduleSoundtrackRebuild()
     }
 
     var canUndo: Bool { undoStack.canUndo }

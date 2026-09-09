@@ -17,6 +17,14 @@ enum PlaybackClock {
     /// and small enough that a cut lands within a couple of frames.
     static let resyncTolerance: TimeInterval = 0.05
 
+    /// The same question for the soundtrack, answered more loosely.
+    ///
+    /// **Correcting audio drift is audible.** A seek on the video player costs a decode nobody
+    /// notices; a seek on the audio player is a click in the middle of a word. So the soundtrack
+    /// rides through the drift a frame would be corrected for, and is only put back when it is far
+    /// enough out to hear as lip-sync error.
+    static let audioResyncTolerance: TimeInterval = 0.25
+
     struct Step: Equatable {
         var playhead: TimeInterval
         /// True at either end: forwards past the duration, or backwards past zero when shuttling.

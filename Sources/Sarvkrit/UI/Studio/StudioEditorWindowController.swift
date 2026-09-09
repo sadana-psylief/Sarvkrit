@@ -63,6 +63,11 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         installKeyMonitor()
+
+        // **Composed after the window is up, not before it.** Reading the audio off disk takes long
+        // enough to be felt, and an editor that opens a second late is worse than one whose sound
+        // arrives a moment after the picture.
+        Task { [model] in await model.prepareSoundtrack() }
     }
 
     private static var openCount = 0

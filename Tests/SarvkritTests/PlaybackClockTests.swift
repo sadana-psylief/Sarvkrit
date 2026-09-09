@@ -227,4 +227,32 @@ final class CameraTrackTimeTests: XCTestCase {
         let t = PlaybackClock.cameraTime(forSource: 5, startOffset: 0, cameraDuration: 30)
         XCTAssertEqual(try XCTUnwrap(t), 5, accuracy: 1e-9)
     }
+    // MARK: - Sound drifts differently
+
+    /// **Audio tolerates more drift than the picture, because correcting it is audible.** A seek
+    /// on a video player costs a decode; a seek on an audio player is a click in the middle of a
+    /// word. So the soundtrack is left alone through the drift a frame would be corrected for, and
+    /// resynced only when it is far enough out to hear as lip-sync error.
+    func testTheSoundtrackToleratesMoreDriftThanThePicture() {
+        XCTAssertGreaterThan(PlaybackClock.audioResyncTolerance, PlaybackClock.resyncTolerance)
+    }
+
+    func testASmallSoundtrackDriftIsLeftAlone() {
+        XCTAssertFalse(PlaybackClock.needsResync(
+            playerTime: 5.1, wanted: 5.0,
+            tolerance: PlaybackClock.audioResyncTolerance))
+    }
+
+    /// Far enough out to hear. A third of a second of lip-sync error is obvious on speech.
+    func testALargeSoundtrackDriftIsCorrected() {
+        XCTAssertTrue(PlaybackClock.needsResync(
+            playerTime: 5.4, wanted: 5.0,
+            tolerance: PlaybackClock.audioResyncTolerance))
+    }
+
+    /// And the same drift would have been corrected for the picture, which is the point of having
+    /// two numbers rather than one.
+    func testThePictureIsCorrectedForDriftTheSoundtrackIgnores() {
+        XCTAssertTrue(PlaybackClock.needsResync(playerTime: 5.1, wanted: 5.0))
+    }
 }

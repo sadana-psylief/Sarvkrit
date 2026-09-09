@@ -50,6 +50,28 @@ final class StudioPlayer: ObservableObject {
     /// The most recently decoded camera frame, or nil where the camera was not running.
     private(set) var decodedCamera: CGImage?
 
+    /// The soundtrack: narration and system audio, cut to the timeline.
+    ///
+    /// **The composition the exporter builds, played as-is.** `StudioAudio.composition` already
+    /// returns the project's audio gain-staged, speed-scaled and offset to match the edit, in
+    /// *output* time — which is exactly what a preview needs. Playing anything else would be a
+    /// second audio path, and two paths are how an editor ends up sounding different from the file
+    /// it produces.
+    ///
+    /// On its own player for the same reason the camera is: the screen's item exists to decode
+    /// pictures, and its own track carries system audio at the recording's original gain with none
+    /// of the per-clip mixing applied.
+    private var soundtrackPlayer: AVPlayer?
+
+    /// Whether there is a soundtrack loaded at all. False for a screen-only take, which then costs
+    /// nothing.
+    var hasSoundtrack: Bool { soundtrackPlayer != nil }
+
+    /// Exposed for the same reason `isTicking` is: the absence of sound is silent, so it has to be
+    /// observable from outside to be diagnosable at all.
+    var soundtrackRate: Float? { soundtrackPlayer?.rate }
+    var soundtrackTime: TimeInterval? { soundtrackPlayer?.currentTime().seconds }
+
     /// Bumped whenever a new frame is ready, so the view knows to redraw without polling.
     @Published private(set) var frameToken = 0
     @Published private(set) var isPlaying = false
@@ -76,6 +98,11 @@ final class StudioPlayer: ObservableObject {
         player.actionAtItemEnd = .pause
         // Never displayed. AVPlayer is here for the decoder and the seek, not for its layer —
         // every frame goes through StudioRenderer before anybody sees it.
+        //
+        // **Muted on purpose, and no longer the reason the editor is silent.** This item's own
+        // audio track is the raw system audio at the recording's gain, positioned in source time
+        // and with no per-clip volume or mute applied. The soundtrack comes from
+        // `setSoundtrack(asset:mix:)` instead, which is the composition the export uses.
         player.isMuted = true
 
         if let cameraURL {
@@ -101,6 +128,44 @@ final class StudioPlayer: ObservableObject {
 
     deinit { clock?.invalidate() }
 
+    // MARK: - Sound
+
+    /// Hands the player the project's soundtrack. Nil clears it.
+    ///
+    /// Called again whenever the edit changes the sound — a trim, a speed change, a volume slider —
+    /// because the composition is cut to the timeline and a stale one plays the previous edit.
+    func setSoundtrack(asset: AVAsset?, mix: AVAudioMix?) {
+        soundtrackPlayer?.rate = 0
+        soundtrackPlayer = nil
+        guard let asset else { return }
+
+        let item = AVPlayerItem(asset: asset)
+        item.audioMix = mix
+        // Shuttling at 2× should stay intelligible rather than turning into chipmunks, and this is
+        // the algorithm that survives a rate change without artefacts on speech.
+        item.audioTimePitchAlgorithm = .timeDomain
+        let made = AVPlayer(playerItem: item)
+        made.actionAtItemEnd = .pause
+        soundtrackPlayer = made
+        // Straight to wherever the playhead already is, so turning the sound on mid-session does
+        // not start it from the beginning.
+        seekSoundtrack(to: playhead)
+        if isPlaying { made.rate = soundtrackRate(for: rate) }
+        log.info("soundtrack loaded")
+    }
+
+    /// **Output time, not source time.** The composition is already cut to the timeline, so its
+    /// clock is the playhead's. Seeking it like the video — which tracks source time — would put
+    /// every word out by however much the edit has trimmed.
+    private func seekSoundtrack(to output: TimeInterval) {
+        soundtrackPlayer?.seek(to: CMTime(seconds: max(0, output), preferredTimescale: 600),
+                               toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    /// Audio does not run backwards. `AVPlayer` refuses a negative rate for sound, and J on the
+    /// shuttle is for finding a frame rather than for listening, so reverse is silent.
+    private func soundtrackRate(for rate: Float) -> Float { rate > 0 ? rate : 0 }
+
     // MARK: - Transport
 
     func play() {
@@ -113,14 +178,17 @@ final class StudioPlayer: ObservableObject {
         if playhead >= duration - 0.01 { scrub(to: 0) }
         lastTickHostTime = nil
         player.rate = rate
-        // Both rates together: the camera runs alongside rather than being seeked frame by frame.
+        // All three rates together: the camera and the soundtrack run alongside rather than being
+        // seeked frame by frame.
         cameraPlayer?.rate = rate
+        soundtrackPlayer?.rate = soundtrackRate(for: rate)
         isPlaying = true
     }
 
     func pause() {
         player.rate = 0
         cameraPlayer?.rate = 0
+        soundtrackPlayer?.rate = 0
         isPlaying = false
     }
 
@@ -136,6 +204,7 @@ final class StudioPlayer: ObservableObject {
     func scrub(to output: TimeInterval) {
         playhead = min(max(0, output), max(0, duration))
         seek(to: sourceTime(playhead))
+        seekSoundtrack(to: playhead)
     }
 
     /// Bracketing a drag, so `tick()` and the drag do not write the playhead alternately.
@@ -212,6 +281,15 @@ final class StudioPlayer: ObservableObject {
             let wanted = sourceTime(playhead)
             if PlaybackClock.needsResync(playerTime: player.currentTime().seconds, wanted: wanted) {
                 seek(to: wanted)
+            }
+
+            // The soundtrack against the playhead, since it is cut to output time — and on a
+            // looser tolerance, because putting audio back is a click rather than a decode.
+            if let soundtrackPlayer,
+               PlaybackClock.needsResync(playerTime: soundtrackPlayer.currentTime().seconds,
+                                         wanted: playhead,
+                                         tolerance: PlaybackClock.audioResyncTolerance) {
+                seekSoundtrack(to: playhead)
             }
         }
 
