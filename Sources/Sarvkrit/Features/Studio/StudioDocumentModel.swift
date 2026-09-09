@@ -388,6 +388,20 @@ final class StudioDocumentModel: ObservableObject {
         }
     }
 
+    /// Per-clip timing: speed, a held last frame, and a dip to black at its cut.
+    func updateClip(_ id: Clip.ID, live: Bool = false, _ change: (inout Clip) -> Void) {
+        let apply: ((inout StudioProject) -> Void) -> Void = live ? editLive : edit
+        apply { project in
+            guard let index = project.timeline.clips.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            change(&project.timeline.clips[index])
+            // Speed is clamped where it is defined, so going through `setSpeed` keeps one rule.
+            let speed = project.timeline.clips[index].speed
+            project.timeline = project.timeline.setSpeed(id: id, speed)
+        }
+    }
+
     /// Moves a clip in the running order.
     func moveClip(from index: Int, to destination: Int) {
         edit { $0.timeline = $0.timeline.move(from: index, to: destination) }

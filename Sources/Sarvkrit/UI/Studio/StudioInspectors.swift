@@ -8,11 +8,55 @@ import SwiftUI
 struct CanvasInspector: View {
     @ObservedObject var model: StudioDocumentModel
 
+    private var selectedClip: Clip? {
+        model.project.timeline.clips.first { $0.id == model.selectedClip }
+    }
+
     private var shortSide: CGFloat {
         min(model.project.canvasSize.width, model.project.canvasSize.height)
     }
 
     var body: some View {
+        SectionHeader("Fades")
+        seconds("Fade in", value: Binding(
+            get: { model.project.fadeIn },
+            set: { value in model.editLive { $0.fadeIn = value } }),
+               range: 0...3)
+        seconds("Fade out", value: Binding(
+            get: { model.project.fadeOut },
+            set: { value in model.editLive { $0.fadeOut = value } }),
+               range: 0...3)
+        Text("The picture fades up from black and down to it, and the sound fades with it.")
+            .font(.system(size: Theme.Typography.caption))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+        if let clip = selectedClip {
+            SectionHeader("The Selected Clip")
+            seconds("Speed", value: Binding(
+                get: { clip.speed },
+                set: { value in model.updateClip(clip.id, live: true) { $0.speed = value } }),
+                   range: Clip.speedRange)
+            seconds("Hold last frame", value: Binding(
+                get: { clip.hold },
+                set: { value in model.updateClip(clip.id, live: true) { $0.hold = value } }),
+                   range: 0...5)
+            // Only meaningful where there is a cut before this clip.
+            if model.project.timeline.clips.first?.id != clip.id {
+                seconds("Dip to black at its cut", value: Binding(
+                    get: { clip.dipToBlack },
+                    set: { value in
+                        model.updateClip(clip.id, live: true) { $0.dipToBlack = value }
+                    }),
+                       range: 0...1.5)
+            }
+            Text("Hold keeps the last frame on screen — useful for pausing on a result while you "
+                 + "talk over it.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
         SectionHeader("Background")
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
                   spacing: 6) {
@@ -68,6 +112,20 @@ struct CanvasInspector: View {
 
     private func slider(_ title: String, value: Binding<CGFloat>,
                         range: ClosedRange<CGFloat>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+            Slider(value: value, in: range) { editing in
+                if editing { model.beginGesture() } else { model.endGesture() }
+            }
+        }
+    }
+
+    /// The same, for the timings — `Binding<CGFloat>` and `Binding<Double>` are not
+    /// interchangeable even though the values are.
+    private func seconds(_ title: String, value: Binding<Double>,
+                         range: ClosedRange<Double>) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.system(size: Theme.Typography.caption))

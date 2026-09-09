@@ -349,4 +349,47 @@ final class StudioRenderSnapshotTests: XCTestCase {
 
         XCTAssertEqual(png(try render(project(), at: 3)), png(try render(titled, at: 3)))
     }
+
+    // MARK: - Fades
+
+    /// **The wash reaches the frame, and only where it should.** A fade that darkened the middle
+    /// of the video, or one that never reached the picture at all, would both pass a test that
+    /// only checked the arithmetic.
+    func testAFadeDarkensTheFirstFrameAndNotTheMiddle() throws {
+        var faded = project()
+        faded.fadeIn = 1
+
+        let opening = try XCTUnwrap(StudioRenderer.frame(
+            of: faded, atSource: 0, events: events(),
+            sources: FrameSources(screen: try screen()), outputTime: 0))
+        let plainOpening = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 0, events: events(),
+            sources: FrameSources(screen: try screen()), outputTime: 0))
+        XCTAssertNotEqual(png(opening), png(plainOpening), "the fade never reached the picture")
+
+        let middle = try XCTUnwrap(StudioRenderer.frame(
+            of: faded, atSource: 5, events: events(),
+            sources: FrameSources(screen: try screen()), outputTime: 5))
+        let plainMiddle = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 5, events: events(),
+            sources: FrameSources(screen: try screen()), outputTime: 5))
+        XCTAssertEqual(png(middle), png(plainMiddle), "the fade darkened the middle of the video")
+
+        try write(opening, named: "studio-fade-in")
+    }
+
+    /// A frame rendered with no output time — a still, a thumbnail — carries no wash rather than
+    /// guessing at one.
+    func testWithoutAnOutputTimeThereIsNoWash() throws {
+        var faded = project()
+        faded.fadeIn = 1
+
+        let unwashed = try XCTUnwrap(StudioRenderer.frame(
+            of: faded, atSource: 0, events: events(),
+            sources: FrameSources(screen: try screen())))
+        let plain = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 0, events: events(),
+            sources: FrameSources(screen: try screen())))
+        XCTAssertEqual(png(unwashed), png(plain))
+    }
 }

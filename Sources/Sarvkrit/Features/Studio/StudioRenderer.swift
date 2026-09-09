@@ -78,7 +78,8 @@ enum StudioRenderer {
                       events: EventLog,
                       sources: FrameSources,
                       cache: Cache = Cache(),
-                      clipSource: Range<TimeInterval>? = nil) -> CGImage? {
+                      clipSource: Range<TimeInterval>? = nil,
+                      outputTime: TimeInterval? = nil) -> CGImage? {
         let (canvas, imageRect) = layout(for: project)
         guard canvas.width >= 1, canvas.height >= 1 else { return nil }
 
@@ -95,7 +96,7 @@ enum StudioRenderer {
 
         draw(project: project, sourceTime: sourceTime, events: events, sources: sources,
              canvas: canvas, imageRect: imageRect, in: context, cache: cache,
-             clipSource: clipSource)
+             clipSource: clipSource, outputTime: outputTime)
 
         return context.makeImage()
     }
@@ -108,7 +109,9 @@ enum StudioRenderer {
                      imageRect: CGRect,
                      in context: CGContext,
                      cache: Cache,
-                     clipSource: Range<TimeInterval>? = nil) {
+                     clipSource: Range<TimeInterval>? = nil,
+                     /// The moment in the *finished* video, which the fades and dips are placed in.
+                     outputTime: TimeInterval? = nil) {
 
         // 1 — background. Cached: it is the same picture every frame.
         drawBackground(project: project, canvas: canvas, sources: sources,
@@ -172,6 +175,18 @@ enum StudioRenderer {
         // Last, so hand-placed text sits above everything including the camera — which is what
         // somebody putting a title on a frame expects.
         drawTextOverlays(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
+
+        // **Last of all, over everything.** A fade to black that left the titles showing would not
+        // be a fade to black.
+        if let outputTime {
+            let alpha = FadeCurtain.alpha(atOutput: outputTime, duration: project.duration,
+                                          fadeIn: project.fadeIn, fadeOut: project.fadeOut,
+                                          dips: FadeCurtain.dips(in: project.timeline))
+            if alpha > 0.001 {
+                context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: CGFloat(alpha)))
+                context.fill(CGRect(origin: .zero, size: canvas))
+            }
+        }
     }
 
     // MARK: - Background

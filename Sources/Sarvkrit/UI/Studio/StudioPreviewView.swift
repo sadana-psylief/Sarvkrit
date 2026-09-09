@@ -152,7 +152,8 @@ final class StudioPreviewView: NSView {
                             imageRect: imageRect,
                             in: context,
                             cache: cache,
-                            clipSource: model.currentClipSource)
+                            clipSource: model.currentClipSource,
+                            outputTime: model.playhead)
         context.restoreGState()
     }
 }

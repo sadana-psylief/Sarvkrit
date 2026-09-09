@@ -24,6 +24,12 @@ struct Clip: Codable, Equatable, Identifiable {
     /// interpolation that makes a cursor look weightless also makes it appear to hover between
     /// items it never touched.
     var disablesCursorSmoothing = false
+    /// Seconds of dip to black at this clip's *start*, half either side of the cut.
+    ///
+    /// Belongs to the clip that starts at the cut, the same convention
+    /// `sourceTime(forOutput:)` uses for the boundary. Ignored on the first clip, which has no cut
+    /// before it — a fade in is the setting for that.
+    var dipToBlack: TimeInterval = 0
     /// Extra output seconds during which the clip's last frame is held.
     ///
     /// **A freeze frame, as one field rather than a new kind of clip.** It composes with speed and
@@ -48,7 +54,7 @@ struct Clip: Codable, Equatable, Identifiable {
     /// somebody's edits quietly disappearing. Caught by a test before it shipped, once.
     private enum Key: String, CodingKey {
         case id, sourceStart, sourceEnd, speed, volume, systemAudioVolume
-        case isMuted, hidesCursor, disablesCursorSmoothing, hold
+        case isMuted, hidesCursor, disablesCursorSmoothing, hold, dipToBlack
     }
 
     init(from decoder: Decoder) throws {
@@ -66,13 +72,15 @@ struct Clip: Codable, Equatable, Identifiable {
         hidesCursor = read(.hidesCursor, false)
         disablesCursorSmoothing = read(.disablesCursorSmoothing, false)
         hold = read(.hold, 0)
+        dipToBlack = read(.dipToBlack, 0)
     }
 
     /// Spelled out because the hand-written decoder above suppresses the memberwise one.
     init(id: UUID = UUID(), sourceStart: TimeInterval, sourceEnd: TimeInterval,
          speed: Double = 1, volume: Double = 1, systemAudioVolume: Double = 1,
          isMuted: Bool = false, hidesCursor: Bool = false,
-         disablesCursorSmoothing: Bool = false, hold: TimeInterval = 0) {
+         disablesCursorSmoothing: Bool = false, hold: TimeInterval = 0,
+         dipToBlack: TimeInterval = 0) {
         self.id = id
         self.sourceStart = sourceStart
         self.sourceEnd = sourceEnd
@@ -83,6 +91,7 @@ struct Clip: Codable, Equatable, Identifiable {
         self.hidesCursor = hidesCursor
         self.disablesCursorSmoothing = disablesCursorSmoothing
         self.hold = hold
+        self.dipToBlack = dipToBlack
     }
 
     var sourceDuration: TimeInterval { max(0, sourceEnd - sourceStart) }

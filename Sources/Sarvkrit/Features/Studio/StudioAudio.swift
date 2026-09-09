@@ -107,6 +107,23 @@ enum StudioAudio {
                 gain.setVolume(Float(max(0, min(1, level))), at: cursor)
                 cursor = cursor + CMTime(seconds: clip.outputDuration, preferredTimescale: 600)
             }
+            // **The audio fades with the picture.** Set after the per-clip levels so the ramps win
+            // at the two ends, which is what "fade in" means.
+            let total = CMTime(seconds: project.duration, preferredTimescale: 600)
+            if project.fadeIn > 0 {
+                gain.setVolumeRamp(fromStartVolume: 0, toEndVolume: 1,
+                                   timeRange: CMTimeRange(
+                                       start: .zero,
+                                       duration: CMTime(seconds: project.fadeIn,
+                                                        preferredTimescale: 600)))
+            }
+            if project.fadeOut > 0, project.duration > project.fadeOut {
+                gain.setVolumeRamp(fromStartVolume: 1, toEndVolume: 0,
+                                   timeRange: CMTimeRange(
+                                       start: CMTime(seconds: project.duration - project.fadeOut,
+                                                     preferredTimescale: 600),
+                                       end: total))
+            }
             parameters.append(gain)
         }
 
