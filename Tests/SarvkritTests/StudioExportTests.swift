@@ -344,6 +344,52 @@ final class StudioExportTests: XCTestCase {
         XCTAssertLessThan(loudest, 0.01, "a muted clip still has sound in the exported file")
     }
 
+    /// **Narration starts late, and it must be put back where it belongs.**
+    ///
+    /// An `AVCaptureSession` takes a couple of seconds to come up, so the microphone file begins
+    /// that much after the screen — `cameraStartOffset` in the manifest, which is really the
+    /// capture session's offset whichever file the sound landed in. The composition read it as if
+    /// file time equalled screen time, so every word was heard seconds *before* it was said and
+    /// the tail of the recording lost its sound entirely.
+    ///
+    /// Here the narration covers the last three seconds of a five-second take: the first two
+    /// seconds of the finished video must be silent, and the rest must not.
+    func testNarrationIsAlignedToWhenItWasActuallySpoken() async throws {
+        let bundle = try makeRecording(seconds: 5)
+        // Three seconds of tone, recorded starting two seconds into the screen capture.
+        try await writeNarration(to: bundle.microphoneURL, seconds: 3)
+        var manifest = try bundle.readManifest()
+        manifest.hasMicrophone = true
+        manifest.cameraStartOffset = 2
+        try bundle.write(manifest)
+
+        let destination = directory.appendingPathComponent("aligned.mp4")
+        try await StudioExporter().export(
+            project: try project(over: bundle, seconds: 5), events: EventLog(),
+            recording: bundle, preset: .web, to: destination, onProgress: { _ in })
+
+        let envelope = try await AudioEnvelope.read(url: destination, samplesPerSecond: 10)
+        XCTAssertGreaterThan(envelope.count, 30, "the exported audio is too short to judge")
+
+        // **Indexed by proportion, not by an assumed sample rate.** `AudioEnvelope` derives its
+        // slice size from the track's natural time scale, so "ten a second" is a request rather
+        // than a promise — an earlier version of this test did the arithmetic itself and read the
+        // wrong window, then reported a working fix as broken.
+        func loudest(betweenFraction from: Double, and to: Double) -> Float {
+            let lower = Int(Double(envelope.count) * from)
+            let upper = min(envelope.count, Int(Double(envelope.count) * to))
+            guard upper > lower else { return 0 }
+            return envelope[lower..<upper].max() ?? 0
+        }
+
+        // The narration covers the last three seconds of five, so the first third is before the
+        // microphone existed and the last third is well inside it.
+        XCTAssertLessThan(loudest(betweenFraction: 0, and: 0.3), 0.02,
+                          "there is sound before the microphone was running, so narration is early")
+        XCTAssertGreaterThan(loudest(betweenFraction: 0.6, and: 0.95), 0.05,
+                             "the narration never arrived")
+    }
+
     /// The loudest sample in a file's audio track, 0…1.
     private static func peak(of url: URL) async throws -> Float {
         let envelope = try await AudioEnvelope.read(url: url, samplesPerSecond: 20)

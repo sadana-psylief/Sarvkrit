@@ -189,14 +189,16 @@ final class CameraTrackTimeTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(t), 7.57, accuracy: 1e-9)
     }
 
-    /// **The lead-in holds the camera's first frame.** For the couple of seconds before the capture
-    /// graph came up there is no true picture, and leaving the bubble out until it appears looks
-    /// exactly like the camera being broken — which is how it was reported in the first place. So
-    /// the earliest frame stands in, the way a poster frame does.
-    func testTheLeadInHoldsTheFirstCameraFrame() {
-        let t = PlaybackClock.cameraTime(forSource: 1.0, startOffset: offset,
-                                         cameraDuration: cameraDuration)
-        XCTAssertEqual(try XCTUnwrap(t), 0, accuracy: 1e-9)
+    /// **Nothing before the camera was running — not a frozen frame.**
+    ///
+    /// An earlier version held the camera's first frame through the lead-in, on the grounds that an
+    /// empty bubble looks like a broken camera. That was the wrong trade: for those couple of
+    /// seconds there is no narration either, so a motionless face sitting over silence reads as a
+    /// stall in the recording. The camera now appears when it actually started, faded in over
+    /// `CameraSettings.fadeSeconds` so it does not pop.
+    func testThereIsNoCameraBeforeItStarted() {
+        XCTAssertNil(PlaybackClock.cameraTime(forSource: 1.0, startOffset: offset,
+                                              cameraDuration: cameraDuration))
     }
 
     /// A recording with no camera track at all still has nothing to draw.

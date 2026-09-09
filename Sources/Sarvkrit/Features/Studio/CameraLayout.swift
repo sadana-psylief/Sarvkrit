@@ -109,27 +109,35 @@ enum CameraLayoutResolver {
     ///   clamped to it for the same reason the zoom envelope is — after a cut, source time is not
     ///   monotonic in output time, so a blend measured from the segment's own end is still running
     ///   when the picture jumps and the camera snaps mid-move.
+    /// - Parameter cameraStart: when the camera track begins, in source time. It is a couple of
+    ///   seconds after the screen, because that is how long a capture session takes to come up —
+    ///   so the bubble is faded in over `settings.fadeSeconds` from there rather than arriving in
+    ///   one frame. `fadeSeconds` existed and was offered in the inspector, and nothing rendered
+    ///   it.
     static func state(at t: TimeInterval,
                       segments: [CameraSegment],
                       settings: CameraSettings,
                       canvas: CGSize,
                       zoom: Double,
-                      clipSource: Range<TimeInterval>? = nil) -> CameraState? {
+                      clipSource: Range<TimeInterval>? = nil,
+                      cameraStart: TimeInterval = 0) -> CameraState? {
         guard canvas.width > 0, canvas.height > 0 else { return nil }
 
         let pip = pipRect(settings: settings, canvas: canvas, zoom: zoom)
         let full = CGRect(origin: .zero, size: canvas)
 
+        let arriving = arrival(at: t, start: cameraStart, fade: settings.fadeSeconds)
+
         guard let segment = segments.first(where: { t >= $0.start && t < $0.end }) else {
             return CameraState(rect: pip, cornerRadius: radius(for: pip, settings: settings),
-                               opacity: 1)
+                               opacity: arriving)
         }
 
         let target: CGRect
         let opacity: Double
         switch segment.layout {
-        case .pip: target = pip; opacity = 1
-        case .fullFrame: target = full; opacity = 1
+        case .pip: target = pip; opacity = arriving
+        case .fullFrame: target = full; opacity = arriving
         case .hidden: return nil
         }
 
@@ -144,6 +152,13 @@ enum CameraLayoutResolver {
         let rect = interpolate(from: pip, to: target, fraction: eased)
         return CameraState(rect: rect, cornerRadius: radius(for: rect, settings: settings),
                            opacity: opacity)
+    }
+
+    /// How far in the camera is, having only just started.
+    private static func arrival(at t: TimeInterval, start: TimeInterval,
+                                fade: TimeInterval) -> Double {
+        guard fade > 0 else { return 1 }
+        return min(1, max(0, (t - start) / fade))
     }
 
     /// 1 while the segment holds, ramping from 0 at each edge.

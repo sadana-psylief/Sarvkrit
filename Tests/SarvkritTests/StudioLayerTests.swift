@@ -99,6 +99,37 @@ final class StudioLayerTests: XCTestCase {
                        "the camera changed size or position under a zoom")
     }
 
+    /// **The camera fades in when it starts, rather than appearing at full strength.**
+    ///
+    /// It begins a couple of seconds after the screen, because that is how long a capture session
+    /// takes to come up. `CameraSettings.fadeSeconds` existed and was offered in the inspector, and
+    /// nothing rendered it — so the bubble arrived in one frame.
+    func testTheCameraFadesInFromWhereItStarted() throws {
+        var settings = camera()
+        settings.fadeSeconds = 0.4
+
+        let arriving = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 2.5, segments: [], settings: settings, canvas: canvas, zoom: 1,
+            cameraStart: 2.4))
+        let settled = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 6, segments: [], settings: settings, canvas: canvas, zoom: 1,
+            cameraStart: 2.4))
+
+        XCTAssertLessThan(arriving.opacity, 0.5, "the camera appeared at full strength")
+        XCTAssertGreaterThan(arriving.opacity, 0, "and it should be on its way in, not absent")
+        XCTAssertEqual(settled.opacity, 1, accuracy: 0.001)
+    }
+
+    /// With no fade asked for, it simply appears — the setting is honoured either way.
+    func testNoFadeMeansItAppearsAtOnce() throws {
+        var settings = camera()
+        settings.fadeSeconds = 0
+        let state = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 2.4, segments: [], settings: settings, canvas: canvas, zoom: 1,
+            cameraStart: 2.4))
+        XCTAssertEqual(state.opacity, 1, accuracy: 0.001)
+    }
+
     func testAHiddenSegmentDrawsNoCamera() {
         let hidden = CameraSegment(start: 0, end: 5, layout: .hidden)
         XCTAssertNil(CameraLayoutResolver.state(at: 2, segments: [hidden],

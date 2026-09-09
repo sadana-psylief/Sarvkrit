@@ -53,6 +53,16 @@ enum StudioAudio {
         let system = await systemAudioURL(in: recording)
         guard narration != nil || system != nil else { return nil }
 
+        // **The microphone starts late, and the picture does not.** An `AVCaptureSession` takes a
+        // couple of seconds to come up, so the narration file begins that much after the screen.
+        // `cameraStartOffset` records it — despite the name it is the capture session's offset,
+        // whichever file the sound landed in. Reading the file as if its time were the screen's
+        // put every word seconds *before* it was said, and left the tail silent.
+        //
+        // System audio has no such offset: it rides in `screen.mov`, anchored to the first video
+        // frame like the picture itself.
+        let narrationOffset = (try? recording.readManifest())?.cameraStartOffset ?? 0
+
         let composition = AVMutableComposition()
         var parameters: [AVMutableAudioMixInputParameters] = []
         // **The assets are held, not just their tracks.** `AVAssetTrack.asset` is a weak reference,
@@ -61,14 +71,20 @@ enum StudioAudio {
         // the bug this file exists to fix.
         var retained: [AVURLAsset] = []
 
-        for source in [(narration, false), (system, true)] {
+        for source in [(narration, narrationOffset, false), (system, 0.0, true)] {
             guard let url = source.0 else { continue }
             let asset = AVURLAsset(url: url)
             retained.append(asset)
             guard let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
-                  let track = composition.addMutableTrack(withMediaType: .audio,
-                                                          preferredTrackID: kCMPersistentTrackID_Invalid)
+                  let track = composition.addMutableTrack(
+                      withMediaType: .audio,
+                      preferredTrackID: kCMPersistentTrackID_Invalid)
             else { continue }
+
+            let offset = source.1
+            let available = ((try? await asset.load(.duration))?.seconds).map {
+                $0.isFinite ? $0 : 0
+            } ?? 0
 
             let gain = AVMutableAudioMixInputParameters(track: track)
             // A tape-style pitch shift on a sped-up clip is what a speed change is expected to
@@ -77,36 +93,44 @@ enum StudioAudio {
 
             var cursor = CMTime.zero
             for clip in project.timeline.clips {
-                let range = CMTimeRange(
-                    start: CMTime(seconds: clip.sourceStart, preferredTimescale: 600),
-                    duration: CMTime(seconds: clip.sourceDuration, preferredTimescale: 600))
-                guard range.duration.seconds > 0 else { continue }
+                // Where this clip's material sits inside *this* file.
+                let wantedStart = clip.sourceStart - offset
+                let wantedEnd = clip.sourceEnd - offset
+                let from = max(0, wantedStart)
+                let to = min(wantedEnd, available)
 
-                do {
-                    try track.insertTimeRange(range, of: sourceTrack, at: cursor)
-                } catch {
-                    // A clip whose source range runs past the end of the audio is ordinary: the
-                    // microphone can stop before the screen does. Silence is the right answer —
-                    // but it is logged, because "the export is silent" was the bug this whole
-                    // file exists to fix and a swallowed insert would recreate it exactly.
-                    let why = String(describing: error)
-                    log.error("audio: could not insert a clip's range: \(why, privacy: .public)")
-                    cursor = cursor + CMTime(seconds: clip.outputDuration, preferredTimescale: 600)
-                    continue
-                }
-
-                let inserted = CMTimeRange(start: cursor, duration: range.duration)
-                if clip.speed != 1 {
-                    track.scaleTimeRange(inserted,
-                                         toDuration: CMTime(seconds: clip.outputDuration,
-                                                            preferredTimescale: 600))
+                if to > from {
+                    // Output seconds this file has nothing for — before the microphone existed.
+                    // Left as silence rather than filled, which is the honest answer.
+                    let lead = (from - wantedStart) / max(clip.speed, 0.0001)
+                    let insertAt = cursor + CMTime(seconds: lead, preferredTimescale: 600)
+                    let range = CMTimeRange(
+                        start: CMTime(seconds: from, preferredTimescale: 600),
+                        duration: CMTime(seconds: to - from, preferredTimescale: 600))
+                    do {
+                        try track.insertTimeRange(range, of: sourceTrack, at: insertAt)
+                        if clip.speed != 1 {
+                            track.scaleTimeRange(
+                                CMTimeRange(start: insertAt, duration: range.duration),
+                                toDuration: CMTime(seconds: (to - from) / clip.speed,
+                                                   preferredTimescale: 600))
+                        }
+                    } catch {
+                        // Logged, because "the export is silent" was the bug this whole file
+                        // exists to fix and a swallowed insert would recreate it exactly.
+                        let why = String(describing: error)
+                        log.error("audio: could not insert a clip's range: \(why, privacy: .public)")
+                    }
                 }
 
                 // Set at the clip's own start, so each clip's gain holds until the next changes it.
-                let level = clip.isMuted ? 0 : (source.1 ? clip.systemAudioVolume : clip.volume)
+                let level = clip.isMuted ? 0 : (source.2 ? clip.systemAudioVolume : clip.volume)
                 gain.setVolume(Float(max(0, min(1, level))), at: cursor)
+                // The whole clip, including any held last frame — which is silence, since nothing
+                // was inserted for it.
                 cursor = cursor + CMTime(seconds: clip.outputDuration, preferredTimescale: 600)
             }
+
             // **The audio fades with the picture.** Set after the per-clip levels so the ramps win
             // at the two ends, which is what "fade in" means.
             let total = CMTime(seconds: project.duration, preferredTimescale: 600)

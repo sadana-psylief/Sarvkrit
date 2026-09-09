@@ -52,6 +52,8 @@ final class StudioDocumentModel: ObservableObject {
     let events: EventLog
     /// How long the recording itself runs, which is the furthest a trim can ever be undone to.
     let recordingDuration: TimeInterval
+    /// When the camera track begins, in source time. Recording metadata, not a project edit.
+    let cameraStartOffset: TimeInterval
 
     @Published private(set) var project: StudioProject
     @Published var inspector: Inspector = .canvas
@@ -125,6 +127,7 @@ final class StudioDocumentModel: ObservableObject {
         self.bundle = bundle
         self.events = events
         self.recordingDuration = manifest.duration
+        self.cameraStartOffset = manifest.cameraStartOffset
 
         let existing = try? JSONDecoder().decode(
             StudioProject.self,

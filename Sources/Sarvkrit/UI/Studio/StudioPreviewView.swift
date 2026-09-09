@@ -153,7 +153,8 @@ final class StudioPreviewView: NSView {
                             in: context,
                             cache: cache,
                             clipSource: model.currentClipSource,
-                            outputTime: model.playhead)
+                            outputTime: model.playhead,
+                            cameraStart: model.cameraStartOffset)
         context.restoreGState()
     }
 }

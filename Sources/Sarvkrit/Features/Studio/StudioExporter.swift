@@ -221,7 +221,8 @@ actor StudioExporter {
                                                  > placed.clip.sourceStart
                                                  ? placed.clip.sourceStart..<placed.clip.sourceEnd
                                                  : nil,
-                                             outputTime: outputTime)
+                                             outputTime: outputTime,
+                                             cameraStart: cameraStartOffset)
             guard let frame, let buffer = Self.buffer(from: frame, size: output,
                                                       pool: adaptor.pixelBufferPool) else {
                 continue
