@@ -150,4 +150,86 @@ final class RecordingWriterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: directory.appendingPathComponent("screen.mov").path))
     }
+
+    // MARK: - System audio
+
+    /// **`capturesAudio` on the stream configuration did nothing on its own.**
+    ///
+    /// It was set, `hasSystemAudio` was written into the manifest, and no `.audio` stream output was
+    /// ever added — so ScreenCaptureKit never delivered a buffer, this writer had no audio input to
+    /// put one in, and the manifest's claim was simply false. Audio now rides in `screen.mov`
+    /// alongside the picture: one writer, one fragment interval, and a raw recording that plays
+    /// with sound.
+    func testSystemAudioReachesTheFile() async throws {
+        let url = directory.appendingPathComponent("with-system-audio.mov")
+        let writer = try RecordingWriter(url: url, size: CGSize(width: 160, height: 120), fps: 60,
+                                         capturesAudio: true)
+
+        // A video frame first: the session is anchored on it, so audio arriving earlier has no
+        // timeline to sit on and is deliberately dropped.
+        for index in 0..<30 {
+            writer.append(try sample(at: Double(index) / 60))
+            writer.appendAudio(try audioSample(at: Double(index) / 60))
+        }
+        await writer.finish()
+
+        let asset = AVURLAsset(url: url)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audio.isEmpty, "system audio never reached the recording")
+    }
+
+    /// Audio before the first frame is dropped rather than shifting the whole soundtrack earlier
+    /// than the picture.
+    func testAudioBeforeTheFirstFrameIsDropped() async throws {
+        let url = directory.appendingPathComponent("audio-first.mov")
+        let writer = try RecordingWriter(url: url, size: CGSize(width: 160, height: 120), fps: 60,
+                                         capturesAudio: true)
+
+        for index in 0..<10 {
+            writer.appendAudio(try audioSample(at: Double(index) / 60))
+        }
+        await writer.finish()
+
+        // No video frame ever landed, so there is no usable file at all — a writer with nothing in
+        // it produces something `AVURLAsset` refuses to open, and that is the existing behaviour
+        // for a video-only writer. What matters is that audio arriving first did not change it by
+        // sneaking a soundtrack in ahead of a picture that never came.
+        let asset = AVURLAsset(url: url)
+        let audio = (try? await asset.loadTracks(withMediaType: .audio)) ?? []
+        XCTAssertTrue(audio.isEmpty, "audio was written with no picture to anchor it to")
+    }
+
+    private func audioSample(at seconds: Double) throws -> CMSampleBuffer {
+        let rate = 48_000.0
+        let frames = 512
+        var format = AudioStreamBasicDescription(
+            mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
+            mChannelsPerFrame: 2, mBitsPerChannel: 16, mReserved: 0)
+        var description: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &format, layoutSize: 0, layout: nil,
+                                       magicCookieSize: 0, magicCookie: nil, extensions: nil,
+                                       formatDescriptionOut: &description)
+
+        let bytes = frames * 4
+        let memory = malloc(bytes)!
+        memset(memory, 0x20, bytes)
+        var block: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: memory, blockLength: bytes,
+                                           blockAllocator: nil, customBlockSource: nil,
+                                           offsetToData: 0, dataLength: bytes, flags: 0,
+                                           blockBufferOut: &block)
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+            presentationTimeStamp: CMTime(seconds: seconds, preferredTimescale: 600),
+            decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreateReady(allocator: nil, dataBuffer: try XCTUnwrap(block),
+                                  formatDescription: try XCTUnwrap(description),
+                                  sampleCount: frames, sampleTimingEntryCount: 1,
+                                  sampleTimingArray: &timing, sampleSizeEntryCount: 1,
+                                  sampleSizeArray: [4], sampleBufferOut: &sample)
+        return try XCTUnwrap(sample)
+    }
 }

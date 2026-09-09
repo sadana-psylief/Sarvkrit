@@ -126,7 +126,12 @@ actor StudioExporter {
                 AVEncoderBitRateKey: 128_000,
             ]
             let track = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
-            track.expectsMediaDataInRealTime = false
+            // **True, and not for the usual reason.** With this false the writer holds
+            // `isReadyForMoreMediaData` down on *every* input to force interleaving between them,
+            // and since this track is written in one pass rather than alternating with the video,
+            // that is a deadlock: the audio waits for video that has not started. True tells the
+            // writer not to hold data back for another track's sake.
+            track.expectsMediaDataInRealTime = true
             if writer.canAdd(track) {
                 writer.add(track)
                 audioInput = track
@@ -136,11 +141,21 @@ actor StudioExporter {
         }
 
         guard writer.startWriting(), reader.startReading() else { throw ExportError.cannotWrite }
+
         if let cameraReader, !cameraReader.startReading() {
             // Not fatal: a camera that cannot be read costs the picture-in-picture, not the export.
             cameraReaderOutput = nil
         }
         writer.startSession(atSourceTime: .zero)
+
+        // **Written first, and finished before a single frame goes in.** An `AVAssetWriter` with two
+        // open inputs will not let either run ahead of the other, so writing every frame and then
+        // every sample deadlocks: the video input spins on `isReadyForMoreMediaData` waiting for
+        // audio that the loop below has not reached yet. Closing this track first leaves the video
+        // pass with nothing to wait for. Found by an export that sat at zero bytes for two minutes.
+        if let audioInput, let audio {
+            try await writeAudio(audio, to: audioInput)
+        }
 
         let duration = project.duration
         let total = max(1, Int(duration * Double(fps)))
@@ -217,11 +232,6 @@ actor StudioExporter {
         }
 
         input.markAsFinished()
-
-        if let audioInput, let audio {
-            try await writeAudio(audio, to: audioInput)
-        }
-
         await writer.finishWriting()
         reader.cancelReading()
         guard writer.status == .completed else { throw ExportError.cannotWrite }

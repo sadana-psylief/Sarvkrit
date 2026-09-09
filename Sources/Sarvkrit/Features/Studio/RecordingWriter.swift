@@ -17,6 +17,12 @@ final class RecordingWriter: @unchecked Sendable {
 
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
+    /// System audio, when the recording asked for it.
+    ///
+    /// **In the same file as the picture, deliberately.** One writer means one fragment interval
+    /// and therefore the same crash survivability for both tracks, and it makes the raw recording
+    /// directly playable with sound rather than something only this app can assemble.
+    private let audioInput: AVAssetWriterInput?
     private let lock = NSLock()
 
     /// The presentation time of the first frame. Everything is measured from it, so the events and
@@ -36,7 +42,10 @@ final class RecordingWriter: @unchecked Sendable {
     /// of milliseconds, and that is enough to put the cursor visibly behind what it clicked.
     private var anchorHostTime: TimeInterval?
 
-    init(url: URL, size: CGSize, fps: Int) throws {
+    /// - Parameter capturesAudio: whether to make room for system audio. `SCStream` will not
+    ///   deliver any unless an `.audio` output is added, which is why this was silently absent:
+    ///   `capturesAudio` was set on the configuration and nothing ever asked for the buffers.
+    init(url: URL, size: CGSize, fps: Int, capturesAudio: Bool = false) throws {
         try? FileManager.default.removeItem(at: url)
         guard let writer = try? AVAssetWriter(outputURL: url, fileType: .mov) else {
             throw RecordingError.cannotWrite
@@ -58,10 +67,26 @@ final class RecordingWriter: @unchecked Sendable {
         input.expectsMediaDataInRealTime = true
         guard writer.canAdd(input) else { throw RecordingError.cannotWrite }
         writer.add(input)
+        var audio: AVAssetWriterInput?
+        if capturesAudio {
+            let track = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 48_000,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 128_000,
+            ])
+            track.expectsMediaDataInRealTime = true
+            if writer.canAdd(track) {
+                writer.add(track)
+                audio = track
+            }
+        }
+
         guard writer.startWriting() else { throw RecordingError.cannotWrite }
 
         self.writer = writer
         self.input = input
+        self.audioInput = audio
     }
 
     // MARK: - Reading, from anywhere
@@ -88,6 +113,22 @@ final class RecordingWriter: @unchecked Sendable {
     }
 
     // MARK: - Writing, from the stream queue only
+
+    /// System audio, from `SCStream`'s own queue.
+    ///
+    /// **Dropped until the first video frame has landed.** The session is anchored on that frame,
+    /// so audio arriving before it has no timeline to sit on — and appending it would either fail
+    /// or, worse, shift the whole soundtrack earlier than the picture.
+    func appendAudio(_ buffer: CMSampleBuffer?) {
+        guard let buffer, buffer.isValid, let audioInput else { return }
+        lock.lock()
+        let started = firstFrame != nil
+        let isPaused = paused
+        lock.unlock()
+
+        guard started, !isPaused, audioInput.isReadyForMoreMediaData else { return }
+        audioInput.append(buffer)
+    }
 
     func append(_ buffer: CMSampleBuffer?) {
         guard let buffer, buffer.isValid else { return }
@@ -138,6 +179,8 @@ final class RecordingWriter: @unchecked Sendable {
 
     func finish() async {
         input.markAsFinished()
+        // The writer will not finish while an input it was given is still open.
+        audioInput?.markAsFinished()
         await writer.finishWriting()
     }
 }

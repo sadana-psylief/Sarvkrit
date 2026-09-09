@@ -149,7 +149,10 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         panel.allowedContentTypes = [.mpeg4Movie]
         panel.message = "1080p H.264 — plays everywhere."
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        export(to: url)
+    }
 
+    func export(to url: URL) {
         model.exportProgress = 0
         let project = model.project
         let events = model.events
@@ -222,6 +225,17 @@ final class StudioEditorController {
     func seek(to output: TimeInterval) -> Bool {
         guard let controller = controllers.last else { return false }
         controller.model.player.scrub(to: output)
+        return true
+    }
+
+    /// Exports the newest editor to a file, without the save panel.
+    ///
+    /// The same call the Export button makes, minus the panel — which is what makes "does the
+    /// export have sound" answerable without a mouse.
+    @discardableResult
+    func export(to url: URL) -> Bool {
+        guard let controller = controllers.last else { return false }
+        controller.export(to: url)
         return true
     }
 

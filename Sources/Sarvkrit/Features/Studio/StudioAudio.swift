@@ -31,11 +31,15 @@ enum StudioAudio {
         return nil
     }
 
+    /// System audio rides in `screen.mov` alongside the picture — one writer, one fragment
+    /// interval, and a raw recording that plays with sound.
     static func systemAudioURL(in recording: RecordingBundle) async -> URL? {
-        let url = recording.systemAudioURL
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let tracks = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
-        return tracks?.isEmpty == false ? url : nil
+        for url in [recording.screenURL, recording.systemAudioURL] where
+            FileManager.default.fileExists(atPath: url.path) {
+            let tracks = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+            if tracks?.isEmpty == false { return url }
+        }
+        return nil
     }
 
     /// The project's audio, cut and gain-staged to match the timeline.

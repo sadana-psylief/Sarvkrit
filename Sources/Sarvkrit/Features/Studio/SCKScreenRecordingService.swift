@@ -89,7 +89,8 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
             // is one the app died in the middle of, the only signal a crash leaves.
             try bundle.write(manifest)
 
-            writer = try RecordingWriter(url: bundle.screenURL, size: pixels, fps: request.fps)
+            writer = try RecordingWriter(url: bundle.screenURL, size: pixels, fps: request.fps,
+                                         capturesAudio: request.capturesSystemAudio)
 
             self.bundle = bundle
             // Handed to the recorder by value. It used to reach back through `self?.mapPoint`,
@@ -126,6 +127,13 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
             let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
             let frames = DispatchQueue(label: "ai.psylief.sarvkrit.recording")
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frames)
+            // **Without this, `capturesAudio` on the configuration does nothing.** It was set, and
+            // `hasSystemAudio` was written into the manifest, and no audio output was ever added —
+            // so ScreenCaptureKit never delivered a single buffer and the claim was false.
+            if request.capturesSystemAudio {
+                let sound = DispatchQueue(label: "ai.psylief.sarvkrit.recording.audio")
+                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sound)
+            }
             try await stream.startCapture()
             self.stream = stream
             isRecording = true
@@ -223,7 +231,12 @@ final class SCKScreenRecordingService: NSObject, ScreenRecording, SCStreamOutput
 
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer buffer: CMSampleBuffer,
                             of type: SCStreamOutputType) {
-        guard type == .screen, buffer.isValid else { return }
+        guard buffer.isValid else { return }
+        if type == .audio {
+            writer?.appendAudio(buffer)
+            return
+        }
+        guard type == .screen else { return }
         // Idle frames say nothing changed. Not writing them is most of the difference between a
         // recording of a still screen being enormous and being small; the next real frame simply
         // carries a longer duration.

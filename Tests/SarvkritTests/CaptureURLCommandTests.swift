@@ -344,6 +344,21 @@ final class RecordingURLCommandTests: XCTestCase {
         XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://play")!), .playPause)
     }
 
+    /// Exporting from a script, to a named file.
+    ///
+    /// **This exists so "does the export have sound" can be answered.** Export was behind a save
+    /// panel, so verifying it needed a click — and every export shipped silent for exactly as long
+    /// as nobody could check one without a mouse.
+    func testExportTakesADestination() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://export?filepath=/tmp/out.mp4")!),
+            .exportEditor(URL(fileURLWithPath: "/tmp/out.mp4")))
+    }
+
+    func testExportWithoutADestinationIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://export")!))
+    }
+
     func testStopIsItsOwnCommand() {
         XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
                        .stopRecording)

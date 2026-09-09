@@ -54,6 +54,8 @@ enum CaptureURLCommand: Equatable {
     case seek(TimeInterval)
     /// Starts or stops playback in the open editor.
     case playPause
+    /// Exports the open editor to a file, skipping the save panel.
+    case exportEditor(URL)
 
     static let scheme = "sarvkrit"
 
@@ -70,6 +72,7 @@ enum CaptureURLCommand: Equatable {
         case .stopRecording: return "stop-recording"
         case .seek: return "seek"
         case .playPause: return "play"
+        case .exportEditor: return "export"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -94,7 +97,8 @@ enum CaptureURLCommand: Equatable {
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
             + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
-               .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause]
+               .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause,
+               .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4"))]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -182,6 +186,7 @@ enum CaptureURLCommand: Equatable {
         if name == "stop-recording" { return .stopRecording }
         if name == "seek" { return seconds(from: url).map { .seek($0) } }
         if name == "play" { return .playPause }
+        if name == "export" { return filepath(from: url).map { .exportEditor($0) } }
         if name == "record" {
             guard let source = recordingSource(from: url) else { return nil }
             return .record(source, windowID: windowID(from: url))

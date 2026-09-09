@@ -26,9 +26,10 @@ final class StudioExportTests: XCTestCase {
 
     /// A real, decodable recording: solid colour frames at 60 fps, written the way the recorder
     /// writes them.
-    private func makeRecording(seconds: Double) throws -> RecordingBundle {
+    private func makeRecording(seconds: Double,
+                               size: CGSize = CGSize(width: 160, height: 120))
+        throws -> RecordingBundle {
         let bundle = try RecordingBundle.create(at: directory.appendingPathComponent("r.sarvrec"))
-        let size = CGSize(width: 160, height: 120)
         let writer = try RecordingWriter(url: bundle.screenURL, size: size, fps: 60)
 
         let frames = Int(seconds * 60)
@@ -347,6 +348,40 @@ final class StudioExportTests: XCTestCase {
     private static func peak(of url: URL) async throws -> Float {
         let envelope = try await AudioEnvelope.read(url: url, samplesPerSecond: 20)
         return envelope.max() ?? 0
+    }
+
+    /// A longer export with sound comes out whole — both tracks, the right length.
+    ///
+    /// **This does not catch the deadlock it was written for, and that is worth recording.** An
+    /// `AVAssetWriter` with two open inputs holds `isReadyForMoreMediaData` down to force
+    /// interleaving, so writing every frame and then every audio sample hangs — the video input
+    /// waits for audio the loop has not reached. A real twenty-second 3024×1964 export sat at zero
+    /// bytes for two minutes; five seconds at 640×480 still fits in the writer's queue and passes
+    /// either way. I checked, by putting the old ordering back.
+    ///
+    /// So the guard against it is structural rather than a test: the audio track is written and
+    /// closed before a single frame goes in, and the reason is stated at that line. A fixture large
+    /// enough to reproduce it would cost minutes per run, which is a poor trade for a rule that is
+    /// visible in the code.
+    func testALongerExportWithAudioDoesNotStall() async throws {
+        let bundle = try makeRecording(seconds: 5, size: CGSize(width: 640, height: 480))
+        try await writeNarration(to: bundle.microphoneURL, seconds: 5)
+        var manifest = try bundle.readManifest()
+        manifest.hasMicrophone = true
+        try bundle.write(manifest)
+
+        let destination = directory.appendingPathComponent("long-with-sound.mp4")
+        try await StudioExporter().export(
+            project: try project(over: bundle, seconds: 5), events: EventLog(),
+            recording: bundle, preset: .web, to: destination, onProgress: { _ in })
+
+        let asset = AVURLAsset(url: destination)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        let video = try await asset.loadTracks(withMediaType: .video)
+        XCTAssertFalse(audio.isEmpty, "no audio track")
+        XCTAssertFalse(video.isEmpty, "no video track")
+        let duration = try await asset.load(.duration)
+        XCTAssertEqual(CMTimeGetSeconds(duration), 5, accuracy: 0.5)
     }
 
     func testProgressReachesTheEnd() async throws {
