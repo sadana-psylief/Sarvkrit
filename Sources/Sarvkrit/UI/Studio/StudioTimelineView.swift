@@ -1,7 +1,7 @@
 import AppKit
 import CoreGraphics
 
-/// The timeline: a ruler, the clip track, the zoom track and a playhead.
+/// The timeline: a ruler, one row per track, and a playhead.
 ///
 /// **AppKit rather than SwiftUI**, for the same reason `SelectionView` is: it redraws on every
 /// mouse-moved over a waveform that may be tens of thousands of samples, and SwiftUI's diffing is
@@ -12,20 +12,19 @@ final class StudioTimelineView: NSView {
     private let model: StudioDocumentModel
     var onScrub: ((TimeInterval) -> Void)?
 
-    private enum Metrics {
-        static let ruler: CGFloat = 22
-        static let trackHeight: CGFloat = 44
-        static let trackGap: CGFloat = 6
-        static let inset: CGFloat = 12
-        /// A grab this near an edge is a trim, not a move.
-        static let edgeGrab: CGFloat = 6
-    }
+    /// **The rows are a value now, not hand-placed rects.** Two tracks used to be hardcoded, each
+    /// with its own bespoke hit test, which is why five of the project's own collections had no
+    /// representation at all. See `TimelineLayout`.
+    private let metrics = TimelineLayout.Metrics()
 
     private enum Drag {
         case none
         case playhead
-        case zoomBody(ZoomSegment.ID, grabbedAt: TimeInterval)
-        case zoomEdge(ZoomSegment.ID, leading: Bool)
+        /// Moving any source-time item, on any row. `grabOffset` is how far into the item it was
+        /// grabbed, in source seconds, so it does not jump to the pointer.
+        case itemBody(TimelineLayout.RowKind, UUID, grabOffset: TimeInterval)
+        /// Trimming either edge of one.
+        case itemEdge(TimelineLayout.RowKind, UUID, leading: Bool)
         /// Reordering. The move is committed on release, so the whole drag is one undo step and
         /// the clips do not shuffle about under the pointer while it is in flight.
         case clipBody(Clip.ID, from: Int)
@@ -88,35 +87,56 @@ final class StudioTimelineView: NSView {
 
     // MARK: - Geometry
 
-    private var contentWidth: CGFloat { max(1, bounds.width - Metrics.inset * 2) }
+    private var rows: [TimelineLayout.Row] {
+        TimelineLayout.rows(project: model.project, events: model.events,
+                            selection: .init(clip: model.selectedClip,
+                                             zoom: model.selectedZoom,
+                                             text: model.selectedText,
+                                             camera: model.selectedCamera,
+                                             mask: model.selectedMask,
+                                             pointer: model.selectedPointer))
+    }
+
+    /// The rows are laid out once per event, not once per lookup: `rows` walks the whole project.
+    private var cachedRows: [TimelineLayout.Row] = []
+
+    static func preferredHeight(rowCount: Int) -> CGFloat {
+        TimelineLayout.preferredHeight(rowCount: rowCount)
+    }
+
+    /// Kept for the host, which cannot know the row count before the model exists.
+    static var preferredHeight: CGFloat { TimelineLayout.preferredHeight(rowCount: 4) }
+
+    private var contentWidth: CGFloat {
+        max(1, bounds.width - metrics.gutter - metrics.inset)
+    }
 
     private func x(forOutput t: TimeInterval) -> CGFloat {
-        guard model.duration > 0 else { return Metrics.inset }
-        return Metrics.inset + CGFloat(t / model.duration) * contentWidth
+        guard model.duration > 0 else { return metrics.gutter }
+        return metrics.gutter + CGFloat(t / model.duration) * contentWidth
     }
 
     private func outputTime(forX x: CGFloat) -> TimeInterval {
         guard model.duration > 0 else { return 0 }
-        return min(max(0, Double((x - Metrics.inset) / contentWidth) * model.duration),
+        return min(max(0, Double((x - metrics.gutter) / contentWidth) * model.duration),
                    model.duration)
     }
 
-    /// A source moment's place on the timeline, or nil when the edit cut it out.
-    private func x(forSource t: TimeInterval) -> CGFloat? {
-        model.project.timeline.outputTime(forSource: t).map { x(forOutput: $0) }
+    /// The recording moment under a point on the timeline, which is what every source-time track
+    /// is edited in.
+    private func sourceTime(forX x: CGFloat) -> TimeInterval? {
+        model.project.timeline.sourceTime(forOutput: outputTime(forX: x))?.sourceTime
     }
 
-    private var clipTrack: CGRect {
-        CGRect(x: 0, y: Metrics.ruler, width: bounds.width, height: Metrics.trackHeight)
+    private func rect(ofRow index: Int) -> CGRect {
+        TimelineLayout.rect(ofRow: index, in: bounds, metrics: metrics)
     }
 
-    private var zoomTrack: CGRect {
-        CGRect(x: 0, y: Metrics.ruler + Metrics.trackHeight + Metrics.trackGap,
-               width: bounds.width, height: Metrics.trackHeight)
-    }
-
-    static var preferredHeight: CGFloat {
-        Metrics.ruler + Metrics.trackHeight * 2 + Metrics.trackGap + 8
+    private func rect(of item: TimelineLayout.Item, row index: Int) -> CGRect {
+        let from = x(forOutput: item.start)
+        let to = x(forOutput: item.end)
+        let row = rect(ofRow: index)
+        return CGRect(x: from, y: row.minY + 2, width: max(3, to - from), height: row.height - 4)
     }
 
     // MARK: - Drawing
@@ -126,14 +146,17 @@ final class StudioTimelineView: NSView {
         context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
         context.fill(bounds)
 
+        cachedRows = rows
         drawRuler(in: context)
-        drawClips(in: context)
-        drawZooms(in: context)
+        for (index, row) in cachedRows.enumerated() {
+            drawRow(row, at: index, in: context)
+        }
         drawFlags(in: context)
+        drawDropLine(in: context)
         drawPlayhead(in: context)
     }
 
-    /// Tick density follows the zoom, so the labels stay readable rather than merging into a bar.
+    /// Tick density follows the width, so the labels stay readable rather than merging into a bar.
     private func drawRuler(in context: CGContext) {
         guard model.duration > 0 else { return }
         let candidates: [TimeInterval] = [1, 2, 5, 10, 15, 30, 60, 120, 300]
@@ -146,168 +169,142 @@ final class StudioTimelineView: NSView {
         var time: TimeInterval = 0
         while time <= model.duration {
             let position = x(forOutput: time).rounded() + 0.5
-            context.move(to: CGPoint(x: position, y: Metrics.ruler - 6))
-            context.addLine(to: CGPoint(x: position, y: Metrics.ruler))
+            context.move(to: CGPoint(x: position, y: metrics.ruler - 6))
+            context.addLine(to: CGPoint(x: position, y: metrics.ruler))
             context.strokePath()
 
-            let label = NSAttributedString(
-                string: Self.label(time),
-                attributes: [.font: NSFont.systemFont(ofSize: 9),
-                             .foregroundColor: NSColor.secondaryLabelColor])
-            label.draw(at: CGPoint(x: position + 3, y: 3))
+            NSAttributedString(string: Self.label(time),
+                               attributes: [.font: NSFont.systemFont(ofSize: 9),
+                                            .foregroundColor: NSColor.secondaryLabelColor])
+                .draw(at: CGPoint(x: position + 3, y: 3))
             time += step
         }
     }
 
     private static func label(_ seconds: TimeInterval) -> String {
         let total = Int(seconds.rounded())
-        return total >= 60 ? String(format: "%d:%02d", total / 60, total % 60) : "\(total)s"
+        return total >= 60 ? "\(total / 60):\(String(format: "%02d", total % 60))" : "\(total)s"
     }
 
-    /// **A cut has to look like a cut.**
-    ///
-    /// Unselected clips used to have a fill and no border, so two neighbours of the same colour
-    /// read as one continuous bar and the only hint of a split was a two-pixel gap from the rounded
-    /// inset. "What happens when I split?" was a fair question: visually, almost nothing did.
-    ///
-    /// Now every clip carries its own edge, the seam between two of them is drawn explicitly, and a
-    /// clip that is hiding material says how much — the badge `Clip`'s own doc comment has promised
-    /// all along and which nothing drew.
-    private func drawClips(in context: CGContext) {
-        var elapsed: TimeInterval = 0
-        let clips = model.project.timeline.clips
+    /// One row: its name in the gutter, a faint bed, and its items.
+    private func drawRow(_ row: TimelineLayout.Row, at index: Int, in context: CGContext) {
+        let bed = rect(ofRow: index)
 
-        for (index, clip) in clips.enumerated() {
-            let from = x(forOutput: elapsed)
-            let to = x(forOutput: elapsed + clip.outputDuration)
-            let rect = CGRect(x: from, y: clipTrack.minY,
-                              width: max(2, to - from), height: clipTrack.height)
-            let selected = model.selectedClip == clip.id
+        // The name, so it is obvious what each row is — the thing a timeline of unlabelled bars
+        // cannot tell you.
+        NSAttributedString(string: row.kind.name,
+                           attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                                        .foregroundColor: NSColor.secondaryLabelColor])
+            .draw(at: CGPoint(x: 6, y: bed.minY + bed.height / 2 - 6))
+
+        context.setFillColor(NSColor.quaternaryLabelColor.withAlphaComponent(0.1).cgColor)
+        context.fill(CGRect(x: metrics.gutter, y: bed.minY + 2,
+                            width: max(0, bounds.width - metrics.gutter - metrics.inset),
+                            height: bed.height - 4))
+
+        for (position, item) in row.items.enumerated() {
+            let box = rect(of: item, row: index)
             let dragging: Bool
-            if case .clipBody(let id, _) = drag, id == clip.id { dragging = true } else {
+            if case .itemBody(_, let id, _) = drag, id == item.id { dragging = true } else if
+                case .clipBody(let id, _) = drag, id == item.id { dragging = true } else {
                 dragging = false
             }
-            let path = CGPath.rounded(rect.insetBy(dx: 1, dy: 2), cornerRadius: 6)
+            let path = CGPath.rounded(box, cornerRadius: 5)
 
             context.addPath(path)
-            context.setFillColor(NSColor.systemOrange
-                .withAlphaComponent(dragging ? 0.25 : (selected ? 0.55 : 0.38)).cgColor)
+            context.setFillColor(Self.colour(for: row.kind)
+                .withAlphaComponent(item.isMuted ? 0.15
+                                    : (dragging ? 0.25 : (item.isSelected ? 0.7 : 0.45))).cgColor)
             context.fillPath()
 
-            // Every clip, not only the selected one.
+            // Every item carries an edge, not only the selected one. Two neighbours of the same
+            // colour used to read as one continuous bar, which is why a split looked like nothing
+            // had happened.
             context.addPath(path)
-            context.setStrokeColor(selected
+            context.setStrokeColor(item.isSelected
                 ? NSColor.controlAccentColor.cgColor
-                : NSColor.systemOrange.withAlphaComponent(0.9).cgColor)
-            context.setLineWidth(selected ? 1.5 : 1)
+                : Self.colour(for: row.kind).withAlphaComponent(0.9).cgColor)
+            context.setLineWidth(item.isSelected ? 1.5 : 1)
             context.strokePath()
 
-            // Speed is stated on the clip rather than hidden in an inspector: it changes how every
-            // other track maps onto this stretch, so it should never be a surprise.
-            var text = clip.speed == 1
-                ? String(format: "%.1fs", clip.outputDuration)
-                : String(format: "%.1fs · %.2gx", clip.outputDuration, clip.speed)
-            if clip.hold > 0 { text += String(format: " · hold %.1fs", clip.hold) }
-            NSAttributedString(string: text,
-                               attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .medium),
-                                            .foregroundColor: NSColor.labelColor])
-                .draw(at: CGPoint(x: rect.minX + 8, y: rect.minY + 6))
+            if box.width > 40 {
+                NSAttributedString(
+                    string: item.label,
+                    attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                                 .foregroundColor: NSColor.labelColor])
+                    .draw(in: box.insetBy(dx: 5, dy: 4))
+            }
 
-            drawTrimBadge(for: clip, at: index, in: rect, context: context)
-
-            elapsed += clip.outputDuration
-
-            // The seam, drawn on the boundary rather than left to a gap in the fills.
-            if index + 1 < clips.count {
-                let seamX = x(forOutput: elapsed).rounded() + 0.5
-                context.setStrokeColor(NSColor.underPageBackgroundColor.cgColor)
-                context.setLineWidth(2)
-                context.move(to: CGPoint(x: seamX, y: clipTrack.minY + 2))
-                context.addLine(to: CGPoint(x: seamX, y: clipTrack.maxY - 2))
-                context.strokePath()
+            if row.kind == .video {
+                drawTrimBadge(forClipAt: position, in: box, context: context)
+                // The seam, drawn on the boundary rather than left to a gap between fills.
+                if position + 1 < row.items.count {
+                    let seamX = x(forOutput: item.end).rounded() + 0.5
+                    context.setStrokeColor(NSColor.underPageBackgroundColor.cgColor)
+                    context.setLineWidth(2)
+                    context.move(to: CGPoint(x: seamX, y: box.minY))
+                    context.addLine(to: CGPoint(x: seamX, y: box.maxY))
+                    context.strokePath()
+                }
             }
         }
+    }
 
-        drawDropLine(in: context)
+    private static func colour(for kind: TimelineLayout.RowKind) -> NSColor {
+        switch kind {
+        case .video: return .systemOrange
+        case .text: return .systemTeal
+        case .camera: return .systemPink
+        case .zoom: return .systemIndigo
+        case .mask: return .systemGray
+        case .pointer: return .systemYellow
+        case .caption: return .systemGreen
+        }
     }
 
     /// How much of the recording a clip is hiding, if any.
     ///
     /// Trimming is a window, never a cut, so the material is always still there — and the badge is
-    /// what makes that visible instead of merely true. Right-click offers to put it back.
-    private func drawTrimBadge(for clip: Clip, at index: Int, in rect: CGRect,
-                               context: CGContext) {
+    /// what makes that visible rather than merely true. Right-click offers to put it back.
+    private func drawTrimBadge(forClipAt index: Int, in rect: CGRect, context: CGContext) {
         let clips = model.project.timeline.clips
+        guard clips.indices.contains(index), rect.width > 108 else { return }
+        let clip = clips[index]
         let lower = index > 0 ? clips[index - 1].sourceEnd : 0
         let upper = index + 1 < clips.count ? clips[index + 1].sourceStart : model.recordingDuration
         let hidden = max(0, clip.sourceStart - lower) + max(0, upper - clip.sourceEnd)
-        guard hidden > 0.15, rect.width > 92 else { return }
+        guard hidden > 0.15 else { return }
 
-        let label = NSAttributedString(
-            string: String(format: "✂︎ %.1fs hidden", hidden),
-            attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .medium),
+        NSAttributedString(
+            string: String(format: "✂︎ %.1fs", hidden),
+            attributes: [.font: NSFont.systemFont(ofSize: 9),
                          .foregroundColor: NSColor.secondaryLabelColor])
-        label.draw(at: CGPoint(x: rect.minX + 8, y: rect.minY + 22))
-    }
-
-    /// Where a dragged clip would land.
-    private func drawDropLine(in context: CGContext) {
-        guard case .clipBody = drag, let dropIndex else { return }
-        var elapsed: TimeInterval = 0
-        for clip in model.project.timeline.clips.prefix(dropIndex) {
-            elapsed += clip.outputDuration
-        }
-        let position = x(forOutput: elapsed).rounded() + 0.5
-        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-        context.setLineWidth(3)
-        context.move(to: CGPoint(x: position, y: clipTrack.minY))
-        context.addLine(to: CGPoint(x: position, y: clipTrack.maxY))
-        context.strokePath()
-    }
-
-    private func drawZooms(in context: CGContext) {
-        context.setFillColor(NSColor.quaternaryLabelColor.withAlphaComponent(0.12).cgColor)
-        context.fill(zoomTrack.insetBy(dx: Metrics.inset, dy: 4))
-
-        for segment in model.project.zooms {
-            guard let from = x(forSource: segment.start) else { continue }
-            let to = x(forSource: segment.end) ?? bounds.maxX - Metrics.inset
-            let rect = CGRect(x: from, y: zoomTrack.minY + 2,
-                              width: max(3, to - from), height: zoomTrack.height - 4)
-            let selected = model.selectedZoom == segment.id
-            let path = CGPath.rounded(rect, cornerRadius: 6)
-
-            context.addPath(path)
-            let base = NSColor.systemIndigo
-            context.setFillColor(base.withAlphaComponent(
-                segment.isDisabled ? 0.15 : (selected ? 0.7 : 0.5)).cgColor)
-            context.fillPath()
-
-            if selected {
-                context.addPath(path)
-                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-                context.setLineWidth(1.5)
-                context.strokePath()
-            }
-
-            guard rect.width > 44 else { continue }
-            let follows: String
-            if case .followCursor = segment.anchor { follows = " · follows" } else { follows = "" }
-            NSAttributedString(
-                string: String(format: "%.1fx%@", segment.level, follows),
-                attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .medium),
-                             .foregroundColor: NSColor.white])
-                .draw(at: CGPoint(x: rect.minX + 8, y: rect.minY + 6))
-        }
+            .draw(at: CGPoint(x: rect.maxX - 46, y: rect.minY + 4))
     }
 
     /// Moments marked with ⌃⌥⌘M while recording. One keystroke then beats a hunt afterwards.
     private func drawFlags(in context: CGContext) {
         context.setFillColor(NSColor.systemYellow.cgColor)
         for flag in model.events.flags {
-            guard let position = x(forSource: flag) else { continue }
-            context.fill(CGRect(x: position - 1, y: 0, width: 2, height: Metrics.ruler))
+            guard let output = model.project.timeline.outputTime(forSource: flag) else { continue }
+            context.fill(CGRect(x: x(forOutput: output) - 1, y: 0, width: 2, height: metrics.ruler))
         }
+    }
+
+    /// Where a dragged clip would land.
+    private func drawDropLine(in context: CGContext) {
+        guard case .clipBody = drag, let dropIndex,
+              let videoRow = cachedRows.firstIndex(where: { $0.kind == .video }) else { return }
+        let clips = model.project.timeline.clips
+        var elapsed: TimeInterval = 0
+        for clip in clips.prefix(dropIndex) { elapsed += clip.outputDuration }
+        let position = x(forOutput: elapsed).rounded() + 0.5
+        let row = rect(ofRow: videoRow)
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(3)
+        context.move(to: CGPoint(x: position, y: row.minY))
+        context.addLine(to: CGPoint(x: position, y: row.maxY))
+        context.strokePath()
     }
 
     private func drawPlayhead(in context: CGContext) {
@@ -322,6 +319,57 @@ final class StudioTimelineView: NSView {
         context.fillEllipse(in: CGRect(x: position - 4, y: 0, width: 8, height: 8))
     }
 
+    // MARK: - Hit testing
+
+    /// What is under a point: which row, which item, and whether an edge was grabbed.
+    private func hit(at point: CGPoint)
+        -> (row: TimelineLayout.Row, index: Int, item: TimelineLayout.Item, edge: Bool?)? {
+        let laid = cachedRows.isEmpty ? rows : cachedRows
+        for (index, row) in laid.enumerated() where rect(ofRow: index).contains(point) {
+            for item in row.items {
+                let box = rect(of: item, row: index)
+                guard point.x >= box.minX - metrics.edgeGrab,
+                      point.x <= box.maxX + metrics.edgeGrab else { continue }
+                if abs(point.x - box.minX) <= metrics.edgeGrab { return (row, index, item, true) }
+                if abs(point.x - box.maxX) <= metrics.edgeGrab { return (row, index, item, false) }
+                return (row, index, item, nil)
+            }
+            return nil
+        }
+        return nil
+    }
+
+    /// The seam between two clips, if the pointer is near one.
+    private func seam(at point: CGPoint) -> Clip.ID? {
+        guard let videoRow = (cachedRows.isEmpty ? rows : cachedRows)
+            .firstIndex(where: { $0.kind == .video }),
+              rect(ofRow: videoRow).contains(point) else { return nil }
+
+        var elapsed: TimeInterval = 0
+        let clips = model.project.timeline.clips
+        for (index, clip) in clips.enumerated() {
+            elapsed += clip.outputDuration
+            guard index + 1 < clips.count else { break }
+            if abs(point.x - x(forOutput: elapsed)) <= metrics.edgeGrab { return clip.id }
+        }
+        return nil
+    }
+
+    private func select(_ item: TimelineLayout.Item) {
+        model.clearTimelineSelection()
+        switch item.kind {
+        case .video: model.selectedClip = item.id
+        case .zoom: model.selectedZoom = item.id
+        case .text:
+            model.selectedText = item.id
+            model.inspector = .text
+        case .camera: model.selectedCamera = item.id
+        case .mask: model.selectedMask = item.id
+        case .pointer: model.selectedPointer = item.id
+        case .caption: break
+        }
+    }
+
     // MARK: - Mouse
 
     override func mouseDown(with event: NSEvent) {
@@ -329,96 +377,98 @@ final class StudioTimelineView: NSView {
         // The clock stops writing the playhead for the length of any timeline drag. Otherwise
         // playback and the drag write it alternately and the handle fights the pointer.
         model.player.beginScrubbing()
+        cachedRows = rows
 
-        if clipTrack.contains(point) {
-            // A seam takes precedence over the clip body, the way a zoom's edge does over its
-            // middle: the narrow target is the one you have to aim at.
-            if let seam = seam(at: point) {
-                model.selectedClip = nil
-                model.beginGesture()
-                drag = .clipSeam(seam, lastTime: outputTime(forX: point.x))
-                needsDisplay = true
-                return
-            }
-            if let hit = clip(at: point),
-               let index = model.project.timeline.clips.firstIndex(where: { $0.id == hit.id }) {
-                model.selectedClip = hit.id
-                model.selectedZoom = nil
-                drag = .clipBody(hit.id, from: index)
-                dropIndex = index
-                needsDisplay = true
-                // **Returns rather than falling through.** It used to set the selection and then
-                // start a playhead scrub regardless, so a clip could never be dragged: every
-                // attempt scrubbed instead.
-                return
-            }
-        }
-
-        if zoomTrack.contains(point), let hit = zoom(at: point) {
-            model.selectedZoom = hit.segment.id
-            model.selectedClip = nil
+        // A seam takes precedence over a clip body, the way an edge does over a middle: the narrow
+        // target is the one you have to aim at.
+        if let seamID = seam(at: point) {
+            model.clearTimelineSelection()
             model.beginGesture()
-            drag = hit.edge.map { .zoomEdge(hit.segment.id, leading: $0) }
-                ?? .zoomBody(hit.segment.id, grabbedAt: outputTime(forX: point.x))
+            drag = .clipSeam(seamID, lastTime: outputTime(forX: point.x))
             needsDisplay = true
             return
         }
 
-        if clipTrack.contains(point) {
-            model.selectedClip = clip(at: point)?.id
-            model.selectedZoom = nil
+        if let hit = hit(at: point) {
+            select(hit.item)
+            if hit.row.kind == .video {
+                guard let index = model.project.timeline.clips
+                    .firstIndex(where: { $0.id == hit.item.id }) else { return }
+                drag = .clipBody(hit.item.id, from: index)
+                dropIndex = index
+            } else if let leading = hit.edge {
+                model.beginGesture()
+                drag = .itemEdge(hit.row.kind, hit.item.id, leading: leading)
+            } else if hit.row.kind != .caption {
+                model.beginGesture()
+                let grabbed = sourceTime(forX: point.x) ?? 0
+                let start = sourceStart(of: hit.item, kind: hit.row.kind) ?? grabbed
+                drag = .itemBody(hit.row.kind, hit.item.id, grabOffset: grabbed - start)
+            }
             needsDisplay = true
+            // **Returns rather than falling through.** It used to set the selection and then start
+            // a playhead scrub regardless, so nothing on the timeline could be dragged: every
+            // attempt scrubbed instead.
+            return
         }
 
+        model.clearTimelineSelection()
         drag = .playhead
         onScrub?(outputTime(forX: point.x))
         needsDisplay = true
     }
 
+    /// An item's start in *source* time, which is what it is stored in.
+    private func sourceStart(of item: TimelineLayout.Item,
+                             kind: TimelineLayout.RowKind) -> TimeInterval? {
+        switch kind {
+        case .text: return model.project.textOverlays.first { $0.id == item.id }?.start
+        case .zoom: return model.project.zooms.first { $0.id == item.id }?.start
+        case .camera: return model.project.cameraSegments.first { $0.id == item.id }?.start
+        case .mask: return model.project.masks.first { $0.id == item.id }?.start
+        case .pointer: return model.project.pointerHighlights.first { $0.id == item.id }?.start
+        case .video, .caption: return nil
+        }
+    }
+
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let time = outputTime(forX: point.x)
 
         switch drag {
         case .none:
             return
+        case .playhead:
+            onScrub?(outputTime(forX: point.x))
         case .clipBody:
             dropIndex = insertionIndex(forX: point.x)
         case .clipSeam(let id, let lastTime):
+            let time = outputTime(forX: point.x)
             let delta = time - lastTime
             guard abs(delta) > 0.0001 else { return }
             drag = .clipSeam(id, lastTime: time)
             model.rollCut(after: id, by: delta)
-        case .playhead:
-            onScrub?(time)
-        case .zoomBody(let id, let grabbedAt):
-            let delta = time - grabbedAt
-            guard abs(delta) > 0.0001 else { return }
-            drag = .zoomBody(id, grabbedAt: time)
-            moveZoom(id) { segment in
-                segment.start += delta
-                segment.end += delta
-            }
-        case .zoomEdge(let id, let leading):
-            moveZoom(id) { segment in
-                if leading {
-                    segment.start = min(time, segment.end - ZoomSegment.minimumDuration)
-                } else {
-                    segment.end = max(time, segment.start + ZoomSegment.minimumDuration)
-                }
-            }
+        case .itemBody(let kind, let id, let grabOffset):
+            guard let source = sourceTime(forX: point.x) else { return }
+            model.moveTimelineItem(kind, id: id, toSourceStart: source - grabOffset)
+        case .itemEdge(let kind, let id, let leading):
+            guard let source = sourceTime(forX: point.x) else { return }
+            model.trimTimelineItem(kind, id: id, leading: leading, toSource: source)
         }
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
         if case .clipBody(_, let from) = drag, let dropIndex, dropIndex != from {
-            // Insert-before semantics: dropping to the right of where it came from means the
-            // index shifts down by one once the clip is lifted out.
+            // Insert-before semantics: dropping to the right of where it came from means the index
+            // shifts down by one once the clip is lifted out.
             model.moveClip(from: from, to: dropIndex > from ? dropIndex - 1 : dropIndex)
         }
-        if case .none = drag {} else if case .playhead = drag {} else if case .clipBody = drag {
-        } else { model.endGesture() }
+        switch drag {
+        case .none, .playhead, .clipBody:
+            break
+        case .clipSeam, .itemBody, .itemEdge:
+            model.endGesture()
+        }
         drag = .none
         dropIndex = nil
         needsDisplay = true
@@ -434,29 +484,6 @@ final class StudioTimelineView: NSView {
             elapsed += clip.outputDuration
         }
         return model.project.timeline.clips.count
-    }
-
-    /// The clip *before* a seam the pointer is close to, if any. Nil for the outer edges, which
-    /// are trims rather than seams.
-    private func seam(at point: CGPoint) -> Clip.ID? {
-        var elapsed: TimeInterval = 0
-        let clips = model.project.timeline.clips
-        for (index, clip) in clips.enumerated() {
-            elapsed += clip.outputDuration
-            guard index + 1 < clips.count else { break }
-            if abs(point.x - x(forOutput: elapsed)) <= Metrics.edgeGrab { return clip.id }
-        }
-        return nil
-    }
-
-    /// Editing a zoom marks it as the user's, so "Re-detect" will not take it away again.
-    private func moveZoom(_ id: ZoomSegment.ID, _ change: (inout ZoomSegment) -> Void) {
-        model.editLive { project in
-            guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return }
-            change(&project.zooms[index])
-            project.zooms[index].isAutomatic = false
-            project.zooms.sort { $0.start < $1.start }
-        }
     }
 
     // MARK: - The menu
@@ -480,22 +507,26 @@ final class StudioTimelineView: NSView {
 
         let menu = NSMenu()
 
-        if zoomTrack.contains(point), let hit = zoom(at: point) {
-            model.selectedZoom = hit.segment.id
-            model.selectedClip = nil
-            add(to: menu, "Delete Zoom", #selector(menuDeleteZoom))
-            menu.addItem(.separator())
-        }
-
-        if clipTrack.contains(point), let hit = clip(at: point) {
-            model.selectedClip = hit.id
-            model.selectedZoom = nil
-            add(to: menu, "Duplicate Clip", #selector(menuDuplicateClip))
-            add(to: menu, "Delete Clip", #selector(menuDeleteClip), key: "⌫")
-            if hasHiddenMaterial(hit) {
-                add(to: menu, "Put Back Trimmed Material", #selector(menuUntrimClip))
+        // Whatever is under the pointer, on whichever row — one hit test now serves all of them.
+        cachedRows = rows
+        if let hit = hit(at: point) {
+            select(hit.item)
+            switch hit.row.kind {
+            case .video:
+                add(to: menu, "Duplicate Clip", #selector(menuDuplicateClip))
+                add(to: menu, "Delete Clip", #selector(menuDeleteClip), key: "⌫")
+                if let clip = model.project.timeline.clips.first(where: { $0.id == hit.item.id }),
+                   hasHiddenMaterial(clip) {
+                    add(to: menu, "Put Back Trimmed Material", #selector(menuUntrimClip))
+                }
+                menu.addItem(.separator())
+            case .caption:
+                break
+            default:
+                add(to: menu, "Delete \(hit.row.kind.name)", #selector(menuDeleteSelection),
+                    key: "⌫")
+                menu.addItem(.separator())
             }
-            menu.addItem(.separator())
         }
 
         add(to: menu, "Add Zoom Here", #selector(menuAddZoom), key: "Z")
@@ -549,28 +580,10 @@ final class StudioTimelineView: NSView {
     @objc private func menuCameraHidden() { model.addCameraSegment(.hidden) }
     @objc private func menuSplit() { model.split() }
 
-    private func zoom(at point: CGPoint) -> (segment: ZoomSegment, edge: Bool?)? {
-        for segment in model.project.zooms {
-            guard let from = x(forSource: segment.start),
-                  let to = x(forSource: segment.end) else { continue }
-            guard point.x >= from - Metrics.edgeGrab, point.x <= to + Metrics.edgeGrab else {
-                continue
-            }
-            if abs(point.x - from) <= Metrics.edgeGrab { return (segment, true) }
-            if abs(point.x - to) <= Metrics.edgeGrab { return (segment, false) }
-            return (segment, nil)
-        }
-        return nil
+    /// Deletes whatever is selected, whichever row it is on.
+    @objc private func menuDeleteSelection() {
+        guard let selection = model.timelineSelection else { return }
+        model.deleteTimelineItem(selection.kind, id: selection.id)
     }
 
-    private func clip(at point: CGPoint) -> Clip? {
-        var elapsed: TimeInterval = 0
-        for clip in model.project.timeline.clips {
-            let from = x(forOutput: elapsed)
-            let to = x(forOutput: elapsed + clip.outputDuration)
-            if point.x >= from && point.x <= to { return clip }
-            elapsed += clip.outputDuration
-        }
-        return nil
-    }
 }

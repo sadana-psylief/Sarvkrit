@@ -26,8 +26,10 @@ struct StudioEditorView: View {
             Divider()
             transport
             Divider()
+            // Tall enough for however many rows the project has: a row appears when you add the
+            // first of something, which is how you learn the track is there.
             TimelineHost(model: model, onScrub: onScrub)
-                .frame(height: StudioTimelineView.preferredHeight)
+                .frame(height: TimelineLayout.preferredHeight(rowCount: model.timelineRowCount))
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $model.isShowingShortcuts) {

@@ -55,6 +55,39 @@ final class StudioDocumentModel: ObservableObject {
     @Published var selectedZoom: ZoomSegment.ID?
     @Published var selectedClip: Clip.ID?
     @Published var selectedText: TextOverlay.ID?
+    @Published var selectedCamera: CameraSegment.ID?
+    @Published var selectedMask: StudioMask.ID?
+    @Published var selectedPointer: PointerHighlight.ID?
+    /// Clears every timeline selection.
+    ///
+    /// **One call rather than nilling five properties by hand at each site.** Selection used to be
+    /// two properties kept mutually exclusive by every writer remembering to nil the other, which
+    /// does not scale to the six kinds the timeline now shows.
+    func clearTimelineSelection() {
+        selectedClip = nil
+        selectedZoom = nil
+        selectedText = nil
+        selectedCamera = nil
+        selectedMask = nil
+        selectedPointer = nil
+    }
+
+    /// How many rows the timeline has, so the view can be tall enough for them.
+    var timelineRowCount: Int {
+        TimelineLayout.rows(project: project, events: events).count
+    }
+
+    /// Whatever is selected on the timeline, if anything.
+    var timelineSelection: (kind: TimelineLayout.RowKind, id: UUID)? {
+        if let selectedClip { return (.video, selectedClip) }
+        if let selectedZoom { return (.zoom, selectedZoom) }
+        if let selectedText { return (.text, selectedText) }
+        if let selectedCamera { return (.camera, selectedCamera) }
+        if let selectedMask { return (.mask, selectedMask) }
+        if let selectedPointer { return (.pointer, selectedPointer) }
+        return nil
+    }
+
     /// Bumped on every edit.
     ///
     /// **The canvas and the timeline poll this.** Both are `NSView`s that read the project inside
@@ -231,6 +264,128 @@ final class StudioDocumentModel: ObservableObject {
         guard let selectedClip else { return }
         edit { $0.timeline = $0.timeline.delete(id: selectedClip) }
         self.selectedClip = nil
+    }
+
+    // MARK: - Editing any track from the timeline
+
+    /// Moves a timeline item so it begins at `sourceStart`, keeping its length.
+    ///
+    /// **One entry point for every track**, so the timeline needs one drag handler rather than one
+    /// per kind — which is what kept masks, camera segments and pointer highlights off it
+    /// altogether. Live, because this is a drag: one undo step for the whole gesture.
+    func moveTimelineItem(_ kind: TimelineLayout.RowKind, id: UUID,
+                          toSourceStart sourceStart: TimeInterval) {
+        editLive { project in
+            let start = max(0, sourceStart)
+            switch kind {
+            case .text:
+                guard let index = project.textOverlays.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                let length = project.textOverlays[index].end - project.textOverlays[index].start
+                project.textOverlays[index].start = start
+                project.textOverlays[index].end = start + length
+            case .zoom:
+                guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return }
+                let length = project.zooms[index].end - project.zooms[index].start
+                project.zooms[index].start = start
+                project.zooms[index].end = start + length
+                project.zooms[index].isAutomatic = false
+            case .camera:
+                guard let index = project.cameraSegments.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                let length = project.cameraSegments[index].end
+                    - project.cameraSegments[index].start
+                project.cameraSegments[index].start = start
+                project.cameraSegments[index].end = start + length
+            case .mask:
+                guard let index = project.masks.firstIndex(where: { $0.id == id }) else { return }
+                let length = project.masks[index].end - project.masks[index].start
+                project.masks[index].start = start
+                project.masks[index].end = start + length
+            case .pointer:
+                guard let index = project.pointerHighlights
+                    .firstIndex(where: { $0.id == id }) else { return }
+                let length = project.pointerHighlights[index].end
+                    - project.pointerHighlights[index].start
+                project.pointerHighlights[index].start = start
+                project.pointerHighlights[index].end = start + length
+            case .video, .caption:
+                // A clip's place is its order, not a time; captions come from the transcript.
+                break
+            }
+        }
+    }
+
+    /// Drags one edge of a timeline item to a source moment.
+    func trimTimelineItem(_ kind: TimelineLayout.RowKind, id: UUID, leading: Bool,
+                          toSource source: TimeInterval) {
+        /// Where the edge lands, keeping the item long enough to still be grabbable afterwards.
+        /// Returns a pair rather than taking two `inout`s into the same array, which Swift refuses
+        /// as overlapping access — and rightly.
+        func moved(_ start: TimeInterval, _ end: TimeInterval,
+                   minimum: TimeInterval) -> (TimeInterval, TimeInterval) {
+            let t = max(0, source)
+            return leading ? (min(t, end - minimum), end) : (start, max(t, start + minimum))
+        }
+
+        editLive { project in
+            switch kind {
+            case .text:
+                guard let index = project.textOverlays.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                let item = project.textOverlays[index]
+                let range = moved(item.start, item.end, minimum: TextOverlay.minimumDuration)
+                project.textOverlays[index].start = range.0
+                project.textOverlays[index].end = range.1
+            case .zoom:
+                guard let index = project.zooms.firstIndex(where: { $0.id == id }) else { return }
+                let item = project.zooms[index]
+                let range = moved(item.start, item.end, minimum: ZoomSegment.minimumDuration)
+                project.zooms[index].start = range.0
+                project.zooms[index].end = range.1
+                project.zooms[index].isAutomatic = false
+            case .camera:
+                guard let index = project.cameraSegments.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                let item = project.cameraSegments[index]
+                let range = moved(item.start, item.end, minimum: 0.4)
+                project.cameraSegments[index].start = range.0
+                project.cameraSegments[index].end = range.1
+            case .mask:
+                guard let index = project.masks.firstIndex(where: { $0.id == id }) else { return }
+                let item = project.masks[index]
+                let range = moved(item.start, item.end, minimum: 0.4)
+                project.masks[index].start = range.0
+                project.masks[index].end = range.1
+            case .pointer:
+                guard let index = project.pointerHighlights
+                    .firstIndex(where: { $0.id == id }) else { return }
+                let item = project.pointerHighlights[index]
+                let range = moved(item.start, item.end,
+                                  minimum: PointerHighlight.minimumDuration)
+                project.pointerHighlights[index].start = range.0
+                project.pointerHighlights[index].end = range.1
+            case .video, .caption:
+                break
+            }
+        }
+    }
+
+    /// Removes whatever is selected on the timeline, whichever track it is on.
+    func deleteTimelineItem(_ kind: TimelineLayout.RowKind, id: UUID) {
+        switch kind {
+        case .text: removeText(id)
+        case .zoom: edit { $0.zooms.removeAll { $0.id == id } }
+        case .camera: removeCameraSegment(id)
+        case .mask: removeMask(id)
+        case .pointer: removePointerHighlight(id)
+        case .video: edit { $0.timeline = $0.timeline.delete(id: id) }
+        case .caption: break
+        }
     }
 
     /// Moves a clip in the running order.
