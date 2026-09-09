@@ -50,7 +50,11 @@ actor StudioExporter {
 
         let (canvas, _) = StudioRenderer.layout(for: project)
         let output = preset.outputSize(forCanvas: canvas)
-        let fps = preset.fps
+        // **The recording's own rate unless the preset insists otherwise.** This used to be
+        // `preset.fps` outright and `manifest.fps` was read nowhere, so a 30fps take was exported
+        // at 60 with every frame duplicated — twice the bitrate for the same pictures.
+        let recordingFPS = (try? recording.readManifest())?.fps ?? 60
+        let fps = preset.frameRate(forRecording: recordingFPS)
 
         // Sequential, so a reader is exactly the right tool here — unlike the preview, which has to
         // seek and therefore cannot use one.
@@ -101,9 +105,9 @@ actor StudioExporter {
 
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination,
-                                       fileType: preset.codec == .proRes422 ? .mov : .mp4)
+                                       fileType: preset.fileType)
         let input = AVAssetWriterInput(mediaType: .video,
-                                       outputSettings: settings(preset: preset, size: output))
+                                       outputSettings: settings(preset: preset, size: output, fps: fps))
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
@@ -313,7 +317,7 @@ actor StudioExporter {
         reader.cancelReading()
     }
 
-    private func settings(preset: ExportPreset, size: CGSize) -> [String: Any] {
+    private func settings(preset: ExportPreset, size: CGSize, fps: Int) -> [String: Any] {
         var codec: AVVideoCodecType
         switch preset.codec {
         case .h264: codec = .h264
@@ -328,8 +332,8 @@ actor StudioExporter {
         ]
         if preset.codec == .h264 || preset.codec == .hevc {
             settings[AVVideoCompressionPropertiesKey] = [
-                AVVideoAverageBitRateKey: Int(size.width * size.height) * 8,
-                AVVideoExpectedSourceFrameRateKey: preset.fps,
+                AVVideoAverageBitRateKey: ExportPreset.videoBitrate(size: size, fps: fps),
+                AVVideoExpectedSourceFrameRateKey: fps,
             ]
         }
         return settings

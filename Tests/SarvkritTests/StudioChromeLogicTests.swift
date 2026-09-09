@@ -86,9 +86,14 @@ final class StudioChromeLogicTests: XCTestCase {
         XCTAssertEqual(ExportPreset.web.height, 1080)
     }
 
-    func testTheEditorPresetKeepsTheAudioTracksApart() {
-        XCTAssertTrue(ExportPreset.forEditing.separatesAudioTracks)
+    /// **This asserted `separatesAudioTracks`, a flag nothing implemented.** The exporter writes
+    /// one AAC track whatever the preset says, so the test was pinning a promise the app did not
+    /// keep — the worst kind of green. The flag is gone; what the editor preset actually offers is
+    /// ProRes at full size, and that is what is asserted.
+    func testTheEditorPresetIsProResAtFullSize() {
         XCTAssertEqual(ExportPreset.forEditing.codec, .proRes422)
+        XCTAssertNil(ExportPreset.forEditing.height)
+        XCTAssertEqual(ExportPreset.forEditing.fileType, .mov)
     }
 
     func testAPresetPreservesTheCanvasAspect() {

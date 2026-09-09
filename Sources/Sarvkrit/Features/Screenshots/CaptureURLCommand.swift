@@ -56,8 +56,12 @@ enum CaptureURLCommand: Equatable {
     case seek(TimeInterval)
     /// Starts or stops playback in the open editor.
     case playPause
-    /// Exports the open editor to a file, skipping the save panel.
-    case exportEditor(URL)
+    /// Exports the open editor to a file, skipping both export dialogs.
+    ///
+    /// `preset=` names one of `ExportPreset.all` by id; `height=` overrides the size and permits an
+    /// upscale, since naming a size explicitly is the deliberate choice the cap exists to protect
+    /// against making by accident.
+    case exportEditor(URL, preset: ExportPreset)
     /// Performs one of the editor's own actions by name — the same ones the keyboard routes.
     case editorCommand(StudioEditorCommand)
     /// Brings a picture into the open editor at the playhead.
@@ -118,7 +122,7 @@ enum CaptureURLCommand: Equatable {
         ScreenshotAction.allCases.map { .action($0) }
             + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings(pane: nil),
                .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause,
-               .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4")),
+               .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4"), preset: .web),
                .editorCommand(.split), .addPicture(URL(fileURLWithPath: "/tmp/logo.png")),
                .showRecordBar, .aimRecording]
     }
@@ -182,6 +186,24 @@ enum CaptureURLCommand: Equatable {
 
     /// Refused rather than clamped when absent or negative: a script that computed a time wrongly
     /// should move nothing, the same rule the rest of this parser follows.
+    /// The export settings named in the URL, falling back to the default preset.
+    private static func preset(from url: URL) -> ExportPreset {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? {
+            items.first { $0.name.lowercased() == name }?.value
+        }
+        var preset = value("preset")
+            .flatMap { named in ExportPreset.all.first { $0.id == named.lowercased() } }
+            ?? .web
+        if let raw = value("height"), let height = Int(raw), height > 0 {
+            preset.height = height
+            // Named explicitly, so it is the deliberate choice the cap exists to protect against
+            // making by accident.
+            preset.allowsUpscale = true
+        }
+        return preset
+    }
+
     private static func pane(from url: URL) -> String? {
         let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
             .first { $0.name.lowercased() == "pane" }?.value?
@@ -218,7 +240,9 @@ enum CaptureURLCommand: Equatable {
         if name == "aim" { return .aimRecording }
         if name == "seek" { return seconds(from: url).map { .seek($0) } }
         if name == "play" { return .playPause }
-        if name == "export" { return filepath(from: url).map { .exportEditor($0) } }
+        if name == "export" {
+            return filepath(from: url).map { .exportEditor($0, preset: preset(from: url)) }
+        }
         if name == "picture" { return filepath(from: url).map { .addPicture($0) } }
         if name == "editor" {
             guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?

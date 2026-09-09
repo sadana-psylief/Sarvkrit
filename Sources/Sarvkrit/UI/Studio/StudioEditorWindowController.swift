@@ -174,16 +174,56 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Asks what the export should be, then where to put it.
+    ///
+    /// **The quality question comes first.** It decides the container and therefore the file
+    /// extension, so a save panel shown before it would have to guess — which is how the panel
+    /// ended up offering only `.mp4` while the exporter wrote `.mov` for ProRes.
     private func export() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "Recording.mp4"
-        panel.allowedContentTypes = [.mpeg4Movie]
-        panel.message = "1080p H.264 — plays everywhere."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        export(to: url)
+        let manifest = try? model.bundle.readManifest()
+        let (canvas, _) = StudioRenderer.layout(for: model.project)
+        let subject = ExportOptionsSheet.Subject(
+            canvas: canvas,
+            recording: model.project.cropRect?.size ?? model.project.canvasSize,
+            seconds: model.duration,
+            recordingFPS: manifest?.fps ?? 60)
+
+        let sheet = NSPanel(contentRect: .zero,
+                            styleMask: [.titled, .fullSizeContentView],
+                            backing: .buffered, defer: false)
+        sheet.titleVisibility = .hidden
+        sheet.titlebarAppearsTransparent = true
+        sheet.contentView = NSHostingView(rootView: ExportOptionsSheet(
+            subject: subject,
+            onCancel: { [weak self] in self?.window?.endSheet(sheet, returnCode: .cancel) },
+            onExport: { [weak self] preset in
+                self?.chosenPreset = preset
+                self?.window?.endSheet(sheet, returnCode: .OK)
+            }))
+        sheet.setContentSize(sheet.contentView?.fittingSize ?? NSSize(width: 460, height: 420))
+
+        window?.beginSheet(sheet) { [weak self] response in
+            guard let self, response == .OK, let preset = self.chosenPreset else { return }
+            self.chosenPreset = nil
+            self.askWhereToPutIt(preset)
+        }
     }
 
-    func export(to url: URL) {
+    /// Carries the choice from the sheet's completion out to the save panel.
+    private var chosenPreset: ExportPreset?
+
+    private func askWhereToPutIt(_ preset: ExportPreset) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Recording.\(preset.fileExtension)"
+        // Follows the codec, so choosing ProRes does not offer to save it as an mp4.
+        panel.allowedContentTypes = [preset.contentType]
+        let size = preset.outputSize(forCanvas: StudioRenderer.layout(for: model.project).canvas)
+        panel.message = "\(Int(size.width)) × \(Int(size.height)) · \(preset.codec.title)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        export(to: url, preset: preset)
+    }
+
+    func export(to url: URL, preset: ExportPreset = .web) {
         model.exportProgress = 0
         let project = model.project
         let events = model.events
@@ -195,7 +235,7 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
             do {
                 try await exporter.export(
                     project: project, events: events, recording: bundle,
-                    preset: .web, to: url,
+                    preset: preset, to: url,
                     onProgress: { progress in
                         Task { @MainActor in self?.model.exportProgress = progress.fraction }
                     })
@@ -279,14 +319,14 @@ final class StudioEditorController {
         return true
     }
 
-    /// Exports the newest editor to a file, without the save panel.
+    /// Exports the newest editor to a file, without either dialog.
     ///
-    /// The same call the Export button makes, minus the panel — which is what makes "does the
-    /// export have sound" answerable without a mouse.
+    /// The same call the Export button makes, minus the panels — which is what makes "does the
+    /// export have sound, and at what size" answerable without a mouse.
     @discardableResult
-    func export(to url: URL) -> Bool {
+    func export(to url: URL, preset: ExportPreset = .web) -> Bool {
         guard let controller = controllers.last else { return false }
-        controller.export(to: url)
+        controller.export(to: url, preset: preset)
         return true
     }
 

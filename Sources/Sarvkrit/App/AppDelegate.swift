@@ -117,8 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if !StudioEditorController.shared.perform(command) {
                     Self.urlLog.error("editor command with no editor open")
                 }
-            case .exportEditor(let destination):
-                if !StudioEditorController.shared.export(to: destination) {
+            case .exportEditor(let destination, let preset):
+                if !StudioEditorController.shared.export(to: destination, preset: preset) {
                     Self.urlLog.error("export with no editor open")
                 }
             case .playPause:

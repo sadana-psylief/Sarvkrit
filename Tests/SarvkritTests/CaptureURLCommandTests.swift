@@ -352,7 +352,35 @@ final class RecordingURLCommandTests: XCTestCase {
     func testExportTakesADestination() {
         XCTAssertEqual(
             CaptureURLCommand.parse(URL(string: "sarvkrit://export?filepath=/tmp/out.mp4")!),
-            .exportEditor(URL(fileURLWithPath: "/tmp/out.mp4")))
+            .exportEditor(URL(fileURLWithPath: "/tmp/out.mp4"), preset: .web))
+    }
+
+    /// And the quality, so "is the sharpest export actually sharper" is answerable the same way
+    /// "does the export have sound" became answerable.
+    func testExportTakesAPreset() {
+        guard case .exportEditor(_, let preset) = CaptureURLCommand.parse(
+            URL(string: "sarvkrit://export?filepath=/tmp/out.mp4&preset=sharpest")!)
+        else { return XCTFail("not an export") }
+        XCTAssertEqual(preset.id, ExportPreset.sharpest.id)
+    }
+
+    /// A named height overrides the preset and permits the upscale, because naming a size is the
+    /// deliberate choice the no-upscale rule exists to protect against making by accident.
+    func testExportTakesAHeightAndAllowsItToUpscale() {
+        guard case .exportEditor(_, let preset) = CaptureURLCommand.parse(
+            URL(string: "sarvkrit://export?filepath=/tmp/out.mp4&height=2160")!)
+        else { return XCTFail("not an export") }
+        XCTAssertEqual(preset.height, 2160)
+        XCTAssertTrue(preset.allowsUpscale)
+    }
+
+    /// An unknown preset name falls back rather than refusing: a typo in a script should still
+    /// produce a file.
+    func testAnUnknownPresetFallsBack() {
+        guard case .exportEditor(_, let preset) = CaptureURLCommand.parse(
+            URL(string: "sarvkrit://export?filepath=/tmp/out.mp4&preset=nonsense")!)
+        else { return XCTFail("not an export") }
+        XCTAssertEqual(preset.id, ExportPreset.web.id)
     }
 
     func testExportWithoutADestinationIsRefused() {
