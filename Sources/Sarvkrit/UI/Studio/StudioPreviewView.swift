@@ -14,6 +14,7 @@ final class StudioPreviewView: NSView {
     private let cache = StudioRenderer.Cache()
     private var observation: NSObjectProtocol?
     private var lastToken = -1
+    private var lastRevision = -1
     private var pollTimer: Timer?
     /// Which line of text is being dragged, and where it was grabbed within its own box.
     private var textDrag: (id: TextOverlay.ID, grabOffset: CGPoint)?
@@ -43,10 +44,13 @@ final class StudioPreviewView: NSView {
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                guard self.model.player.frameToken != self.lastToken || self.needsDisplay else {
-                    return
-                }
+                // The project as well as the frame: an edit made while paused changes the
+                // composite without changing the decoded picture, and nothing else was noticing.
+                guard self.model.player.frameToken != self.lastToken
+                    || self.model.revision != self.lastRevision
+                    || self.needsDisplay else { return }
                 self.lastToken = self.model.player.frameToken
+                self.lastRevision = self.model.revision
                 self.needsDisplay = true
             }
         }

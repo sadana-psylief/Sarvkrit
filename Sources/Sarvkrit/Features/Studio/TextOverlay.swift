@@ -32,9 +32,10 @@ struct TextOverlay: Codable, Equatable, Identifiable {
     var cornerRadiusFraction: Double = 0.014
     var haloColour: RGBAColour?
     /// Faded in and out, because text appearing between two frames reads as a flash.
-    var fadeSeconds: TimeInterval = 0.2
+    var fadeSeconds: TimeInterval = TextOverlay.defaultFade
 
     static let minimumDuration: TimeInterval = 0.4
+    static let defaultFade: TimeInterval = 0.2
 
     func covers(_ t: TimeInterval) -> Bool { t >= start && t < end }
 

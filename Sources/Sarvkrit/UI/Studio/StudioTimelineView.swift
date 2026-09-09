@@ -41,6 +41,7 @@ final class StudioTimelineView: NSView {
 
     private var pollTimer: Timer?
     private var lastDrawnPlayhead: TimeInterval = -1
+    private var lastRevision = -1
 
     init(model: StudioDocumentModel) {
         self.model = model
@@ -69,8 +70,10 @@ final class StudioTimelineView: NSView {
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                guard self.model.playhead != self.lastDrawnPlayhead else { return }
+                guard self.model.playhead != self.lastDrawnPlayhead
+                    || self.model.revision != self.lastRevision else { return }
                 self.lastDrawnPlayhead = self.model.playhead
+                self.lastRevision = self.model.revision
                 self.needsDisplay = true
             }
         }

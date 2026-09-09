@@ -55,6 +55,14 @@ final class StudioDocumentModel: ObservableObject {
     @Published var selectedZoom: ZoomSegment.ID?
     @Published var selectedClip: Clip.ID?
     @Published var selectedText: TextOverlay.ID?
+    /// Bumped on every edit.
+    ///
+    /// **The canvas and the timeline poll this.** Both are `NSView`s that read the project inside
+    /// `draw(_:)`, and both relied on SwiftUI re-running the enclosing body and calling
+    /// `updateNSView` — which does not happen reliably, as the playhead already taught us. So an
+    /// edit made while paused did not repaint anything: adding text put nothing on screen until
+    /// playback or a scrub happened to nudge it.
+    @Published private(set) var revision = 0
     @Published private(set) var isDirty = false
     /// Whether the shortcuts sheet is up. Set from the window's ⌘/ and cleared by the sheet.
     @Published var isShowingShortcuts = false
@@ -149,6 +157,7 @@ final class StudioDocumentModel: ObservableObject {
         guard updated != project else { return }
         undoStack.commit(updated)
         project = updated
+        revision &+= 1
         player.duration = updated.duration
         isDirty = true
         saver.schedule(updated)
@@ -159,6 +168,7 @@ final class StudioDocumentModel: ObservableObject {
         var updated = project
         change(&updated)
         project = updated
+        revision &+= 1
         isDirty = true
     }
 
@@ -447,8 +457,12 @@ final class StudioDocumentModel: ObservableObject {
 
     /// Puts a line of text on the video from the playhead, and selects it for editing.
     func addTextAtPlayhead() {
-        let start = sourceTime
-        let overlay = TextOverlay(start: start, end: start + 3)
+        // **Starts a fade-length early, on purpose.** A line whose range begins exactly at the
+        // playhead is fully transparent there — the first frame of its own fade in — so asking for
+        // text "here" and seeing nothing appear is the obvious reading of a bug. Beginning slightly
+        // before means it is at full strength at the moment you asked for it.
+        let overlay = TextOverlay(start: max(0, sourceTime - TextOverlay.defaultFade),
+                                  end: sourceTime + 3)
         edit {
             $0.textOverlays.append(overlay)
             $0.textOverlays.sort { $0.start < $1.start }
