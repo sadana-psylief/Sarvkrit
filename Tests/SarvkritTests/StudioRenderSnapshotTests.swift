@@ -392,4 +392,47 @@ final class StudioRenderSnapshotTests: XCTestCase {
             sources: FrameSources(screen: try screen())))
         XCTAssertEqual(png(unwashed), png(plain))
     }
+
+    // MARK: - Pictures
+
+    /// A brought-in picture reaches the finished frame — the seam, not the layer.
+    func testAMediaOverlayIsDrawn() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("media-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let file = directory.appendingPathComponent("logo.png")
+        let picture = try XCTUnwrap(CGContext(
+            data: nil, width: 120, height: 120, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        picture.setFillColor(CGColor(red: 0.1, green: 0.9, blue: 0.4, alpha: 1))
+        picture.fill(CGRect(x: 0, y: 0, width: 120, height: 120))
+        let image = try XCTUnwrap(picture.makeImage())
+        try XCTUnwrap(CaptureWriter.pngData(from: image)).write(to: file)
+
+        var withPicture = project()
+        withPicture.mediaOverlays = [MediaOverlay(start: 0, end: 10, asset: "logo.png")]
+        let loaded = try XCTUnwrap(MediaStore.shared.image(at: file))
+
+        let plain = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen())))
+        let composited = try XCTUnwrap(StudioRenderer.frame(
+            of: withPicture, atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen(), media: ["logo.png": loaded])))
+
+        XCTAssertNotEqual(png(plain), png(composited), "the picture was not drawn")
+        try write(composited, named: "studio-media-overlay")
+    }
+
+    /// An overlay whose file is missing draws nothing rather than a black box — a project moved
+    /// between Macs with a half-copied bundle should degrade, not break.
+    func testAMissingPictureDrawsNothing() throws {
+        var withPicture = project()
+        withPicture.mediaOverlays = [MediaOverlay(start: 0, end: 10, asset: "gone.png")]
+
+        XCTAssertEqual(png(try render(project(), at: 3)), png(try render(withPicture, at: 3)))
+    }
 }

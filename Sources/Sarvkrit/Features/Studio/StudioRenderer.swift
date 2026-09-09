@@ -15,13 +15,16 @@ struct FrameSources {
     var wallpaper: CGImage?
     /// Bitmaps for pointers that could not be recognised, keyed by hash.
     var customCursors: [String: CGImage] = [:]
+    /// Pictures the user brought in, keyed by asset name.
+    var media: [String: CGImage] = [:]
 
     init(screen: CGImage? = nil, camera: CGImage? = nil, wallpaper: CGImage? = nil,
-         customCursors: [String: CGImage] = [:]) {
+         customCursors: [String: CGImage] = [:], media: [String: CGImage] = [:]) {
         self.screen = screen
         self.camera = camera
         self.wallpaper = wallpaper
         self.customCursors = customCursors
+        self.media = media
     }
 
     /// The wallpaper a project's background needs, if any.
@@ -174,6 +177,9 @@ enum StudioRenderer {
         drawCaptions(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
         // Last, so hand-placed text sits above everything including the camera — which is what
         // somebody putting a title on a frame expects.
+        // Pictures below text, so a caption over a logo stays readable.
+        drawMediaOverlays(project: project, sourceTime: sourceTime, canvas: canvas,
+                          media: sources.media, in: context)
         drawTextOverlays(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
 
         // **Last of all, over everything.** A fade to black that left the titles showing would not
@@ -410,6 +416,42 @@ enum StudioRenderer {
                 maxWidth: canvas.width * CGFloat(overlay.maxWidthFraction),
                 style: style)
             return (overlay.id, rect)
+        }
+    }
+
+    /// Pictures the user brought in, in canvas space — they belong to the finished video, so a
+    /// zoom must not move them.
+    static func drawMediaOverlays(project: StudioProject, sourceTime: TimeInterval,
+                                  canvas: CGSize, media: [String: CGImage],
+                                  in context: CGContext) {
+        guard canvas.width > 0, canvas.height > 0 else { return }
+        for overlay in project.mediaOverlays {
+            let opacity = overlay.opacity(at: sourceTime)
+            guard opacity > 0.001, let image = media[overlay.asset] else { continue }
+
+            let box = CGRect(x: canvas.width * overlay.rect.minX,
+                             y: canvas.height * overlay.rect.minY,
+                             width: canvas.width * overlay.rect.width,
+                             height: canvas.height * overlay.rect.height)
+            guard box.width > 1, box.height > 1 else { continue }
+
+            context.saveGState()
+            context.setAlpha(CGFloat(opacity))
+            if overlay.cornerRadiusFraction > 0 {
+                let radius = min(box.width, box.height) * CGFloat(overlay.cornerRadiusFraction)
+                context.addPath(CGPath.rounded(box, cornerRadius: radius))
+                context.clip()
+            }
+            // **Fit, not fill.** A logo that has been cropped to a square box is worse than one
+            // with space around it, and stretching it is worse than either — so the picture is
+            // scaled to fit inside the box and centred there.
+            let source = CGSize(width: image.width, height: image.height)
+            let scale = min(box.width / max(1, source.width), box.height / max(1, source.height))
+            let drawn = CGSize(width: source.width * scale, height: source.height * scale)
+            context.drawFlipped(image, in: CGRect(
+                x: box.midX - drawn.width / 2, y: box.midY - drawn.height / 2,
+                width: drawn.width, height: drawn.height))
+            context.restoreGState()
         }
     }
 

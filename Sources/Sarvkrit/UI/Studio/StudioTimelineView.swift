@@ -253,6 +253,7 @@ final class StudioTimelineView: NSView {
     private static func colour(for kind: TimelineLayout.RowKind) -> NSColor {
         switch kind {
         case .video: return .systemOrange
+        case .media: return .systemBrown
         case .text: return .systemTeal
         case .camera: return .systemPink
         case .zoom: return .systemIndigo
@@ -360,6 +361,9 @@ final class StudioTimelineView: NSView {
         switch item.kind {
         case .video: model.selectedClip = item.id
         case .zoom: model.selectedZoom = item.id
+        case .media:
+            model.selectedMedia = item.id
+            model.inspector = .media
         case .text:
             model.selectedText = item.id
             model.inspector = .text
@@ -427,6 +431,7 @@ final class StudioTimelineView: NSView {
         case .camera: return model.project.cameraSegments.first { $0.id == item.id }?.start
         case .mask: return model.project.masks.first { $0.id == item.id }?.start
         case .pointer: return model.project.pointerHighlights.first { $0.id == item.id }?.start
+        case .media: return model.project.mediaOverlays.first { $0.id == item.id }?.start
         case .video, .caption: return nil
         }
     }

@@ -36,6 +36,8 @@ struct StudioProject: Codable, Equatable {
     var pointerHighlights: [PointerHighlight] = []
     /// Text put on the video by hand. Distinct from `captions`, which come from transcription.
     var textOverlays: [TextOverlay] = []
+    /// Pictures composited over the recording.
+    var mediaOverlays: [MediaOverlay] = []
     /// Seconds of black the video fades up from, and down to.
     var fadeIn: TimeInterval = 0
     var fadeOut: TimeInterval = 0
@@ -82,7 +84,7 @@ struct StudioProject: Codable, Equatable {
         case formatVersion, canvasSize, timeline, background, aspect, cropRect
         case zooms, cursor, captions, captionStyle, speakerNotes
         case masks, camera, cameraSegments, keystrokes, deviceFrame
-        case clickEdits, pointerHighlights, textOverlays, fadeIn, fadeOut
+        case clickEdits, pointerHighlights, textOverlays, mediaOverlays, fadeIn, fadeOut
     }
 
     init(from decoder: Decoder) throws {
@@ -109,6 +111,7 @@ struct StudioProject: Codable, Equatable {
         clickEdits = read(.clickEdits, ClickEdits())
         pointerHighlights = read(.pointerHighlights, [PointerHighlight]())
         textOverlays = read(.textOverlays, [TextOverlay]())
+        mediaOverlays = read(.mediaOverlays, [MediaOverlay]())
         fadeIn = read(.fadeIn, 0)
         fadeOut = read(.fadeOut, 0)
         keystrokes = read(.keystrokes, KeystrokeSettings())
@@ -143,6 +146,7 @@ struct StudioProject: Codable, Equatable {
         try container.encode(pointerHighlights,
                              forKey: StudioCodingKey(Key.pointerHighlights.rawValue))
         try container.encode(textOverlays, forKey: StudioCodingKey(Key.textOverlays.rawValue))
+        try container.encode(mediaOverlays, forKey: StudioCodingKey(Key.mediaOverlays.rawValue))
         try container.encode(fadeIn, forKey: StudioCodingKey(Key.fadeIn.rawValue))
         try container.encode(fadeOut, forKey: StudioCodingKey(Key.fadeOut.rawValue))
         try container.encode(keystrokes, forKey: StudioCodingKey(Key.keystrokes.rawValue))

@@ -15,11 +15,12 @@ import Foundation
 enum TimelineLayout {
 
     enum RowKind: String, CaseIterable, Equatable {
-        case video, text, camera, zoom, mask, pointer, caption
+        case video, media, text, camera, zoom, mask, pointer, caption
 
         var name: String {
             switch self {
             case .video: return "Video"
+            case .media: return "Picture"
             case .text: return "Text"
             case .camera: return "Camera"
             case .zoom: return "Zoom"
@@ -105,6 +106,12 @@ enum TimelineLayout {
             elapsed += clip.outputDuration
         }
 
+        let media = project.mediaOverlays.compactMap { overlay -> Item? in
+            guard let range = output(overlay.start, overlay.end) else { return nil }
+            return Item(id: overlay.id, kind: .media, start: range.0, end: range.1,
+                        label: "Picture", isSelected: selection.media == overlay.id)
+        }
+
         let text = project.textOverlays.compactMap { overlay -> Item? in
             guard let range = output(overlay.start, overlay.end) else { return nil }
             return Item(id: overlay.id, kind: .text, start: range.0, end: range.1,
@@ -146,6 +153,7 @@ enum TimelineLayout {
 
         let all: [Row] = [
             Row(kind: .video, items: clips),
+            Row(kind: .media, items: media),
             Row(kind: .text, items: text),
             Row(kind: .camera, items: camera),
             Row(kind: .zoom, items: zooms),
@@ -166,5 +174,6 @@ enum TimelineLayout {
         var camera: CameraSegment.ID?
         var mask: StudioMask.ID?
         var pointer: PointerHighlight.ID?
+        var media: MediaOverlay.ID?
     }
 }

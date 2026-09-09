@@ -241,6 +241,92 @@ struct MaskInspector: View {
     }
 }
 
+/// Pictures brought in and composited over the recording.
+struct MediaInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    private var selected: MediaOverlay? {
+        model.project.mediaOverlays.first { $0.id == model.selectedMedia }
+            ?? model.project.mediaOverlays.first { $0.covers(model.sourceTime) }
+    }
+
+    var body: some View {
+        Button {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.allowedContentTypes = [.image]
+            panel.message = "The picture is copied into the recording, so the project keeps "
+                + "working if you move the original."
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            if !model.addMediaAtPlayhead(from: url) {
+                ToastPresenter.shared.show("Couldn't bring that picture in",
+                                           symbolName: "photo.badge.exclamationmark")
+            }
+        } label: {
+            Label("Bring in a Picture…", systemImage: "photo.badge.plus")
+        }
+
+        if model.project.mediaOverlays.isEmpty {
+            Text("A logo, a screenshot, a diagram. It is copied into the recording so the project "
+                 + "opens anywhere, and sits below any text.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if let overlay = selected {
+            SectionHeader("The Selected Picture")
+            seconds("Size", value: Binding(
+                get: { overlay.rect.width },
+                set: { value in
+                    model.updateMedia(overlay.id, live: true) {
+                        // Kept square in canvas terms; the picture is fitted inside, never
+                        // stretched, so the box only decides how much room it has.
+                        $0.rect.size = CGSize(width: value, height: value)
+                    }
+                }),
+                    range: 0.05...1)
+            seconds("Across", value: Binding(
+                get: { overlay.rect.minX },
+                set: { value in model.updateMedia(overlay.id, live: true) { $0.rect.origin.x = value } }),
+                    range: 0...1)
+            seconds("Down", value: Binding(
+                get: { overlay.rect.minY },
+                set: { value in model.updateMedia(overlay.id, live: true) { $0.rect.origin.y = value } }),
+                    range: 0...1)
+            seconds("Opacity", value: Binding(
+                get: { overlay.opacity },
+                set: { value in model.updateMedia(overlay.id, live: true) { $0.opacity = value } }),
+                    range: 0.05...1)
+            seconds("Rounded corners", value: Binding(
+                get: { overlay.cornerRadiusFraction },
+                set: { value in
+                    model.updateMedia(overlay.id, live: true) { $0.cornerRadiusFraction = value }
+                }),
+                    range: 0...0.5)
+
+            Button(role: .destructive) {
+                model.removeMedia(overlay.id)
+            } label: {
+                Label("Remove This Picture", systemImage: "trash")
+            }
+        }
+    }
+
+    private func seconds(_ title: String, value: Binding<Double>,
+                         range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+            Slider(value: value, in: range) { editing in
+                if editing { model.beginGesture() } else { model.endGesture() }
+            }
+        }
+    }
+}
+
 /// Text put on the video by hand.
 ///
 /// **Every measurement is a fraction of the canvas**, so a title keeps its framing when the aspect

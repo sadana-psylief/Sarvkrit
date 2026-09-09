@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import CoreGraphics
 import Foundation
+import os
 
 /// The editor's state for one project.
 ///
@@ -12,7 +13,7 @@ import Foundation
 final class StudioDocumentModel: ObservableObject {
 
     enum Inspector: String, CaseIterable, Identifiable {
-        case canvas, cursor, masks, camera, text, captions, audio, keystrokes
+        case canvas, cursor, masks, camera, text, media, captions, audio, keystrokes
 
         var id: String { rawValue }
 
@@ -23,6 +24,7 @@ final class StudioDocumentModel: ObservableObject {
             case .cursor: return "Cursor"
             case .camera: return "Camera"
             case .text: return "Text"
+            case .media: return "Pictures"
             case .captions: return "Captions"
             case .audio: return "Audio"
             case .keystrokes: return "Keystrokes"
@@ -36,12 +38,15 @@ final class StudioDocumentModel: ObservableObject {
             case .cursor: return "cursorarrow"
             case .camera: return "video"
             case .text: return "textformat"
+            case .media: return "photo"
             case .captions: return "captions.bubble"
             case .audio: return "speaker.wave.2"
             case .keystrokes: return "command"
             }
         }
     }
+
+    private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Studio")
 
     let bundle: RecordingBundle
     let events: EventLog
@@ -58,6 +63,7 @@ final class StudioDocumentModel: ObservableObject {
     @Published var selectedCamera: CameraSegment.ID?
     @Published var selectedMask: StudioMask.ID?
     @Published var selectedPointer: PointerHighlight.ID?
+    @Published var selectedMedia: MediaOverlay.ID?
     /// Clears every timeline selection.
     ///
     /// **One call rather than nilling five properties by hand at each site.** Selection used to be
@@ -70,6 +76,7 @@ final class StudioDocumentModel: ObservableObject {
         selectedCamera = nil
         selectedMask = nil
         selectedPointer = nil
+        selectedMedia = nil
     }
 
     /// How many rows the timeline has, so the view can be tall enough for them.
@@ -85,6 +92,7 @@ final class StudioDocumentModel: ObservableObject {
         if let selectedCamera { return (.camera, selectedCamera) }
         if let selectedMask { return (.mask, selectedMask) }
         if let selectedPointer { return (.pointer, selectedPointer) }
+        if let selectedMedia { return (.media, selectedMedia) }
         return nil
     }
 
@@ -224,7 +232,8 @@ final class StudioDocumentModel: ObservableObject {
     var frameSources: FrameSources {
         FrameSources(screen: player.decoded,
                      camera: player.decodedCamera,
-                     wallpaper: FrameSources.wallpaper(for: project))
+                     wallpaper: FrameSources.wallpaper(for: project),
+                     media: MediaStore.shared.images(for: project, in: bundle))
     }
 
     /// Puts the project back to how it opened, and leaves that on the undo stack.
@@ -311,6 +320,13 @@ final class StudioDocumentModel: ObservableObject {
                     - project.pointerHighlights[index].start
                 project.pointerHighlights[index].start = start
                 project.pointerHighlights[index].end = start + length
+            case .media:
+                guard let index = project.mediaOverlays.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                let length = project.mediaOverlays[index].end - project.mediaOverlays[index].start
+                project.mediaOverlays[index].start = start
+                project.mediaOverlays[index].end = start + length
             case .video, .caption:
                 // A clip's place is its order, not a time; captions come from the transcript.
                 break
@@ -369,6 +385,14 @@ final class StudioDocumentModel: ObservableObject {
                                   minimum: PointerHighlight.minimumDuration)
                 project.pointerHighlights[index].start = range.0
                 project.pointerHighlights[index].end = range.1
+            case .media:
+                guard let index = project.mediaOverlays.firstIndex(where: { $0.id == id }) else {
+                    return
+                }
+                let item = project.mediaOverlays[index]
+                let range = moved(item.start, item.end, minimum: MediaOverlay.minimumDuration)
+                project.mediaOverlays[index].start = range.0
+                project.mediaOverlays[index].end = range.1
             case .video, .caption:
                 break
             }
@@ -383,6 +407,7 @@ final class StudioDocumentModel: ObservableObject {
         case .camera: removeCameraSegment(id)
         case .mask: removeMask(id)
         case .pointer: removePointerHighlight(id)
+        case .media: removeMedia(id)
         case .video: edit { $0.timeline = $0.timeline.delete(id: id) }
         case .caption: break
         }
@@ -622,6 +647,62 @@ final class StudioDocumentModel: ObservableObject {
             }
         }
         return true
+    }
+
+    /// Copies a picture into the bundle and puts it on the video from the playhead.
+    ///
+    /// **Copied, not referenced.** A project pointing at a file on somebody's Desktop stops working
+    /// the moment that file moves and cannot be opened on another Mac at all — the same reason the
+    /// recording itself lives in the package.
+    ///
+    /// - Returns: false if the file could not be read or copied, so the caller can say so.
+    @discardableResult
+    func addMediaAtPlayhead(from url: URL) -> Bool {
+        let directory = bundle.mediaDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        // A name that cannot collide with one already there, keeping the extension so the loader
+        // can still tell what it is.
+        let name = "\(UUID().uuidString).\(url.pathExtension.lowercased())"
+        let destination = directory.appendingPathComponent(name)
+        do {
+            try FileManager.default.copyItem(at: url, to: destination)
+        } catch {
+            log.error("could not bring in \(url.lastPathComponent, privacy: .public)")
+            return false
+        }
+        guard MediaStore.shared.image(at: destination) != nil else {
+            try? FileManager.default.removeItem(at: destination)
+            log.error("brought in a file that is not a picture we can read")
+            return false
+        }
+
+        let start = sourceTime
+        let overlay = MediaOverlay(start: start, end: start + 4, asset: name)
+        edit {
+            $0.mediaOverlays.append(overlay)
+            $0.mediaOverlays.sort { $0.start < $1.start }
+        }
+        selectedMedia = overlay.id
+        inspector = .media
+        return true
+    }
+
+    func updateMedia(_ id: MediaOverlay.ID, live: Bool = false,
+                     _ change: (inout MediaOverlay) -> Void) {
+        let apply: ((inout StudioProject) -> Void) -> Void = live ? editLive : edit
+        apply { project in
+            guard let index = project.mediaOverlays.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            change(&project.mediaOverlays[index])
+        }
+    }
+
+    /// Removes the overlay. The file stays in the bundle, so undo can bring it back.
+    func removeMedia(_ id: MediaOverlay.ID) {
+        edit { $0.mediaOverlays.removeAll { $0.id == id } }
+        if selectedMedia == id { selectedMedia = nil }
     }
 
     /// Puts a line of text on the video from the playhead, and selects it for editing.

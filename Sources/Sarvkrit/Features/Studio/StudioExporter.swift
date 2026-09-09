@@ -95,6 +95,9 @@ actor StudioExporter {
         // Resolved once, on the main actor, and by the same helper the live canvas uses — the two
         // disagreeing about a background is a failure this app has already had.
         let wallpaper = await MainActor.run { FrameSources.wallpaper(for: project) }
+        // Loaded once, before the loop. The store caches, so the canvas and the export share the
+        // same decoded pictures rather than each holding their own copy.
+        let media = MediaStore.shared.images(for: project, in: recording)
 
         try? FileManager.default.removeItem(at: destination)
         let writer = try AVAssetWriter(outputURL: destination,
@@ -211,7 +214,8 @@ actor StudioExporter {
                                              events: events,
                                              sources: FrameSources(screen: decoded,
                                                                    camera: decodedCamera,
-                                                                   wallpaper: wallpaper),
+                                                                   wallpaper: wallpaper,
+                                                                   media: media),
                                              cache: cache,
                                              clipSource: placed.clip.sourceEnd
                                                  > placed.clip.sourceStart

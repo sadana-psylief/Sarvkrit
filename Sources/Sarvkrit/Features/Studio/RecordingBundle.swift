@@ -133,6 +133,11 @@ struct RecordingBundle: Equatable {
     var manifestURL: URL { root.appendingPathComponent("manifest.json") }
     /// Bitmaps for pointers we could not recognise, deduplicated by hash.
     var cursorsDirectory: URL { root.appendingPathComponent("cursors", isDirectory: true) }
+    /// Pictures the user brought in, copied so the project stays self-contained.
+    ///
+    /// **Copied rather than referenced.** A project pointing at a file on somebody's Desktop stops
+    /// working the moment that file moves and cannot be opened on another Mac at all.
+    var mediaDirectory: URL { root.appendingPathComponent("media", isDirectory: true) }
 
     static let fileExtension = "sarvrec"
 
