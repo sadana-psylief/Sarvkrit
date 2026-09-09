@@ -13,8 +13,12 @@ import XCTest
 /// constructed nowhere outside tests.
 final class ExportChoiceTests: XCTestCase {
 
-    /// A 3024×1964 Retina capture with the default 64pt background padding, which is the shape the
-    /// numbers in the report came from.
+    /// A stand-in for a padded canvas: taller and wider than the recording inside it.
+    ///
+    /// **Not the exact canvas a 3024×1964 capture produces** — that is about 3221×2092, because
+    /// `.original` aspect widens the padded 3152×2092 back to the recording's own ratio, which is
+    /// also why the old export came out 1662 wide rather than 1628. The arithmetic under test does
+    /// not care which canvas it is handed; the live pass measures the real one.
     private let canvas = CGSize(width: 3152, height: 2092)
 
     // MARK: - Native means native

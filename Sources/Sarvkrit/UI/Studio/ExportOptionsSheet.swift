@@ -126,7 +126,11 @@ struct ExportOptionsSheet: View {
             }
             .buttonStyle(.plain)
 
-            if presetID == nil {
+            // **Always in the layout, disabled until chosen.** The sheet is sized once, when it
+            // opens on a preset — so pickers that appeared only after clicking Custom would push
+            // the frame rate and the codec caveat off the bottom of a panel that does not resize.
+            // Showing them greyed also says what Custom offers before committing to it.
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 Picker("Resolution", selection: $resolution) {
                     ForEach(resolutions) { offered in
                         // The upscale is marked rather than hidden: 4K is offered because it was
@@ -149,12 +153,13 @@ struct ExportOptionsSheet: View {
                     Text("60 fps").tag(Int?.some(60))
                     Text("30 fps").tag(Int?.some(30))
                 }
-                if let caveat = codec.caveat {
-                    Label(caveat, systemImage: "exclamationmark.triangle")
-                        .font(.system(size: Theme.Typography.caption))
-                        .foregroundStyle(.orange)
-                }
+                Label(codec.caveat ?? "Plays everywhere.", systemImage: codec.caveat == nil
+                      ? "checkmark.circle" : "exclamationmark.triangle")
+                    .font(.system(size: Theme.Typography.caption))
+                    .foregroundStyle(codec.caveat == nil ? Color.secondary : Color.orange)
             }
+            .disabled(presetID != nil)
+            .padding(.leading, Theme.Space.xl)
         }
     }
 

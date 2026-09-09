@@ -136,6 +136,7 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         case .save: model.markSaved()
         case .export: export()
         case .close: window?.performClose(nil)
+        case .export: export()
         case .showShortcuts: model.isShowingShortcuts = true
         case .loopPlayback:
             model.player.loops.toggle()
@@ -168,6 +169,7 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         case .addPointerHighlight: model.addPointerHighlightAtPlayhead()
         case .addMask: model.addMaskAtPlayhead()
         case .close: window?.performClose(nil)
+        case .export: export()
         case .undo: model.undo()
         case .redo: model.redo()
         case .resetEdits: model.resetEdits()

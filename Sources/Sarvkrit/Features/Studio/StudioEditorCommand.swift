@@ -22,6 +22,8 @@ enum StudioEditorCommand: String, CaseIterable, Equatable {
     /// Closes the editor, exactly as ⌘W does — including the autosave and the notice that says
     /// the recording was kept. So "export it and put it away" is one script.
     case close
+    /// Opens the export dialog, as the Export button does.
+    case export
     case undo
     case redo
     case resetEdits = "reset"
