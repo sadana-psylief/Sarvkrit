@@ -16,8 +16,16 @@ final class StudioPreviewView: NSView {
     private var lastToken = -1
     private var lastRevision = -1
     private var pollTimer: Timer?
-    /// Which line of text is being dragged, and where it was grabbed within its own box.
-    private var textDrag: (id: TextOverlay.ID, grabOffset: CGPoint)?
+    /// What the pointer is currently doing to the picture.
+    private enum Drag {
+        /// Where the box was grabbed, relative to its own centre.
+        case text(id: TextOverlay.ID, grabOffset: CGPoint)
+        /// Where the box was grabbed, relative to its own origin, in canvas points.
+        case maskMove(id: StudioMask.ID, index: Int, grabOffset: CGPoint)
+        case maskResize(id: StudioMask.ID, index: Int, handle: SelectionHandles.Handle)
+    }
+
+    private var drag: Drag?
 
     init(model: StudioDocumentModel) {
         self.model = model
@@ -52,6 +60,10 @@ final class StudioPreviewView: NSView {
                 self.lastToken = self.model.player.frameToken
                 self.lastRevision = self.model.revision
                 self.needsDisplay = true
+                // The handles move with the picture, and cursor rects are not rebuilt by a
+                // redraw — without this the resize cursors stay wherever they were first laid
+                // down, pointing at nothing.
+                self.window?.invalidateCursorRects(for: self)
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -85,46 +97,141 @@ final class StudioPreviewView: NSView {
                        y: (point.y - placement.origin.y) / placement.scale)
     }
 
+    /// Where each visible mask rectangle is, in canvas points — the renderer's own answer.
+    private func maskBoxes() -> [(id: StudioMask.ID, index: Int, rect: CGRect)] {
+        let (_, imageRect) = StudioRenderer.layout(for: model.project)
+        return StudioRenderer.maskBoxes(project: model.project, sourceTime: model.sourceTime,
+                                        events: model.events, imageRect: imageRect,
+                                        clipSource: model.currentClipSource)
+    }
+
+    private func viewRect(_ rect: CGRect) -> CGRect? {
+        guard let placement else { return nil }
+        return CGRect(x: placement.origin.x + rect.minX * placement.scale,
+                      y: placement.origin.y + rect.minY * placement.scale,
+                      width: rect.width * placement.scale,
+                      height: rect.height * placement.scale)
+    }
+
+    /// The box the selected mask's handles belong to, if it is on screen at this moment.
+    private func selectedMaskBox() -> (id: StudioMask.ID, index: Int, rect: CGRect)? {
+        guard let selected = model.selectedMask else { return nil }
+        return maskBoxes().first { $0.id == selected }
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard let placement, let inCanvas = canvasPoint(point) else { return }
 
-        // Topmost first, so overlapping lines behave the way the picture looks.
+        // **Handles first, and before text.** They sit on and just outside the edge of a box, so
+        // anything else winning there would make a corner ungrabbable — and a resize you cannot
+        // start is the report this is answering.
+        if let box = selectedMaskBox(), let bounds = viewRect(box.rect),
+           let handle = SelectionHandles.handle(at: point, bounds: bounds) {
+            model.beginGesture()
+            drag = .maskResize(id: box.id, index: box.index, handle: handle)
+            return
+        }
+
+        // Topmost first, so overlapping lines behave the way the picture looks. Text is drawn
+        // above the masks, so it is asked first here too.
         let boxes = StudioRenderer.textBoxes(project: model.project,
                                              sourceTime: model.sourceTime,
                                              canvas: placement.canvas)
-        guard let hit = boxes.reversed().first(where: { $0.rect.contains(inCanvas) }) else {
-            model.selectedText = nil
+        if let hit = boxes.reversed().first(where: { $0.rect.contains(inCanvas) }) {
+            model.selectedText = hit.id
+            model.selectedMask = nil
+            model.inspector = .text
+            model.beginGesture()
+            drag = .text(id: hit.id, grabOffset: CGPoint(x: inCanvas.x - hit.rect.midX,
+                                                         y: inCanvas.y - hit.rect.midY))
             needsDisplay = true
             return
         }
 
-        model.selectedText = hit.id
-        model.inspector = .text
-        model.beginGesture()
-        textDrag = (hit.id, CGPoint(x: inCanvas.x - hit.rect.midX,
-                                    y: inCanvas.y - hit.rect.midY))
+        if let hit = maskBoxes().reversed().first(where: { $0.rect.contains(inCanvas) }) {
+            model.selectedMask = hit.id
+            model.selectedText = nil
+            model.inspector = .masks
+            model.beginGesture()
+            drag = .maskMove(id: hit.id, index: hit.index,
+                             grabOffset: CGPoint(x: inCanvas.x - hit.rect.minX,
+                                                 y: inCanvas.y - hit.rect.minY))
+            needsDisplay = true
+            return
+        }
+
+        model.selectedText = nil
+        model.selectedMask = nil
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let textDrag, let placement,
-              let inCanvas = canvasPoint(convert(event.locationInWindow, from: nil))
-        else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard let drag, let placement, let inCanvas = canvasPoint(point) else { return }
 
-        // Stored as a fraction of the canvas, so the line keeps its framing at any export size.
-        let centre = CGPoint(x: inCanvas.x - textDrag.grabOffset.x,
-                             y: inCanvas.y - textDrag.grabOffset.y)
-        let unit = CGPoint(x: min(1, max(0, centre.x / placement.canvas.width)),
-                           y: min(1, max(0, centre.y / placement.canvas.height)))
-        model.updateTextLive(textDrag.id) { $0.origin = unit }
+        switch drag {
+        case let .text(id, grabOffset):
+            // Stored as a fraction of the canvas, so the line keeps its framing at any export size.
+            let centre = CGPoint(x: inCanvas.x - grabOffset.x, y: inCanvas.y - grabOffset.y)
+            let unit = CGPoint(x: min(1, max(0, centre.x / placement.canvas.width)),
+                               y: min(1, max(0, centre.y / placement.canvas.height)))
+            model.updateTextLive(id) { $0.origin = unit }
+
+        case let .maskMove(id, index, grabOffset):
+            guard let box = maskBoxes().first(where: { $0.id == id && $0.index == index })
+            else { return }
+            let moved = CGRect(x: inCanvas.x - grabOffset.x, y: inCanvas.y - grabOffset.y,
+                               width: box.rect.width, height: box.rect.height)
+            writeMask(id: id, index: index, canvasRect: moved)
+
+        case let .maskResize(id, index, handle):
+            guard let box = maskBoxes().first(where: { $0.id == id && $0.index == index })
+            else { return }
+            // The floor is a physical size, so it is converted out of view points rather than
+            // left as a canvas number that means something different at every window size.
+            let resized = SelectionHandles.resize(
+                box.rect, handle: handle, to: inCanvas,
+                constrainAspect: event.modifierFlags.contains(.shift),
+                minimumSide: SelectionHandles.minimumSide / placement.scale)
+            writeMask(id: id, index: index, canvasRect: resized)
+        }
         needsDisplay = true
     }
 
+    /// A canvas rect back into the project, in the recording's own pixels.
+    private func writeMask(id: StudioMask.ID, index: Int, canvasRect: CGRect) {
+        let (_, imageRect) = StudioRenderer.layout(for: model.project)
+        let geometry = StudioRenderer.screenGeometry(
+            project: model.project, sourceTime: model.sourceTime, events: model.events,
+            imageRect: imageRect, clipSource: model.currentClipSource)
+        guard let source = StudioRenderer.sourceRect(canvasRect, project: model.project,
+                                                     transform: geometry.transform,
+                                                     imageRect: geometry.screenRect)
+        else { return }
+        model.updateMaskRectLive(id, index: index, to: source)
+    }
+
     override func mouseUp(with event: NSEvent) {
-        guard textDrag != nil else { return }
-        textDrag = nil
+        guard drag != nil else { return }
+        drag = nil
         model.endGesture()
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let box = selectedMaskBox(), let bounds = viewRect(box.rect) else { return }
+        for (handle, rect) in SelectionHandles.rects(for: bounds) {
+            addCursorRect(rect, cursor: Self.cursor(for: handle))
+        }
+    }
+
+    private static func cursor(for handle: SelectionHandles.Handle) -> NSCursor {
+        switch handle {
+        case .left, .right: return .resizeLeftRight
+        case .top, .bottom: return .resizeUpDown
+        default: return .crosshair
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -155,6 +262,30 @@ final class StudioPreviewView: NSView {
                             clipSource: model.currentClipSource,
                             outputTime: model.playhead,
                             cameraStart: model.cameraStartOffset)
+        context.restoreGState()
+
+        drawSelectionHandles(in: context)
+    }
+
+    /// The selected mask's outline and its eight grab points.
+    ///
+    /// **Drawn outside the scaled context, in view points.** A handle sized in canvas points would
+    /// be a huge target on a small window and a 2pt one on a large export canvas; the physical
+    /// size is what the hand cares about, which is the rule `SelectionHandles` is built around.
+    private func drawSelectionHandles(in context: CGContext) {
+        guard let box = selectedMaskBox(), let bounds = viewRect(box.rect) else { return }
+
+        context.saveGState()
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(1)
+        context.stroke(bounds.insetBy(dx: -0.5, dy: -0.5))
+
+        for rect in SelectionHandles.rects(for: bounds).values {
+            context.setFillColor(NSColor.white.cgColor)
+            context.fillEllipse(in: rect)
+            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+            context.strokeEllipse(in: rect.insetBy(dx: 0.5, dy: 0.5))
+        }
         context.restoreGState()
     }
 }

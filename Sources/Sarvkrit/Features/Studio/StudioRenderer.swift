@@ -139,14 +139,10 @@ enum StudioRenderer {
         // does not change how much of the picture is visible.
         let frame = DeviceFrameRenderer.layout(project.deviceFrame, imageRect: imageRect)
         if let frame { DeviceFrameRenderer.drawBody(frame, in: context) }
-        let screenRect = frame?.screenRect ?? imageRect
 
-        let transform = ZoomResolver.transform(
-            at: sourceTime,
-            segments: project.visibleZooms,
-            cursor: events.isCursorInside(at: sourceTime) ? events.cursorPoint(at: sourceTime) : nil,
-            frameSize: project.canvasSize,
-            clipSource: clipSource)
+        let (screenRect, transform) = screenGeometry(
+            project: project, sourceTime: sourceTime, events: events,
+            imageRect: imageRect, clipSource: clipSource)
 
         context.saveGState()
         if let frame {
@@ -707,9 +703,50 @@ extension StudioRenderer {
         KeystrokeRenderer.draw(pills, settings: project.keystrokes, canvas: canvas, in: context)
     }
 
+    /// Where the recording's picture is drawn, and how it is zoomed.
+    ///
+    /// The two things every rectangle inside the screen depends on. **Shared with `draw` so that
+    /// hit-testing a mask and drawing it cannot disagree** — a hit test a few points out is a mask
+    /// you cannot grab, which looks exactly like the feature not being there.
+    static func screenGeometry(project: StudioProject, sourceTime: TimeInterval,
+                               events: EventLog, imageRect: CGRect,
+                               clipSource: Range<TimeInterval>? = nil)
+        -> (screenRect: CGRect, transform: ZoomTransform) {
+        let frame = DeviceFrameRenderer.layout(project.deviceFrame, imageRect: imageRect)
+        let transform = ZoomResolver.transform(
+            at: sourceTime,
+            segments: project.visibleZooms,
+            cursor: events.isCursorInside(at: sourceTime) ? events.cursorPoint(at: sourceTime) : nil,
+            frameSize: project.canvasSize,
+            clipSource: clipSource)
+        return (frame?.screenRect ?? imageRect, transform)
+    }
+
+    /// Where each visible mask rectangle sits, in canvas points.
+    ///
+    /// The mirror of `textBoxes`, and for the same reason. `index` addresses one rectangle of a
+    /// mask that has several: "hide every price in this table" is one object with nine boxes, and
+    /// each is dragged on its own.
+    static func maskBoxes(project: StudioProject, sourceTime: TimeInterval, events: EventLog,
+                          imageRect: CGRect, clipSource: Range<TimeInterval>? = nil)
+        -> [(id: StudioMask.ID, index: Int, rect: CGRect)] {
+        let geometry = screenGeometry(project: project, sourceTime: sourceTime, events: events,
+                                      imageRect: imageRect, clipSource: clipSource)
+        var boxes: [(id: StudioMask.ID, index: Int, rect: CGRect)] = []
+        for mask in project.masks where mask.covers(sourceTime) {
+            for (index, box) in mask.rects.enumerated() {
+                guard let rect = canvasRect(box.rect, project: project,
+                                            transform: geometry.transform,
+                                            imageRect: geometry.screenRect) else { continue }
+                boxes.append((mask.id, index, rect))
+            }
+        }
+        return boxes
+    }
+
     /// Recording pixels to canvas points for a rectangle, through the crop and the zoom.
-    private static func canvasRect(_ rect: CGRect, project: StudioProject,
-                                   transform: ZoomTransform, imageRect: CGRect) -> CGRect? {
+    static func canvasRect(_ rect: CGRect, project: StudioProject,
+                           transform: ZoomTransform, imageRect: CGRect) -> CGRect? {
         let cropped = project.cropRect ?? CGRect(origin: .zero, size: project.canvasSize)
         let visible = ZoomResolver.sourceRect(for: transform, frameSize: cropped.size)
         guard visible.width > 0, visible.height > 0 else { return nil }
@@ -719,5 +756,24 @@ extension StudioRenderer {
                       y: imageRect.minY + (rect.minY - cropped.minY - visible.minY) * scaleY,
                       width: rect.width * scaleX,
                       height: rect.height * scaleY)
+    }
+
+    /// Canvas points back to recording pixels. The exact inverse of `canvasRect`.
+    ///
+    /// **Written as the inverse and tested as one.** A drag reads a canvas rect out of
+    /// `maskBoxes`, applies the pointer to it and writes it back through here; if the round trip
+    /// is not the identity the mask creeps a little every time it is touched.
+    static func sourceRect(_ rect: CGRect, project: StudioProject,
+                           transform: ZoomTransform, imageRect: CGRect) -> CGRect? {
+        let cropped = project.cropRect ?? CGRect(origin: .zero, size: project.canvasSize)
+        let visible = ZoomResolver.sourceRect(for: transform, frameSize: cropped.size)
+        guard visible.width > 0, visible.height > 0,
+              imageRect.width > 0, imageRect.height > 0 else { return nil }
+        let scaleX = imageRect.width / visible.width
+        let scaleY = imageRect.height / visible.height
+        return CGRect(x: (rect.minX - imageRect.minX) / scaleX + cropped.minX + visible.minX,
+                      y: (rect.minY - imageRect.minY) / scaleY + cropped.minY + visible.minY,
+                      width: rect.width / scaleX,
+                      height: rect.height / scaleY)
     }
 }

@@ -281,6 +281,16 @@ final class StudioRenderSnapshotTests: XCTestCase {
 
         let bubble = try XCTUnwrap(CameraLayoutResolver.state(
             at: 3, segments: [], settings: blurred.camera, canvas: canvas, zoom: 1))
+
+        // First, that this region is actually the camera. A crop aimed at the wrong corner
+        // compares two patches of background and reports success whatever the blur did.
+        let cameraless = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen())))
+        XCTAssertNotEqual(png(try crop(plain, canvasRect: bubble.rect)),
+                          png(try crop(cameraless, canvasRect: bubble.rect)),
+                          "the crop is not looking at the camera")
+
         XCTAssertEqual(png(try crop(plain, canvasRect: bubble.rect)),
                        png(try crop(withMask, canvasRect: bubble.rect)),
                        "the blur changed the camera bubble")
@@ -347,17 +357,17 @@ final class StudioRenderSnapshotTests: XCTestCase {
 
     /// One region of a rendered frame, addressed in canvas points.
     ///
-    /// `cropping(to:)` measures from the top-left and the canvas from the bottom-left, so the flip
-    /// is here rather than at each call — getting it wrong would compare two bands of background
-    /// and pass no matter what happened to the camera.
+    /// **No flip.** `StudioRenderer.frame` sets up document space — top-left origin, as its own
+    /// comment says — and `cropping(to:)` measures from the top-left too, so the two already
+    /// agree. Flipping here anyway compared two bands of background and passed no matter what
+    /// happened to the camera, which is why the caller checks that this crop can see the camera
+    /// at all before trusting it to notice a change.
     private func crop(_ image: CGImage, canvasRect rect: CGRect) throws -> CGImage {
         let scaleX = CGFloat(image.width) / canvas.width
         let scaleY = CGFloat(image.height) / canvas.height
-        let flipped = CGRect(x: rect.minX * scaleX,
-                             y: (canvas.height - rect.maxY) * scaleY,
-                             width: rect.width * scaleX,
-                             height: rect.height * scaleY)
-        return try XCTUnwrap(image.cropping(to: flipped.integral))
+        let scaled = CGRect(x: rect.minX * scaleX, y: rect.minY * scaleY,
+                            width: rect.width * scaleX, height: rect.height * scaleY)
+        return try XCTUnwrap(image.cropping(to: scaled.integral))
     }
 
     /// **The security property, measured where it lives.**

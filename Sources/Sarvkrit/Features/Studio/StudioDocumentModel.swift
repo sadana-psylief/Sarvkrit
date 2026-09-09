@@ -817,6 +817,21 @@ final class StudioDocumentModel: ObservableObject {
                              width: size.width * 0.4, height: size.height * 0.15)
             $0.masks.append(StudioMask(rects: [box], start: start, end: start + 3))
         }
+        // Selected as it appears, so its handles are on the canvas straight away. Without this a
+        // new blur arrives in the middle of the picture looking like something you cannot touch,
+        // which is precisely what was reported.
+        selectedMask = project.masks.last?.id
+        inspector = .masks
+    }
+
+    /// Mid-drag. One undo step for the whole gesture, between `beginGesture` and `endGesture`.
+    func updateMaskRectLive(_ id: StudioMask.ID, index: Int, to rect: CGRect) {
+        editLive { StudioProject.setMaskRect(&$0, id: id, index: index, to: rect) }
+    }
+
+    /// A committed change — the inspector's number fields, where there is no drag to bracket.
+    func updateMaskRect(_ id: StudioMask.ID, index: Int, to rect: CGRect) {
+        edit { StudioProject.setMaskRect(&$0, id: id, index: index, to: rect) }
     }
 
     func setMaskMode(_ id: StudioMask.ID, _ mode: StudioMask.Mode) {

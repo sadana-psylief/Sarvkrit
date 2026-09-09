@@ -207,6 +207,12 @@ struct MaskInspector: View {
                 .foregroundStyle(.secondary)
         }
 
+        if !model.project.masks.isEmpty {
+            Text("Drag a mask on the canvas to move it, or a corner to resize it.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+        }
+
         ForEach(model.project.masks) { mask in
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 Picker("", selection: Binding(
@@ -215,6 +221,12 @@ struct MaskInspector: View {
                     ForEach(StudioMask.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
+
+                // Typed rather than dragged, for the times a region has to land on an exact
+                // boundary. In the recording's own pixels, which is what the numbers mean.
+                if let box = mask.rects.first {
+                    box2x2(mask: mask, rect: box.rect)
+                }
 
                 // **Said, not implied.** A person choosing "Blur" over a password should be told
                 // that it comes back — the README makes this argument at length and the UI is
@@ -236,7 +248,50 @@ struct MaskInspector: View {
                 }
             }
             .padding(.vertical, Theme.Space.xs)
+            .background(mask.id == model.selectedMask
+                        ? Color.accentColor.opacity(0.08) : .clear)
+            // Selecting here puts the handles on the canvas, so the two views agree about which
+            // mask is being worked on.
+            .onTapGesture { model.selectedMask = mask.id }
             ModuleSeparator()
+        }
+    }
+
+    /// Position and size, in the recording's own pixels.
+    private func box2x2(mask: StudioMask, rect: CGRect) -> some View {
+        func field(_ label: String, _ value: CGFloat,
+                   _ apply: @escaping (CGFloat) -> CGRect) -> some View {
+            HStack(spacing: Theme.Space.xs) {
+                Text(label)
+                    .font(.system(size: Theme.Typography.caption))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, alignment: .leading)
+                TextField("", value: Binding<Double>(
+                    get: { Double(value.rounded()) },
+                    // A committed change rather than a live one: typing is not a drag, and each
+                    // field is one undo step.
+                    set: { model.updateMaskRect(mask.id, index: 0, to: apply(CGFloat($0))) }),
+                          format: .number.precision(.fractionLength(0)))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: Theme.Typography.caption))
+            }
+        }
+
+        return VStack(spacing: Theme.Space.xs) {
+            HStack(spacing: Theme.Space.sm) {
+                field("X", rect.minX) { rect.offsetBy(dx: $0 - rect.minX, dy: 0) }
+                field("Y", rect.minY) { rect.offsetBy(dx: 0, dy: $0 - rect.minY) }
+            }
+            HStack(spacing: Theme.Space.sm) {
+                field("W", rect.width) {
+                    CGRect(x: rect.minX, y: rect.minY,
+                           width: max(SelectionHandles.minimumSide, $0), height: rect.height)
+                }
+                field("H", rect.height) {
+                    CGRect(x: rect.minX, y: rect.minY, width: rect.width,
+                           height: max(SelectionHandles.minimumSide, $0))
+                }
+            }
         }
     }
 }

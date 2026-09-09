@@ -159,6 +159,26 @@ struct StudioProject: Codable, Equatable {
             try container.encode(value, forKey: StudioCodingKey(name))
         }
     }
+
+    /// Puts one rectangle of one mask somewhere else, in recording pixels.
+    ///
+    /// A free function on the project rather than a method on the model, so the canvas's drag and
+    /// the inspector's number fields go through exactly the same code.
+    ///
+    /// **An address that does not resolve changes nothing.** Writing into a neighbouring index
+    /// instead would move the wrong region, and uncovering something is the one outcome a
+    /// redaction tool must never have.
+    static func setMaskRect(_ project: inout StudioProject, id: StudioMask.ID, index: Int,
+                            to rect: CGRect) {
+        guard let mask = project.masks.firstIndex(where: { $0.id == id }),
+              project.masks[mask].rects.indices.contains(index) else { return }
+        project.masks[mask].rects[index] = RectBox(rect)
+        // **A hand-moved mask stops following its window.** `resolved(windowFrames:)` redraws a
+        // pinned mask wherever its window is now, so the pin and the drag would fight: you would
+        // let go and watch the box jump back. Moving it by hand is the clearer intent.
+        project.masks[mask].followsWindowID = nil
+        project.masks[mask].windowOriginAtCreation = nil
+    }
 }
 
 /// `CGSize` and `CGRect` written as named fields rather than as arrays.
