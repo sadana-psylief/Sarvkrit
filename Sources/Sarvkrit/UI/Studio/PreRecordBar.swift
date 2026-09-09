@@ -201,11 +201,13 @@ private struct PreRecordBarView: View {
                 set: { id in
                     model.chooseCamera(model.cameras.first { $0.uniqueID == id })
                 })) {
-                Label("No camera", systemImage: "video.slash").tag("")
+                Label("Off", systemImage: "video.slash").tag("")
                 ForEach(model.cameras, id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
             }
             .labelsHidden()
-            .frame(width: 130)
+            // Wide enough for a real device name. "FaceTime HD Camera" truncated at
+            // 130, which reads as a bug rather than as a long name.
+            .frame(width: 168)
             .help("Camera")
         }
     }
@@ -216,11 +218,11 @@ private struct PreRecordBarView: View {
             set: { id in
                 model.chooseMicrophone(model.microphones.first { $0.uniqueID == id })
             })) {
-            Label("No microphone", systemImage: "mic.slash").tag("")
+            Label("Off", systemImage: "mic.slash").tag("")
             ForEach(model.microphones, id: \.uniqueID) { Text($0.localizedName).tag($0.uniqueID) }
         }
         .labelsHidden()
-        .frame(width: 130)
+        .frame(width: 168)
         .help("Microphone")
     }
 

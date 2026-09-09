@@ -22,7 +22,15 @@ final class StudioPreviewView: NSView {
         case text(id: TextOverlay.ID, grabOffset: CGPoint)
         /// Where the box was grabbed, relative to its own origin, in canvas points.
         case maskMove(id: StudioMask.ID, index: Int, grabOffset: CGPoint)
-        case maskResize(id: StudioMask.ID, index: Int, handle: SelectionHandles.Handle)
+        /// `anchor` is the box as it was when the handle was grabbed, in canvas points.
+        ///
+        /// **Not re-read each event.** `SelectionHandles.resize` is a function of the rect the
+        /// handle was grabbed on; feed it its own output and the rect flips when the pointer
+        /// crosses the opposite corner, after which every event measures from the flipped edge —
+        /// the width becomes the distance the mouse moved since the last event rather than the
+        /// distance from the anchor, and the box collapses under a hand still dragging outwards.
+        case maskResize(id: StudioMask.ID, index: Int, handle: SelectionHandles.Handle,
+                        anchor: CGRect)
     }
 
     private var drag: Drag?
@@ -129,7 +137,7 @@ final class StudioPreviewView: NSView {
         if let box = selectedMaskBox(), let bounds = viewRect(box.rect),
            let handle = SelectionHandles.handle(at: point, bounds: bounds) {
             model.beginGesture()
-            drag = .maskResize(id: box.id, index: box.index, handle: handle)
+            drag = .maskResize(id: box.id, index: box.index, handle: handle, anchor: box.rect)
             return
         }
 
@@ -185,13 +193,11 @@ final class StudioPreviewView: NSView {
                                width: box.rect.width, height: box.rect.height)
             writeMask(id: id, index: index, canvasRect: moved)
 
-        case let .maskResize(id, index, handle):
-            guard let box = maskBoxes().first(where: { $0.id == id && $0.index == index })
-            else { return }
+        case let .maskResize(id, index, handle, anchor):
             // The floor is a physical size, so it is converted out of view points rather than
             // left as a canvas number that means something different at every window size.
             let resized = SelectionHandles.resize(
-                box.rect, handle: handle, to: inCanvas,
+                anchor, handle: handle, to: inCanvas,
                 constrainAspect: event.modifierFlags.contains(.shift),
                 minimumSide: SelectionHandles.minimumSide / placement.scale)
             writeMask(id: id, index: index, canvasRect: resized)

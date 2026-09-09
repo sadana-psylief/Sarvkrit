@@ -110,6 +110,39 @@ final class StudioMaskGeometryTests: XCTestCase {
         XCTAssertEqual(project, before)
     }
 
+    // MARK: - A resize has to remember where it started
+
+    /// **`resize` is a function of the rect the handle was grabbed on, not of the rect as it is
+    /// now.** Feed it its own output and it is still correct while the drag stays on one side of
+    /// the anchor; the moment the pointer crosses the opposite corner the rect flips, and every
+    /// event after that measures from the flipped edge — so the width becomes the distance the
+    /// mouse moved since the last event instead of the distance from the anchor, and the box
+    /// collapses to nothing under a hand that is still dragging outwards.
+    func testResizingFromTheMovingRectCollapsesPastTheOppositeCorner() {
+        let start = CGRect(x: 100, y: 100, width: 200, height: 100)
+        // Three events dragging the top-left corner rightwards, through maxX at 300 and beyond.
+        var moving = start
+        for x in [350.0, 360.0, 370.0] {
+            moving = SelectionHandles.resize(moving, handle: .topLeft,
+                                             to: CGPoint(x: x, y: 100),
+                                             constrainAspect: false, minimumSide: 1)
+        }
+        XCTAssertLessThan(moving.width, 30, "the premise of this test has gone")
+    }
+
+    /// From the anchor, the same three events grow the box as the hand expects.
+    func testResizingFromTheGrabbedRectSurvivesTheFlip() {
+        let start = CGRect(x: 100, y: 100, width: 200, height: 100)
+        var resized = start
+        for x in [350.0, 360.0, 370.0] {
+            resized = SelectionHandles.resize(start, handle: .topLeft,
+                                              to: CGPoint(x: x, y: 100),
+                                              constrainAspect: false, minimumSide: 1)
+        }
+        XCTAssertEqual(resized.minX, 300, accuracy: 0.01)
+        XCTAssertEqual(resized.maxX, 370, accuracy: 0.01)
+    }
+
     // MARK: - Canvas and source are inverses
 
     /// **The property the drag depends on.** A resize reads a canvas rect out of `maskBoxes`,
