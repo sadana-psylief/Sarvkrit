@@ -163,6 +163,18 @@ struct RecordingBundle: Equatable {
         try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
     }
 
+    /// One name for this bundle, whatever spelling of its path arrived.
+    ///
+    /// **`open` hands a package over with a trailing slash**, because it is a directory on disk:
+    /// the Finder's URL is `…/Recording.sarvrec/` where the recorder's is `…/Recording.sarvrec`.
+    /// `URL` equality is string equality, so the two do not match — and the editor's "already
+    /// open" check silently failed, putting a second window over the same bundle. Two editors
+    /// autosaving into one bundle means the last one to close wins.
+    var identity: String {
+        root.standardizedFileURL.resolvingSymlinksInPath()
+            .path(percentEncoded: false)
+    }
+
     /// Whether this is a recording the editor can actually open.
     ///
     /// A `.sarvrec` with no readable manifest is a failed take: there is nothing to play and no

@@ -161,6 +161,8 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         case .addText: model.addTextAtPlayhead()
         case .addClick: model.addClickAtPlayhead()
         case .addPointerHighlight: model.addPointerHighlightAtPlayhead()
+        case .addMask: model.addMaskAtPlayhead()
+        case .close: window?.performClose(nil)
         case .undo: model.undo()
         case .redo: model.redo()
         case .resetEdits: model.resetEdits()
@@ -297,7 +299,9 @@ final class StudioEditorController {
         // **The same recording twice is the same window.** Double-clicking a file twice, or
         // opening from the list what is already on screen, must not produce two editors over one
         // bundle — they would autosave over each other, and the last one to close would win.
-        if let existing = controllers.first(where: { $0.model.bundle.root == bundle.root }) {
+        if let existing = controllers.first(where: {
+            $0.model.bundle.identity == bundle.identity
+        }) {
             existing.focus()
             return true
         }

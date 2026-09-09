@@ -21,6 +21,10 @@ struct ScreenRecordingDetailView: View {
                 }
             }
 
+            // Above the settings, not below them. Getting back into a recording is what somebody
+            // opens this pane to do; frame rate is set once and forgotten.
+            RecordingsList()
+
             Section("Recording") {
                 Picker("Frame rate", selection: Binding(
                     get: { feature.framesPerSecond },
@@ -51,8 +55,6 @@ struct ScreenRecordingDetailView: View {
                 .font(.system(size: Theme.Typography.caption))
                 .foregroundStyle(.secondary)
             }
-
-            RecordingsList()
 
             Section("Shortcuts") {
                 ForEach(RecordingAction.allCases) { action in

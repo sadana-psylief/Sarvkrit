@@ -110,6 +110,42 @@ final class RecordingLibraryTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(RecordingLibrary.entries(in: directory).first).canOpen)
     }
 
+    // MARK: - Two names for one recording
+
+    /// **`open` hands a package over with a trailing slash.** It is a directory on disk, so the
+    /// Finder's URL is `…/Recording.sarvrec/` while the one the recorder built is
+    /// `…/Recording.sarvrec`. `URL` equality is string equality, so the two do not match — and the
+    /// editor's "this recording is already open" check quietly failed, opening a second window
+    /// over the same bundle. Two editors autosaving into one bundle means the last to close wins.
+    func testTheSameRecordingIsTheSameIdentityWithOrWithoutATrailingSlash() throws {
+        let url = try make("shared")
+        let withSlash = URL(fileURLWithPath: url.path, isDirectory: true)
+        XCTAssertNotEqual(withSlash, url, "the premise of this test has gone")
+
+        XCTAssertEqual(RecordingBundle(root: withSlash).identity,
+                       RecordingBundle(root: url).identity)
+    }
+
+    /// And two genuinely different recordings stay different.
+    func testDifferentRecordingsHaveDifferentIdentities() throws {
+        let one = try make("one")
+        let other = try make("other")
+        XCTAssertNotEqual(RecordingBundle(root: one).identity,
+                          RecordingBundle(root: other).identity)
+    }
+
+    /// A path with a `..` in it names the same bundle. Reached by an Open panel that started
+    /// somewhere else, or by a URL typed by hand.
+    func testAnUnresolvedPathIsTheSameIdentity() throws {
+        let url = try make("winding")
+        let winding = directory
+            .appendingPathComponent("nowhere")
+            .appendingPathComponent("..")
+            .appendingPathComponent("winding.sarvrec")
+        XCTAssertEqual(RecordingBundle(root: winding).identity,
+                       RecordingBundle(root: url).identity)
+    }
+
     // MARK: - Saying how long it is
 
     func testALengthIsSaidInMinutesAndSeconds() {

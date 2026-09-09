@@ -37,7 +37,9 @@ enum CaptureURLCommand: Equatable {
     /// Opens whatever image is on the clipboard in the editor.
     case openFromClipboard
     /// Sarvkrit's own window, on the Capture pane.
-    case openSettings
+    /// Opens the settings window, optionally on a named pane — a feature's own id, `general` or
+    /// `about`. Without one it lands wherever the window was last left.
+    case openSettings(pane: String?)
     /// Starts a recording, skipping the pre-record bar — camera, microphone and countdown are
     /// whatever the settings already say.
     ///
@@ -60,6 +62,16 @@ enum CaptureURLCommand: Equatable {
     case editorCommand(StudioEditorCommand)
     /// Brings a picture into the open editor at the playhead.
     case addPicture(URL)
+    /// Raises the pre-record bar, as ⌃⇧R does.
+    ///
+    /// **The bar and the aiming overlay are the two surfaces a script could not reach**, and both
+    /// have now been reported against — "I cannot close it until I record something" and "it
+    /// should be a rectangle already on screen". `record` deliberately skips both, so neither
+    /// could be looked at without a keyboard this machine will not let anything synthesise.
+    case showRecordBar
+    /// Raises the aiming surface for whatever source is currently chosen: the area overlay, the
+    /// window list, or straight to the countdown for a whole display.
+    case aimRecording
 
     static let scheme = "sarvkrit"
 
@@ -79,6 +91,8 @@ enum CaptureURLCommand: Equatable {
         case .exportEditor: return "export"
         case .editorCommand: return "editor"
         case .addPicture: return "picture"
+        case .showRecordBar: return "record-bar"
+        case .aimRecording: return "aim"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -102,10 +116,11 @@ enum CaptureURLCommand: Equatable {
     /// and a settings row offering a URL with somebody else's coordinates in it would be noise.
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
-            + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
+            + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings(pane: nil),
                .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause,
                .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4")),
-               .editorCommand(.split), .addPicture(URL(fileURLWithPath: "/tmp/logo.png"))]
+               .editorCommand(.split), .addPicture(URL(fileURLWithPath: "/tmp/logo.png")),
+               .showRecordBar, .aimRecording]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -167,6 +182,14 @@ enum CaptureURLCommand: Equatable {
 
     /// Refused rather than clamped when absent or negative: a script that computed a time wrongly
     /// should move nothing, the same rule the rest of this parser follows.
+    private static func pane(from url: URL) -> String? {
+        let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first { $0.name.lowercased() == "pane" }?.value?
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        return raw?.isEmpty == false ? raw : nil
+    }
+
     private static func seconds(from url: URL) -> TimeInterval? {
         guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
             .first(where: { $0.name.lowercased() == "t" })?.value,
@@ -189,8 +212,10 @@ enum CaptureURLCommand: Equatable {
         if name == "capture-previous-area" { return .capturePreviousArea }
         if name == "open-annotate" { return .openAnnotate(filepath(from: url)) }
         if name == "open-from-clipboard" { return .openFromClipboard }
-        if name == "open-settings" { return .openSettings }
+        if name == "open-settings" { return .openSettings(pane: pane(from: url)) }
         if name == "stop-recording" { return .stopRecording }
+        if name == "record-bar" { return .showRecordBar }
+        if name == "aim" { return .aimRecording }
         if name == "seek" { return seconds(from: url).map { .seek($0) } }
         if name == "play" { return .playPause }
         if name == "export" { return filepath(from: url).map { .exportEditor($0) } }

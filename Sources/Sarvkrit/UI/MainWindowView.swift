@@ -67,8 +67,15 @@ struct MainWindowView: View {
     /// cleared, so re-opening the window later lands wherever the user last was.
     private func consumePendingSelection() {
         guard let requested = app.pendingSidebarSelection else { return }
-        if requested == SidebarItem.generalID { selection = .general }
-        if requested == SidebarItem.aboutID { selection = .about }
+        if requested == SidebarItem.generalID {
+            selection = .general
+        } else if requested == SidebarItem.aboutID {
+            selection = .about
+        } else if app.features.contains(where: { $0.id == requested }) {
+            // A feature's own pane, so `sarvkrit://open-settings?pane=screen-recording` lands on
+            // the thing it is about rather than wherever the window was last left.
+            selection = .feature(requested)
+        }
         app.pendingSidebarSelection = nil
     }
 

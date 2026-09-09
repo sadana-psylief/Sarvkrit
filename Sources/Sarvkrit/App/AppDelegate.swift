@@ -83,7 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openEditor(with: file)
             case .openFromClipboard:
                 openEditorFromClipboard()
-            case .openSettings:
+            case .openSettings(let pane):
+                if let pane { AppState.shared.pendingSidebarSelection = pane }
                 MainWindowController.shared.show()
             case .action(let action):
                 guard let screenshots = AppState.shared.features
@@ -95,6 +96,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     await Self.captureRect(rect, displayIndex: displayIndex, with: screenshots)
                 }
+            case .showRecordBar:
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                Self.toggleRecording(recording)
+            case .aimRecording:
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                PreRecordBarController.shared.dismiss()
+                Self.aim(recording, setup: recording.setup)
             case .record(let source, let windowID):
                 guard let recording = AppState.shared.features
                     .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }

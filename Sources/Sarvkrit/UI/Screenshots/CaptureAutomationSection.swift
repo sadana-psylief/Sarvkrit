@@ -72,6 +72,8 @@ struct CaptureAutomationSection: View {
         case .exportEditor: return "Export the Recording"
         case .editorCommand: return "Editor Action (split, undo, …)"
         case .addPicture: return "Add a Picture"
+        case .showRecordBar: return "Set Up a Recording"
+        case .aimRecording: return "Aim the Recording"
         case .action(let action): return action.title
         }
     }

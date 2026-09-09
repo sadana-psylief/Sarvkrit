@@ -18,6 +18,10 @@ enum StudioEditorCommand: String, CaseIterable, Equatable {
     case addText = "add-text"
     case addClick = "add-click"
     case addPointerHighlight = "add-pointer-highlight"
+    case addMask = "add-mask"
+    /// Closes the editor, exactly as ⌘W does — including the autosave and the notice that says
+    /// the recording was kept. So "export it and put it away" is one script.
+    case close
     case undo
     case redo
     case resetEdits = "reset"
