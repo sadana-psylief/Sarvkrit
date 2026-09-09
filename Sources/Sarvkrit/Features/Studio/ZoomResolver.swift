@@ -111,6 +111,12 @@ enum ZoomResolver {
 
     /// The frame between two segments that are close enough to be one move: it holds where the
     /// first one left it rather than resolving to identity because no segment covers the moment.
+    ///
+    /// **The neighbours are found without regard to the clip, and `joins` is what rejects one on
+    /// the far side of a cut.** Splitting the two steps is deliberate — the search wants the
+    /// nearest segments in time, and only then does it matter whether they are in the same shot —
+    /// but it means the clip boundary is enforced in exactly one place. Anyone adding a condition
+    /// here should add it to `joins` instead.
     private static func held(at t: TimeInterval, in live: [ZoomSegment], cursor: CGPoint?,
                              frameSize: CGSize,
                              clipSource: Range<TimeInterval>?) -> ZoomTransform {
