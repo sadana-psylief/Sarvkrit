@@ -54,6 +54,11 @@ final class StudioDocumentModel: ObservableObject {
     let recordingDuration: TimeInterval
     /// When the camera track begins, in source time. Recording metadata, not a project edit.
     let cameraStartOffset: TimeInterval
+    /// Seconds hidden at the head of this take when the editor created the project, or nil.
+    ///
+    /// Set only on first creation, so the editor can *say* what it did — a trim nobody is told
+    /// about is another silent decision, which is the complaint that started all of this.
+    let trimmedLeadIn: TimeInterval?
 
     @Published private(set) var project: StudioProject
     @Published var inspector: Inspector = .canvas
@@ -110,6 +115,11 @@ final class StudioDocumentModel: ObservableObject {
     /// Whether the shortcuts sheet is up. Set from the window's ⌘/ and cleared by the sheet.
     @Published var isShowingShortcuts = false
     @Published var exportProgress: Double?
+    /// The banner offering the trimmed start-up seconds back, or nil once it has been acted on.
+    ///
+    /// Separate from `trimmedLeadIn`, which is a fact about how the project was created and never
+    /// changes. This is what is on screen.
+    @Published private(set) var leadInNotice: TimeInterval?
 
     private var undoStack: UndoStack<StudioProject>
     /// The project exactly as it opened, for "undo every edit".
@@ -133,9 +143,22 @@ final class StudioDocumentModel: ObservableObject {
             StudioProject.self,
             from: Data(contentsOf: bundle.root.appendingPathComponent("project.json")))
 
+        // **The take starts when everything is running.** A capture session needs two to three
+        // seconds to come up, so a recording with a camera or a microphone opens with a frozen
+        // face and silence — the "first three seconds" report. Trimming rather than cutting means
+        // the material is still there, one context-menu item away.
+        //
+        // Only on first creation. Re-trimming on every open would eat the same seconds again each
+        // time the editor was reopened, and would undo a deliberate "put it back".
+        let leadIn = Self.leadInWorthTrimming(offset: manifest.cameraStartOffset,
+                                              duration: manifest.duration)
+        self.trimmedLeadIn = existing == nil ? leadIn : nil
+        self.leadInNotice = self.trimmedLeadIn
+
         var project = existing ?? StudioProject(
             canvasSize: manifest.pixelSize.size,
-            timeline: Timeline(clips: [Clip(sourceStart: 0, sourceEnd: manifest.duration)]))
+            timeline: Timeline(clips: [Clip(sourceStart: leadIn ?? 0,
+                                            sourceEnd: manifest.duration)]))
 
         if existing == nil {
             // **The moment that makes this feel like magic.** Stopping a recording should open an
@@ -166,6 +189,18 @@ final class StudioDocumentModel: ObservableObject {
         player.sourceTime = { [weak self] output in
             self?.project.timeline.sourceTime(forOutput: output)?.sourceTime ?? 0
         }
+    }
+
+    /// Whether a capture offset is worth hiding.
+    ///
+    /// Under 0.15 s is not worth mentioning to anybody, and is below the threshold the timeline
+    /// already uses to decide a clip has hidden material — trimming less would offer a "put it
+    /// back" for something invisible. An offset that swallows most of the take is refused
+    /// outright: an empty timeline has nothing to play and no clip wide enough to right-click.
+    static func leadInWorthTrimming(offset: TimeInterval,
+                                    duration: TimeInterval) -> TimeInterval? {
+        guard offset > 0.15, duration - offset > 1 else { return nil }
+        return offset
     }
 
     var playhead: TimeInterval {
@@ -464,6 +499,19 @@ final class StudioDocumentModel: ObservableObject {
                                                           upper)
         }
     }
+
+    /// Puts the trimmed start-up seconds back, from the banner.
+    ///
+    /// The same `untrimClip` the timeline's context menu uses, so it is one undo step and reaches
+    /// the recording's real first frame.
+    func putBackLeadIn() {
+        leadInNotice = nil
+        guard let first = project.timeline.clips.first else { return }
+        untrimClip(first.id)
+    }
+
+    /// Agrees with the trim and wants the banner gone. Does not touch the project.
+    func dismissLeadInNotice() { leadInNotice = nil }
 
     func addZoomAtPlayhead() {
         let start = sourceTime

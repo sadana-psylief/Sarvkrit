@@ -353,11 +353,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
                     return
                 }
+                // Opens with a rectangle already on screen — last time's, or a centred default
+                // the first time — so aiming is an adjustment rather than a drag from nothing.
+                let seed = RecordingArea.seed(remembered: setup.lastArea,
+                                              displays: frames.map(\.geometry.frame))
                 CaptureOverlayController.shared.present(
                     frames: frames,
                     chrome: .init(showsCrosshair: true, showsMagnifier: true,
                                   showsDimensions: true,
-                                  hint: "Drag the area to record")
+                                  hint: seed == nil
+                                      ? "Drag the area to record"
+                                      : "Resize the area, then click inside it to record",
+                                  initialSelection: seed)
                 ) { _, display, rect in
                     MainActor.assumeIsolated {
                         guard let display, let rect else { return }
@@ -423,6 +430,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try FileManager.default.createDirectory(
                     at: RecordingBundle.defaultDirectory(), withIntermediateDirectories: true)
                 try await feature.recorder.start(request, setup: setup)
+                // Remembered only now that a recording is really running. A cancelled or refused
+                // aim must not overwrite the rect the user still wants back.
+                if let areaRect { setup.lastArea = areaRect }
                 feature.noteRecording(true)
                 RecordingHUDController.shared.show(
                     elapsed: { feature.recorder.elapsed },

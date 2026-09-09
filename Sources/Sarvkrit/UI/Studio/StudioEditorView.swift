@@ -14,6 +14,10 @@ struct StudioEditorView: View {
         VStack(spacing: 0) {
             titleBar
             Divider()
+            if let seconds = model.leadInNotice {
+                leadInBanner(seconds)
+                Divider()
+            }
             HStack(spacing: 0) {
                 PreviewHost(model: model, onScrub: onScrub)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -38,6 +42,32 @@ struct StudioEditorView: View {
     }
 
     // MARK: - Chrome
+
+    /// Says what was hidden at the head of the take, and undoes it in one click.
+    ///
+    /// **A trim nobody is told about is a silent decision**, which is the complaint this whole
+    /// round is about. A toast would have said it once and vanished; this stays until it is either
+    /// acted on or waved away.
+    private func leadInBanner(_ seconds: TimeInterval) -> some View {
+        HStack(spacing: Theme.Space.md) {
+            Image(systemName: "scissors")
+                .foregroundStyle(.secondary)
+            Text("Trimmed \(seconds, format: .number.precision(.fractionLength(1)))s of start-up, before the camera and microphone were running.")
+                .font(.system(size: Theme.Typography.body))
+            Spacer(minLength: Theme.Space.sm)
+            Button("Put It Back") { model.putBackLeadIn() }
+            Button {
+                model.dismissLeadInNotice()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("Keep the trim and hide this")
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.vertical, Theme.Space.sm)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
 
     private var titleBar: some View {
         HStack(spacing: Theme.Space.md) {

@@ -85,6 +85,45 @@ final class RecordingSetupTests: XCTestCase {
         XCTAssertEqual(RecordingSetup(defaults: defaults).countdownSeconds, 0)
     }
 
+    // MARK: - The area to record
+
+    func testAFreshSetupRemembersNoArea() {
+        XCTAssertNil(RecordingSetup(defaults: defaults).lastArea)
+    }
+
+    /// The whole point of item 3: the second area recording opens with the first one's rectangle
+    /// already on screen, so it can be nudged rather than redrawn.
+    func testTheAreaSurvivesARelaunch() {
+        let first = RecordingSetup(defaults: defaults)
+        first.lastArea = CGRect(x: 100, y: 200, width: 640, height: 480)
+
+        XCTAssertEqual(RecordingSetup(defaults: defaults).lastArea,
+                       CGRect(x: 100, y: 200, width: 640, height: 480))
+    }
+
+    /// An empty rect would seed the overlay with a selection that has no handles to grab, which is
+    /// worse than seeding nothing.
+    func testAnEmptyAreaIsNotRemembered() {
+        let setup = RecordingSetup(defaults: defaults)
+        setup.lastArea = CGRect(x: 10, y: 10, width: 0, height: 100)
+        XCTAssertNil(setup.lastArea)
+    }
+
+    func testTheAreaCanBeForgotten() {
+        let setup = RecordingSetup(defaults: defaults)
+        setup.lastArea = CGRect(x: 1, y: 2, width: 3, height: 4)
+        setup.lastArea = nil
+        XCTAssertNil(setup.lastArea)
+    }
+
+    /// Stored as four numbers rather than an archived rect, for the reason the screenshot path
+    /// gives: a change to how rects are persisted must not make an old value decode as something
+    /// plausible but wrong, because the failure there is recording the wrong part of the screen.
+    func testAHalfWrittenAreaIsIgnored() {
+        defaults.set([10.0, 20.0], forKey: "recording.lastArea")
+        XCTAssertNil(RecordingSetup(defaults: defaults).lastArea)
+    }
+
     // MARK: - Turning a choice into a request
 
     func testTheRequestCarriesTheChosenSource() {

@@ -78,6 +78,30 @@ final class RecordingSetup: ObservableObject {
         }
     }
 
+    /// The rectangle the last area recording used, in global AppKit points.
+    ///
+    /// Seeds the aiming overlay so the second area recording opens with the first one's rectangle
+    /// already drawn and grabbable, instead of an empty screen to drag on. Four numbers rather
+    /// than an archived rect, for the reason `ScreenshotFeature.lastSelection` gives: a change to
+    /// how rects are persisted must not let an old value decode as something plausible but wrong,
+    /// because the failure mode is recording the wrong part of the screen.
+    var lastArea: CGRect? {
+        get {
+            guard let values = defaults.array(forKey: "recording.lastArea") as? [Double],
+                  values.count == 4, values[2] > 0, values[3] > 0
+            else { return nil }
+            return CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+        }
+        set {
+            guard let newValue, newValue.width > 0, newValue.height > 0 else {
+                defaults.removeObject(forKey: "recording.lastArea")
+                return
+            }
+            defaults.set([newValue.minX, newValue.minY, newValue.width, newValue.height],
+                         forKey: "recording.lastArea")
+        }
+    }
+
     /// Forgets devices that are no longer attached.
     ///
     /// Without this the bar offers a camera that was unplugged last week, and Record produces a
