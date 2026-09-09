@@ -120,4 +120,36 @@ final class StudioProjectTests: XCTestCase {
         edited.zooms[0].isDisabled = true
         XCTAssertTrue(edited.visibleZooms.isEmpty)
     }
+
+    /// **The decoder is hand-written and the encoder is not, so they drift.** A new field reaches
+    /// disk for free and is silently dropped on the way back — which already cost this feature the
+    /// camera offset once, and would quietly discard every hand-placed click here.
+    func testClickEditsSurviveARoundTrip() throws {
+        var project = StudioProject(canvasSize: CGSize(width: 100, height: 100),
+                                    timeline: Timeline(clips: [Clip(sourceStart: 0, sourceEnd: 5)]))
+        project.clickEdits.added = [ManualClick(t: 2, point: CGPoint(x: 7, y: 9))]
+        project.clickEdits.suppressed = [4.25]
+
+        let data = try JSONEncoder().encode(project)
+        let decoded = try JSONDecoder().decode(StudioProject.self, from: data)
+
+        XCTAssertEqual(decoded.clickEdits.added.count, 1)
+        XCTAssertEqual(decoded.clickEdits.added.first?.point, CGPoint(x: 7, y: 9))
+        XCTAssertEqual(decoded.clickEdits.suppressed, [4.25])
+    }
+
+    func testPointerHighlightsSurviveARoundTrip() throws {
+        var project = StudioProject(canvasSize: CGSize(width: 100, height: 100),
+                                    timeline: Timeline(clips: [Clip(sourceStart: 0, sourceEnd: 5)]))
+        project.pointerHighlights = [PointerHighlight(start: 1, end: 2.5, radiusFraction: 0.2,
+                                                      dimming: 0.7)]
+
+        let data = try JSONEncoder().encode(project)
+        let decoded = try JSONDecoder().decode(StudioProject.self, from: data)
+
+        XCTAssertEqual(decoded.pointerHighlights.count, 1)
+        XCTAssertEqual(decoded.pointerHighlights.first?.radiusFraction, 0.2)
+        XCTAssertEqual(decoded.pointerHighlights.first?.dimming, 0.7)
+        XCTAssertEqual(decoded.pointerHighlights.first?.end, 2.5)
+    }
 }

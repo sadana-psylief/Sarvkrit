@@ -331,6 +331,53 @@ final class StudioDocumentModel: ObservableObject {
 
     // MARK: - Masks
 
+    /// Places a click at the playhead, on the pointer.
+    ///
+    /// **The pointer's own position is the point**, because "add a click here" means the thing under
+    /// the cursor at that moment; asking the user to place it as well would be asking twice.
+    func addClickAtPlayhead() {
+        let start = sourceTime
+        guard let point = events.cursorPoint(at: start) else { return }
+        edit { $0.clickEdits.added.append(ManualClick(t: start, point: point)) }
+    }
+
+    /// Takes out the recorded click nearest the playhead, if there is one close by.
+    ///
+    /// Suppressed rather than deleted — the recording is never modified, so undo brings it back.
+    @discardableResult
+    func suppressClickNearPlayhead() -> Bool {
+        let t = sourceTime
+        let nearest = ClickTrack.effective(recorded: events.clicks, edits: project.clickEdits)
+            .filter { abs($0.t - t) <= ClickEffect.duration }
+            .min { abs($0.t - t) < abs($1.t - t) }
+        guard let nearest else { return false }
+
+        edit { edited in
+            // A hand-placed one is removed outright; there is nothing in the recording to remember.
+            if let index = edited.clickEdits.added.firstIndex(where: {
+                abs($0.t - nearest.t) <= ClickTrack.sameClickTolerance
+            }) {
+                edited.clickEdits.added.remove(at: index)
+            } else {
+                edited.clickEdits.suppressed.append(nearest.t)
+            }
+        }
+        return true
+    }
+
+    /// Dims everything around the pointer for a few seconds from the playhead.
+    func addPointerHighlightAtPlayhead() {
+        let start = sourceTime
+        edit {
+            $0.pointerHighlights.append(PointerHighlight(start: start, end: start + 3))
+            $0.pointerHighlights.sort { $0.start < $1.start }
+        }
+    }
+
+    func removePointerHighlight(_ id: PointerHighlight.ID) {
+        edit { $0.pointerHighlights.removeAll { $0.id == id } }
+    }
+
     func addMaskAtPlayhead() {
         let start = sourceTime
         let size = project.canvasSize

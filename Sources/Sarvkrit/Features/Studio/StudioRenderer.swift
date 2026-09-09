@@ -147,6 +147,8 @@ enum StudioRenderer {
         // edge is cut by the rounded corner exactly as the content is.
         drawMasks(project: project, sourceTime: sourceTime, transform: transform,
                   imageRect: screenRect, screen: sources.screen, in: context)
+        drawPointerSpotlight(project: project, sourceTime: sourceTime, events: events,
+                             transform: transform, imageRect: screenRect, in: context)
         drawClicks(project: project, sourceTime: sourceTime, events: events,
                    transform: transform, imageRect: screenRect, in: context)
         drawCursor(project: project, sourceTime: sourceTime, events: events,
@@ -246,7 +248,7 @@ enum StudioRenderer {
         let scaled = CGFloat(height) * imageRect.width / max(project.canvasSize.width, 1)
             * CGFloat(transform.scale)
 
-        let click = lastClick(events: events, at: sourceTime)
+        let click = lastClick(project: project, events: events, at: sourceTime)
         let effect = click.map {
             ClickEffect.state(settings.clickEffect, secondsSinceClick: sourceTime - $0.t)
         } ?? nil
@@ -296,8 +298,16 @@ enum StudioRenderer {
         return 1 - fade
     }
 
-    private static func lastClick(events: EventLog, at t: TimeInterval) -> ClickEvent? {
-        events.pressDowns.last { $0.t <= t && t - $0.t <= ClickEffect.duration }
+    private static func lastClick(project: StudioProject, events: EventLog,
+                                  at t: TimeInterval) -> ClickEvent? {
+        // The ordinary case allocates nothing it did not before: with no edits this is exactly the
+        // recording's own presses. `ClickTrack` only gets involved once somebody has changed
+        // something, and even then it never modifies the recording.
+        guard project.clickEdits != ClickEdits() else {
+            return events.pressDowns.last { $0.t <= t && t - $0.t <= ClickEffect.duration }
+        }
+        return ClickTrack.effective(recorded: events.clicks, edits: project.clickEdits)
+            .last { $0.t <= t && t - $0.t <= ClickEffect.duration }
     }
 
     // MARK: - Clicks
@@ -305,7 +315,8 @@ enum StudioRenderer {
     private static func drawClicks(project: StudioProject, sourceTime: TimeInterval,
                                    events: EventLog, transform: ZoomTransform,
                                    imageRect: CGRect, in context: CGContext) {
-        guard let click = lastClick(events: events, at: sourceTime), click.isInside,
+        guard let click = lastClick(project: project, events: events, at: sourceTime),
+              click.isInside,
               let state = ClickEffect.state(project.cursor.clickEffect,
                                             secondsSinceClick: sourceTime - click.t),
               let placed = canvasPoint(click.point, project: project, transform: transform,
@@ -373,6 +384,42 @@ extension StudioRenderer {
     /// **The safe direction is opaque.** A mask that fails to resolve — its window gone, its
     /// filter unavailable — falls back to a solid fill rather than to nothing, because the one
     /// outcome that must never happen is uncovering what it was hiding.
+    /// The pointer spotlight: everything outside a circle on the pointer is dimmed.
+    ///
+    /// **Drawn before the click effect and the cursor, and inside the screen's clip.** That order is
+    /// the point — the wash dims the content being demonstrated while the pointer itself, and any
+    /// click ring around it, draw on top and stay bright.
+    ///
+    /// One even-odd fill, exactly like a `.highlight` mask, so the two read as one idea and no two
+    /// washes can darken each other.
+    static func drawPointerSpotlight(project: StudioProject, sourceTime: TimeInterval,
+                                     events: EventLog, transform: ZoomTransform,
+                                     imageRect: CGRect, in context: CGContext) {
+        let cursor = events.isCursorInside(at: sourceTime)
+            ? events.cursorPoint(at: sourceTime) : nil
+        guard let state = PointerSpotlight.state(at: sourceTime,
+                                                 highlights: project.pointerHighlights,
+                                                 cursor: cursor,
+                                                 frameSize: project.canvasSize),
+              state.dimming > 0.001,
+              let centre = canvasPoint(state.centre, project: project, transform: transform,
+                                       imageRect: imageRect) else { return }
+
+        // Scaled with the picture, so the spotlight covers the same content zoomed in as out.
+        let scale = imageRect.width / max(project.canvasSize.width, 1) * CGFloat(transform.scale)
+        let radius = state.radius * scale
+
+        let path = CGMutablePath()
+        path.addRect(imageRect)
+        path.addEllipse(in: CGRect(x: centre.x - radius, y: centre.y - radius,
+                                   width: radius * 2, height: radius * 2))
+        context.saveGState()
+        context.addPath(path)
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: CGFloat(state.dimming)))
+        context.fillPath(using: .evenOdd)
+        context.restoreGState()
+    }
+
     static func drawMasks(project: StudioProject, sourceTime: TimeInterval,
                           transform: ZoomTransform, imageRect: CGRect,
                           screen: CGImage?, in context: CGContext) {

@@ -272,4 +272,52 @@ final class StudioRenderSnapshotTests: XCTestCase {
         XCTAssertEqual(one.g, other.g, accuracy: 0.002, "green leaked structure")
         XCTAssertEqual(one.b, other.b, accuracy: 0.002, "blue leaked structure")
     }
+
+    // MARK: - Editing by hand
+
+    /// **The seam, not the layer.** The camera test above hands `drawCamera` an image directly and
+    /// therefore proved nothing about whether anything supplied one — which is exactly how the
+    /// webcam went missing from every recording. These two go the other way: they change only the
+    /// *project* and require the finished frame to differ, so the wiring is what is under test.
+    func testAPointerHighlightDimsTheSurroundings() throws {
+        var spotlit = project()
+        spotlit.pointerHighlights = [PointerHighlight(start: 0, end: 10)]
+
+        let plain = try render(project(), at: 3)
+        let dimmed = try render(spotlit, at: 3)
+
+        XCTAssertNotEqual(png(plain), png(dimmed), "no spotlight was drawn")
+        try write(dimmed, named: "studio-pointer-highlight")
+    }
+
+    /// And it must genuinely end, rather than dimming the rest of the video.
+    func testAPointerHighlightLeavesLaterFramesAlone() throws {
+        var spotlit = project()
+        spotlit.pointerHighlights = [PointerHighlight(start: 0, end: 2)]
+
+        XCTAssertEqual(png(try render(project(), at: 6)), png(try render(spotlit, at: 6)))
+    }
+
+    /// A click placed by hand draws the same effect a recorded one does.
+    func testAHandPlacedClickIsDrawn() throws {
+        var edited = project()
+        edited.clickEdits.added = [ManualClick(t: 6, point: CGPoint(x: 400, y: 250))]
+
+        let plain = try render(project(), at: 6.05)
+        let clicked = try render(edited, at: 6.05)
+
+        XCTAssertNotEqual(png(plain), png(clicked), "the hand-placed click was not drawn")
+    }
+
+    /// And suppressing a recorded one takes it out of the picture. `events()` records a click at 2.
+    func testASuppressedClickIsNotDrawn() throws {
+        var edited = project()
+        edited.clickEdits.suppressed = [2]
+
+        let withClick = try render(project(), at: 2.05)
+        let without = try render(edited, at: 2.05)
+
+        XCTAssertNotEqual(png(withClick), png(without),
+                          "the suppressed click is still in the picture")
+    }
 }
