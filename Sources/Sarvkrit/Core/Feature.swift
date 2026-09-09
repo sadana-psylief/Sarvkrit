@@ -168,6 +168,15 @@ protocol Feature: AnyObject {
     func activate()
     func deactivate()
 
+    /// The user switched this feature off, as opposed to it being stood down.
+    ///
+    /// `deactivate()` cannot carry this: `AppState` also calls it from `deinit`, so a feature with
+    /// undoing to do that needs the user present — a password prompt, a confirmation — cannot tell
+    /// the click apart from the teardown. Keep Awake is the one that needs it, to put system sleep
+    /// back. Declared here rather than only defaulted in the extension so an implementation is
+    /// actually reached through a `Feature` existential.
+    func userDidDisable()
+
     /// A feature's own detail pane, when the generic one can't express it.
     ///
     /// `FeatureDetailView` renders title / toggle / prose / permission status for any feature, which
@@ -208,6 +217,7 @@ extension Feature {
     var requirements: Set<Requirement> { [.accessibility] }
     func activate() {}
     func deactivate() {}
+    func userDidDisable() {}
     @MainActor func makeDetailView() -> AnyView? { nil }
     @MainActor func trayPanels() -> [TrayPanel] { [] }
     var panelIsItsOwnSwitch: Bool { false }
