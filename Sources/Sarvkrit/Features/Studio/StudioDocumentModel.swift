@@ -502,12 +502,13 @@ final class StudioDocumentModel: ObservableObject {
 
     /// Puts the trimmed start-up seconds back, from the banner.
     ///
-    /// The same `untrimClip` the timeline's context menu uses, so it is one undo step and reaches
-    /// the recording's real first frame.
+    /// **The head only.** `untrimClip` restores both ends, which is right for its context menu and
+    /// wrong here: a user who had trimmed the tail deliberately would lose the end of their edit
+    /// to a button that promised to fix the start.
     func putBackLeadIn() {
         leadInNotice = nil
-        guard let first = project.timeline.clips.first else { return }
-        untrimClip(first.id)
+        guard !project.timeline.clips.isEmpty else { return }
+        edit { $0.timeline.clips[0].sourceStart = 0 }
     }
 
     /// Agrees with the trim and wants the banner gone. Does not touch the project.

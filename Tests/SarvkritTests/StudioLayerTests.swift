@@ -120,6 +120,51 @@ final class StudioLayerTests: XCTestCase {
         XCTAssertEqual(settled.opacity, 1, accuracy: 0.001)
     }
 
+    /// **The fade softens an arrival, and there is no arrival if the camera was already running
+    /// when the visible material begins.**
+    ///
+    /// The trimmed lead-in put this exactly on the seam: a project whose first clip starts at the
+    /// capture offset opens at source == `cameraStart`, which is the first frame of the fade — so
+    /// the very frame the user looks at first had no camera on it at all. Trimming had moved the
+    /// hole rather than closed it.
+    func testACameraAlreadyRunningWhenTheClipBeginsIsNotFadedIn() throws {
+        var settings = camera()
+        settings.fadeSeconds = 0.4
+
+        let atTheSeam = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 2.4, segments: [], settings: settings, canvas: canvas, zoom: 1,
+            clipSource: 2.4..<20, cameraStart: 2.4))
+
+        XCTAssertEqual(atTheSeam.opacity, 1, accuracy: 0.001,
+                       "the first frame of a trimmed take opened with no camera on it")
+    }
+
+    /// A clip that starts after the camera did — anything past a split — is the same case.
+    func testALaterClipShowsTheCameraAtFullStrength() throws {
+        var settings = camera()
+        settings.fadeSeconds = 0.4
+
+        let later = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 10, segments: [], settings: settings, canvas: canvas, zoom: 1,
+            clipSource: 10..<20, cameraStart: 2.4))
+
+        XCTAssertEqual(later.opacity, 1, accuracy: 0.001)
+    }
+
+    /// And the fade is still there for the case it was written for: material that begins before
+    /// the camera does, so the bubble genuinely arrives while you are watching.
+    func testTheFadeSurvivesForAnUntrimmedTake() throws {
+        var settings = camera()
+        settings.fadeSeconds = 0.4
+
+        let arriving = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 2.5, segments: [], settings: settings, canvas: canvas, zoom: 1,
+            clipSource: 0..<20, cameraStart: 2.4))
+
+        XCTAssertLessThan(arriving.opacity, 0.5)
+        XCTAssertGreaterThan(arriving.opacity, 0)
+    }
+
     /// With no fade asked for, it simply appears — the setting is honoured either way.
     func testNoFadeMeansItAppearsAtOnce() throws {
         var settings = camera()

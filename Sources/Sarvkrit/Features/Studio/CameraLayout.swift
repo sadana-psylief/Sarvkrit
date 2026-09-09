@@ -126,7 +126,8 @@ enum CameraLayoutResolver {
         let pip = pipRect(settings: settings, canvas: canvas, zoom: zoom)
         let full = CGRect(origin: .zero, size: canvas)
 
-        let arriving = arrival(at: t, start: cameraStart, fade: settings.fadeSeconds)
+        let arriving = arrival(at: t, start: cameraStart, fade: settings.fadeSeconds,
+                               clipStart: clipSource?.lowerBound)
 
         guard let segment = segments.first(where: { t >= $0.start && t < $0.end }) else {
             return CameraState(rect: pip, cornerRadius: radius(for: pip, settings: settings),
@@ -155,9 +156,17 @@ enum CameraLayoutResolver {
     }
 
     /// How far in the camera is, having only just started.
+    ///
+    /// **The fade softens an arrival, and there is no arrival if the camera was already running
+    /// when the visible material begins.** The trimmed lead-in puts this exactly on the seam: a
+    /// project whose first clip starts at the capture offset opens at `t == cameraStart`, which is
+    /// the first frame of the fade — so the very frame the user looks at first would carry no
+    /// camera, and trimming would have moved the hole rather than closed it. Anything past a
+    /// split is the same case.
     private static func arrival(at t: TimeInterval, start: TimeInterval,
-                                fade: TimeInterval) -> Double {
-        guard fade > 0 else { return 1 }
+                                fade: TimeInterval,
+                                clipStart: TimeInterval? = nil) -> Double {
+        guard fade > 0, (clipStart ?? 0) < start else { return 1 }
         return min(1, max(0, (t - start) / fade))
     }
 

@@ -252,6 +252,114 @@ final class StudioRenderSnapshotTests: XCTestCase {
         XCTAssertEqual(png(try render(hidden, at: 3)), png(frame))
     }
 
+    /// **"When I do secure blur ... it also removes the webcam video."**
+    ///
+    /// Reading the code did not explain this: every `saveGState` in the mask path is balanced in
+    /// its own function, `drawCamera` runs after the screen clip is restored, and the renderer's
+    /// cache holds only a background image the camera never touches. So it is measured instead —
+    /// the camera bubble is cropped out of both frames and required to be pixel-identical with and
+    /// without a blur elsewhere on the screen. Reasoning about a symptom is not the same as
+    /// pinning it.
+    func testABlurLeavesTheCameraExactlyWhereItWas() throws {
+        let cameraImage = try cameraFrame()
+
+        var blurred = project()
+        // Deliberately far from the bubble, which defaults to the bottom-leading corner.
+        blurred.masks = [StudioMask(mode: .secureBlur,
+                                    rects: [CGRect(x: 500, y: 300, width: 250, height: 150)],
+                                    start: 0, end: 10)]
+
+        let plain = try XCTUnwrap(StudioRenderer.frame(
+            of: project(), atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen(), camera: cameraImage)))
+        let withMask = try XCTUnwrap(StudioRenderer.frame(
+            of: blurred, atSource: 3, events: events(),
+            sources: FrameSources(screen: try screen(), camera: cameraImage)))
+
+        // The blur has to have done something, or this passes by drawing nothing at all.
+        XCTAssertNotEqual(png(plain), png(withMask), "no blur was drawn")
+
+        let bubble = try XCTUnwrap(CameraLayoutResolver.state(
+            at: 3, segments: [], settings: blurred.camera, canvas: canvas, zoom: 1))
+        XCTAssertEqual(png(try crop(plain, canvasRect: bubble.rect)),
+                       png(try crop(withMask, canvasRect: bubble.rect)),
+                       "the blur changed the camera bubble")
+        try write(withMask, named: "studio-blur-and-camera")
+    }
+
+    /// And the frame the editor opens on. A trimmed take starts at the capture offset, which is
+    /// where the camera's own fade began — so this is the frame that was blank.
+    func testTheFirstFrameOfATrimmedTakeHasACamera() throws {
+        let cameraImage = try cameraFrame()
+        var trimmed = project()
+        trimmed.timeline = Timeline(clips: [Clip(sourceStart: 3.2, sourceEnd: 10)])
+
+        let frame = try XCTUnwrap(StudioRenderer.frame(
+            of: trimmed, atSource: 3.2, events: events(),
+            sources: FrameSources(screen: try screen(), camera: cameraImage),
+            clipSource: 3.2..<10, cameraStart: 3.2))
+        let withoutCamera = try XCTUnwrap(StudioRenderer.frame(
+            of: trimmed, atSource: 3.2, events: events(),
+            sources: FrameSources(screen: try screen()),
+            clipSource: 3.2..<10, cameraStart: 3.2))
+
+        XCTAssertNotEqual(png(frame), png(withoutCamera),
+                          "the first frame the editor opens on had no camera on it")
+    }
+
+    /// **A camera that is not there yet must draw nothing at all — not even its shadow.**
+    ///
+    /// `drawCamera` fills the bubble's path in black to cast the shadow, and did so *before*
+    /// applying the camera's own opacity. So through the whole fade-in, and at opacity zero
+    /// outright, there was an opaque black squircle sitting where the webcam belonged. That is a
+    /// far better match for "it removes the webcam video" than an absent camera, and it is why the
+    /// trimmed-first-frame test above passed even with the fade bug still in: the frames differed
+    /// by a black blob rather than by a camera.
+    func testACameraAtZeroOpacityDrawsNothing() throws {
+        var fading = project()
+        fading.camera.fadeSeconds = 0.4
+
+        // Untrimmed material, sampled at the instant the camera track begins: the first frame of
+        // its own fade, so opacity is exactly zero.
+        let withCamera = try XCTUnwrap(StudioRenderer.frame(
+            of: fading, atSource: 2.4, events: events(),
+            sources: FrameSources(screen: try screen(), camera: try cameraFrame()),
+            clipSource: 0..<10, cameraStart: 2.4))
+        let withoutCamera = try XCTUnwrap(StudioRenderer.frame(
+            of: fading, atSource: 2.4, events: events(),
+            sources: FrameSources(screen: try screen()),
+            clipSource: 0..<10, cameraStart: 2.4))
+
+        XCTAssertEqual(png(withCamera), png(withoutCamera),
+                       "something was drawn where the camera was not yet")
+    }
+
+    /// A flat teal square, big enough to fill any bubble it is asked to.
+    private func cameraFrame() throws -> CGImage {
+        let camera = try XCTUnwrap(CGContext(
+            data: nil, width: 400, height: 400, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        camera.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.75, alpha: 1))
+        camera.fill(CGRect(x: 0, y: 0, width: 400, height: 400))
+        return try XCTUnwrap(camera.makeImage())
+    }
+
+    /// One region of a rendered frame, addressed in canvas points.
+    ///
+    /// `cropping(to:)` measures from the top-left and the canvas from the bottom-left, so the flip
+    /// is here rather than at each call — getting it wrong would compare two bands of background
+    /// and pass no matter what happened to the camera.
+    private func crop(_ image: CGImage, canvasRect rect: CGRect) throws -> CGImage {
+        let scaleX = CGFloat(image.width) / canvas.width
+        let scaleY = CGFloat(image.height) / canvas.height
+        let flipped = CGRect(x: rect.minX * scaleX,
+                             y: (canvas.height - rect.maxY) * scaleY,
+                             width: rect.width * scaleX,
+                             height: rect.height * scaleY)
+        return try XCTUnwrap(image.cropping(to: flipped.integral))
+    }
+
     /// **The security property, measured where it lives.**
     ///
     /// `secureBlur` deliberately keeps the region's mean colour — that is what makes a redaction

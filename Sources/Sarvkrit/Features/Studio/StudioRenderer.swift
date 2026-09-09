@@ -661,9 +661,17 @@ extension StudioRenderer {
                                                      clipSource: clipSource,
                                                      cameraStart: cameraStart) else { return }
 
+        // **Nothing at all while the camera is not there.** The shadow is cast by filling the
+        // bubble's path in black, and it used to be drawn before the camera's own opacity was
+        // applied — so through the whole fade-in, and at opacity zero outright, an opaque black
+        // squircle sat where the webcam belonged. That is what "it removes the webcam video"
+        // looked like.
+        guard state.opacity > 0.001 else { return }
+
         let path = CGPath.rounded(state.rect, cornerRadius: state.cornerRadius)
         if let shadow = project.camera.shadow {
             context.saveGState()
+            context.setAlpha(CGFloat(state.opacity))
             context.setShadow(offset: CGSize(width: 0, height: -shadow.offsetY),
                               blur: shadow.radius,
                               color: CGColor(red: 0, green: 0, blue: 0,

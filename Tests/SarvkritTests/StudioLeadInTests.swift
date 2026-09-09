@@ -115,6 +115,22 @@ final class StudioLeadInTests: XCTestCase {
         XCTAssertNil(model.leadInNotice, "the notice outlived the thing it was about")
     }
 
+    /// The banner is about the head of the take and nothing else.
+    ///
+    /// `untrimClip` restores *both* ends, so delegating to it would undo a tail trim the user made
+    /// deliberately — losing the end of their edit to a button that promised to fix the start.
+    @MainActor
+    func testPuttingBackTheLeadInLeavesTheTailAlone() throws {
+        let (bundle, manifest) = try bundle(offset: 3.2)
+        let model = StudioDocumentModel(bundle: bundle, manifest: manifest, events: EventLog())
+        model.edit { $0.timeline.clips[0].sourceEnd = 18 }
+
+        model.putBackLeadIn()
+        XCTAssertEqual(model.project.timeline.clips.first?.sourceStart, 0)
+        XCTAssertEqual(model.project.timeline.clips.first?.sourceEnd, 18,
+                       "the banner threw away the tail the user had trimmed")
+    }
+
     /// Dismissing it is not the same as undoing it — somebody who agrees with the trim wants the
     /// banner gone and the trim kept.
     @MainActor
