@@ -71,6 +71,70 @@ final class StudioExportTests: XCTestCase {
         return bundle
     }
 
+    /// A real audio file at the bundle's microphone path: a tone, so "is there sound in the
+    /// export" has an answer that is not zero.
+    private func writeNarration(to url: URL, seconds: Double) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ])
+        input.expectsMediaDataInRealTime = false
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        let rate = 44_100.0
+        let frames = 1024
+        var format = AudioStreamBasicDescription(
+            mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 2, mFramesPerPacket: 1, mBytesPerFrame: 2,
+            mChannelsPerFrame: 1, mBitsPerChannel: 16, mReserved: 0)
+        var description: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &format, layoutSize: 0, layout: nil,
+                                       magicCookieSize: 0, magicCookie: nil, extensions: nil,
+                                       formatDescriptionOut: &description)
+        let audioFormat = try XCTUnwrap(description)
+
+        var index = 0
+        while Double(index * frames) / rate < seconds {
+            var samples = [Int16](repeating: 0, count: frames)
+            for n in 0..<frames {
+                let t = Double(index * frames + n) / rate
+                samples[n] = Int16(sin(2 * .pi * 440 * t) * 12_000)
+            }
+            var block: CMBlockBuffer?
+            let bytes = frames * 2
+            let memory = malloc(bytes)!
+            samples.withUnsafeBytes { _ = memcpy(memory, $0.baseAddress!, bytes) }
+            CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: memory,
+                                               blockLength: bytes, blockAllocator: nil,
+                                               customBlockSource: nil, offsetToData: 0,
+                                               dataLength: bytes, flags: 0, blockBufferOut: &block)
+            var sample: CMSampleBuffer?
+            var timing = CMSampleTimingInfo(
+                duration: CMTime(value: 1, timescale: CMTimeScale(rate)),
+                presentationTimeStamp: CMTime(value: CMTimeValue(index * frames),
+                                              timescale: CMTimeScale(rate)),
+                decodeTimeStamp: .invalid)
+            CMSampleBufferCreateReady(allocator: nil, dataBuffer: try XCTUnwrap(block),
+                                      formatDescription: audioFormat, sampleCount: frames,
+                                      sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                                      sampleSizeEntryCount: 1, sampleSizeArray: [2],
+                                      sampleBufferOut: &sample)
+            while !input.isReadyForMoreMediaData {
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            }
+            input.append(try XCTUnwrap(sample))
+            index += 1
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+    }
+
     /// The bytes of the first exported frame, for comparing two exports of the same project.
     private func firstFrame(of url: URL) async throws -> Data {
         let asset = AVURLAsset(url: url)
@@ -206,6 +270,83 @@ final class StudioExportTests: XCTestCase {
         let a = try await firstFrame(of: withCamera)
         let b = try await firstFrame(of: without)
         XCTAssertNotEqual(a, b, "the exported file is identical with and without a camera track")
+    }
+
+    // MARK: - Sound
+
+    /// **The assertion whose absence let every export ship silent.**
+    ///
+    /// `StudioExporter` did not contain the word "audio" once. It wrote a single video input and
+    /// read only the screen's video track — while the recorder captured narration, the manifest
+    /// recorded `hasMicrophone`, and `Clip` carried `volume`, `systemAudioVolume` and `isMuted`.
+    /// Every one of those controls was editing a track that never reached a file.
+    func testTheExportHasAudioWhenTheRecordingHasNarration() async throws {
+        let bundle = try makeRecording(seconds: 1)
+        try await writeNarration(to: bundle.microphoneURL, seconds: 1)
+        var manifest = try bundle.readManifest()
+        manifest.hasMicrophone = true
+        try bundle.write(manifest)
+
+        let destination = directory.appendingPathComponent("with-sound.mp4")
+        try await StudioExporter().export(
+            project: try project(over: bundle, seconds: 1), events: EventLog(),
+            recording: bundle, preset: .web, to: destination, onProgress: { _ in })
+
+        let asset = AVURLAsset(url: destination)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audio.isEmpty, "the exported file has no audio track at all")
+
+        let loudest = try await Self.peak(of: destination)
+        XCTAssertGreaterThan(loudest, 0.01, "the exported audio track is silent")
+    }
+
+    /// Isolates the fixture from the pipeline: if this fails, the test's own tone file is wrong
+    /// rather than the exporter.
+    func testTheNarrationFixtureAndCompositionAreSound() async throws {
+        let bundle = try makeRecording(seconds: 1)
+        try await writeNarration(to: bundle.microphoneURL, seconds: 1)
+
+        let asset = AVURLAsset(url: bundle.microphoneURL)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(tracks.isEmpty, "the fixture wrote no audio track")
+        let tonePeak = try await Self.peak(of: bundle.microphoneURL)
+        XCTAssertGreaterThan(tonePeak, 0.01, "the fixture's tone is silent")
+
+        let found = await StudioAudio.narrationURL(in: bundle)
+        XCTAssertNotNil(found, "StudioAudio did not find the narration file")
+
+        let composition = await StudioAudio.composition(
+            project: try project(over: bundle, seconds: 1), recording: bundle)
+        XCTAssertNotNil(composition, "no audio composition was built")
+        let built = try XCTUnwrap(composition)
+        let composed = try await built.asset.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(composed.isEmpty, "the composition has no audio track")
+    }
+
+    /// A muted clip must be silent in the file, not merely marked muted in the editor.
+    func testAMutedClipIsSilentInTheFile() async throws {
+        let bundle = try makeRecording(seconds: 1)
+        try await writeNarration(to: bundle.microphoneURL, seconds: 1)
+        var manifest = try bundle.readManifest()
+        manifest.hasMicrophone = true
+        try bundle.write(manifest)
+
+        var muted = try project(over: bundle, seconds: 1)
+        muted.timeline.clips[0].isMuted = true
+
+        let destination = directory.appendingPathComponent("muted.mp4")
+        try await StudioExporter().export(
+            project: muted, events: EventLog(), recording: bundle,
+            preset: .web, to: destination, onProgress: { _ in })
+
+        let loudest = try await Self.peak(of: destination)
+        XCTAssertLessThan(loudest, 0.01, "a muted clip still has sound in the exported file")
+    }
+
+    /// The loudest sample in a file's audio track, 0…1.
+    private static func peak(of url: URL) async throws -> Float {
+        let envelope = try await AudioEnvelope.read(url: url, samplesPerSecond: 20)
+        return envelope.max() ?? 0
     }
 
     func testProgressReachesTheEnd() async throws {

@@ -155,4 +155,44 @@ final class ZoomResolverTests: XCTestCase {
         XCTAssertTrue(resolve([one], at: 5 + one.easeIn / 2).isMoving)
         XCTAssertFalse(resolve([one], at: 7.5).isMoving)
     }
+
+    // MARK: - Cuts
+
+    /// **A zoom that straddles a cut must ease out at the cut, not snap.**
+    ///
+    /// Source time is not monotonic in output time once the edit has a cut in it: the frame after a
+    /// boundary can come from anywhere in the recording. A ramp measured from the segment's own end
+    /// is therefore still mid-flight when the picture jumps, and the zoom pops.
+    ///
+    /// This is a defect today rather than one reordering introduces — any ripple-delete already
+    /// creates that discontinuity — but reordering makes it happen at every cut instead of
+    /// occasionally, so it is fixed here.
+    func testAZoomEasesOutAtACutRatherThanSnapping() {
+        // A zoom running 8…12, on a clip whose material stops at 10.
+        let zoomed = ZoomResolver.transform(at: 9, segments: [segment(8, 12)], cursor: nil,
+                                            frameSize: frame, clipSource: 0..<10)
+        let atTheCut = ZoomResolver.transform(at: 9.99, segments: [segment(8, 12)], cursor: nil,
+                                              frameSize: frame, clipSource: 0..<10)
+
+        XCTAssertGreaterThan(zoomed.scale, 1.5, "the zoom should be in by the middle of the clip")
+        XCTAssertEqual(atTheCut.scale, 1, accuracy: 0.05,
+                       "the zoom was still mid-ramp at the cut, so it snaps")
+    }
+
+    /// And a clip that begins inside a zoom opens already zoomed, rather than ramping in from
+    /// nothing just after a cut — which would read as a mistake. Same reasoning as a zoom that
+    /// begins on frame zero.
+    func testAClipThatBeginsInsideAZoomOpensAlreadyZoomed() {
+        let transform = ZoomResolver.transform(at: 9.05, segments: [segment(8, 12)], cursor: nil,
+                                               frameSize: frame, clipSource: 9..<12)
+        XCTAssertEqual(transform.scale, 2, accuracy: 0.0001)
+    }
+
+    /// With no clip range the arithmetic is exactly what it always was, so nothing that does not
+    /// cut is affected.
+    func testWithoutAClipRangeNothingChanges() {
+        let withRange = ZoomResolver.transform(at: 9, segments: [segment(8, 12)], cursor: nil,
+                                               frameSize: frame, clipSource: nil)
+        XCTAssertEqual(withRange.scale, resolve([segment(8, 12)], at: 9).scale, accuracy: 0.0001)
+    }
 }

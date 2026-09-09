@@ -77,7 +77,8 @@ enum StudioRenderer {
                       atSource sourceTime: TimeInterval,
                       events: EventLog,
                       sources: FrameSources,
-                      cache: Cache = Cache()) -> CGImage? {
+                      cache: Cache = Cache(),
+                      clipSource: Range<TimeInterval>? = nil) -> CGImage? {
         let (canvas, imageRect) = layout(for: project)
         guard canvas.width >= 1, canvas.height >= 1 else { return nil }
 
@@ -93,7 +94,8 @@ enum StudioRenderer {
         context.scaleBy(x: 1, y: -1)
 
         draw(project: project, sourceTime: sourceTime, events: events, sources: sources,
-             canvas: canvas, imageRect: imageRect, in: context, cache: cache)
+             canvas: canvas, imageRect: imageRect, in: context, cache: cache,
+             clipSource: clipSource)
 
         return context.makeImage()
     }
@@ -105,7 +107,8 @@ enum StudioRenderer {
                      canvas: CGSize,
                      imageRect: CGRect,
                      in context: CGContext,
-                     cache: Cache) {
+                     cache: Cache,
+                     clipSource: Range<TimeInterval>? = nil) {
 
         // 1 — background. Cached: it is the same picture every frame.
         drawBackground(project: project, canvas: canvas, sources: sources,
@@ -131,7 +134,8 @@ enum StudioRenderer {
             at: sourceTime,
             segments: project.visibleZooms,
             cursor: events.isCursorInside(at: sourceTime) ? events.cursorPoint(at: sourceTime) : nil,
-            frameSize: project.canvasSize)
+            frameSize: project.canvasSize,
+            clipSource: clipSource)
 
         context.saveGState()
         if let frame {
@@ -160,7 +164,8 @@ enum StudioRenderer {
         // 6 and 7 — camera and captions, in canvas space: they belong to the finished video, not
         // to the recording, so a zoom must not move them.
         drawCamera(project: project, sourceTime: sourceTime, transform: transform,
-                   canvas: canvas, camera: sources.camera, in: context)
+                   canvas: canvas, camera: sources.camera, in: context,
+                   clipSource: clipSource)
         drawKeystrokes(project: project, sourceTime: sourceTime, events: events,
                        canvas: canvas, in: context)
         drawCaptions(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
@@ -529,13 +534,15 @@ extension StudioRenderer {
     /// so a zoom must not move it.
     static func drawCamera(project: StudioProject, sourceTime: TimeInterval,
                            transform: ZoomTransform, canvas: CGSize,
-                           camera: CGImage?, in context: CGContext) {
+                           camera: CGImage?, in context: CGContext,
+                           clipSource: Range<TimeInterval>? = nil) {
         guard let camera,
               let state = CameraLayoutResolver.state(at: sourceTime,
                                                      segments: project.cameraSegments,
                                                      settings: project.camera,
                                                      canvas: canvas,
-                                                     zoom: transform.scale) else { return }
+                                                     zoom: transform.scale,
+                                                     clipSource: clipSource) else { return }
 
         let path = CGPath.rounded(state.rect, cornerRadius: state.cornerRadius)
         if let shadow = project.camera.shadow {

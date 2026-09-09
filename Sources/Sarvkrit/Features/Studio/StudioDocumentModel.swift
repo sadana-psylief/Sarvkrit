@@ -124,6 +124,16 @@ final class StudioDocumentModel: ObservableObject {
         project.timeline.sourceTime(forOutput: playhead)?.sourceTime ?? 0
     }
 
+    /// The source range of the clip the playhead is inside.
+    ///
+    /// Passed to the renderer so a zoom or a camera move that straddles a cut eases out at the cut
+    /// rather than being caught mid-ramp when the picture jumps to different material.
+    var currentClipSource: Range<TimeInterval>? {
+        guard let clip = project.timeline.sourceTime(forOutput: playhead)?.clip,
+              clip.sourceEnd > clip.sourceStart else { return nil }
+        return clip.sourceStart..<clip.sourceEnd
+    }
+
     // MARK: - Editing
 
     /// One committed change: an undo step, a redraw and a save.

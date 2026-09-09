@@ -105,11 +105,16 @@ struct CameraState: Equatable {
 /// *becomes* the picture-in-picture rather than cutting to it.
 enum CameraLayoutResolver {
 
+    /// - Parameter clipSource: the source range of the clip this frame came from. The blend is
+    ///   clamped to it for the same reason the zoom envelope is — after a cut, source time is not
+    ///   monotonic in output time, so a blend measured from the segment's own end is still running
+    ///   when the picture jumps and the camera snaps mid-move.
     static func state(at t: TimeInterval,
                       segments: [CameraSegment],
                       settings: CameraSettings,
                       canvas: CGSize,
-                      zoom: Double) -> CameraState? {
+                      zoom: Double,
+                      clipSource: Range<TimeInterval>? = nil) -> CameraState? {
         guard canvas.width > 0, canvas.height > 0 else { return nil }
 
         let pip = pipRect(settings: settings, canvas: canvas, zoom: zoom)
@@ -130,7 +135,7 @@ enum CameraLayoutResolver {
 
         // Blended towards the neighbouring layout across the transition, at both ends, so the
         // change reads as one movement rather than as two cuts.
-        let blend = blendFraction(at: t, segment: segment)
+        let blend = blendFraction(at: t, segment: segment, clipSource: clipSource)
         guard blend < 1 else {
             return CameraState(rect: target, cornerRadius: radius(for: target, settings: settings),
                                opacity: opacity)
@@ -142,10 +147,13 @@ enum CameraLayoutResolver {
     }
 
     /// 1 while the segment holds, ramping from 0 at each edge.
-    private static func blendFraction(at t: TimeInterval, segment: CameraSegment) -> Double {
+    private static func blendFraction(at t: TimeInterval, segment: CameraSegment,
+                                      clipSource: Range<TimeInterval>?) -> Double {
         guard segment.transition > 0 else { return 1 }
-        let intoStart = t - segment.start
-        let toEnd = segment.end - t
+        let start = max(segment.start, clipSource?.lowerBound ?? -.greatestFiniteMagnitude)
+        let end = min(segment.end, clipSource?.upperBound ?? .greatestFiniteMagnitude)
+        let intoStart = t - start
+        let toEnd = end - t
         return min(1, min(intoStart, toEnd) / segment.transition)
     }
 

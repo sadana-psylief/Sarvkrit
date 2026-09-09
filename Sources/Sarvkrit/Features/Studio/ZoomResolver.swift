@@ -27,17 +27,26 @@ enum ZoomResolver {
     /// seasick. Inside the zone the frame is perfectly still.
     static let deadZone: Double = 0.25
 
+    /// - Parameter clipSource: the source range of the clip this frame came from, if the caller
+    ///   knows it — which `Timeline.sourceTime(forOutput:)` always does, since it returns the clip
+    ///   alongside the time.
+    ///
+    ///   **Source time is not monotonic in output time once the edit has a cut in it.** The frame
+    ///   after a boundary can come from anywhere in the recording, so a ramp measured from the
+    ///   segment's own end is still mid-flight when the picture jumps, and the zoom pops. Ramping
+    ///   against the segment's *intersection with the clip* makes it ease out at the cut instead.
     static func transform(at t: TimeInterval,
                           segments: [ZoomSegment],
                           cursor: CGPoint?,
-                          frameSize: CGSize) -> ZoomTransform {
+                          frameSize: CGSize,
+                          clipSource: Range<TimeInterval>? = nil) -> ZoomTransform {
         guard frameSize.width > 0, frameSize.height > 0,
               let segment = segments.first(where: {
                   !$0.isDisabled && t >= $0.start && t < $0.end
               })
         else { return .identity }
 
-        let (progress, moving) = envelope(for: segment, at: t)
+        let (progress, moving) = envelope(for: segment, at: t, clipSource: clipSource)
         let scale = segment.ease.interpolate(from: 1, to: segment.level, progress: progress)
 
         let anchor = target(for: segment, cursor: cursor, frameSize: frameSize)
@@ -49,10 +58,17 @@ enum ZoomResolver {
     /// 0 at the edges of the segment, 1 while it holds — with the in and out ramps sized by the
     /// segment's own ease durations, and squeezed if the segment is too short to fit both.
     private static func envelope(for segment: ZoomSegment,
-                                 at t: TimeInterval) -> (progress: Double, isMoving: Bool) {
-        let elapsed = t - segment.start
-        let remaining = segment.end - t
-        let duration = max(segment.duration, 0.0001)
+                                 at t: TimeInterval,
+                                 clipSource: Range<TimeInterval>?)
+        -> (progress: Double, isMoving: Bool) {
+        // Clamped to the material actually on screen. See `transform`.
+        let start = max(segment.start, clipSource?.lowerBound ?? -.greatestFiniteMagnitude)
+        let end = min(segment.end, clipSource?.upperBound ?? .greatestFiniteMagnitude)
+        let wasCutInto = start > segment.start
+
+        let elapsed = t - start
+        let remaining = end - t
+        let duration = max(end - start, 0.0001)
 
         // A segment shorter than its own ramps would otherwise ease in past its end and never
         // reach its level. Sharing the available time keeps both ramps and simply shortens them.
@@ -62,8 +78,10 @@ enum ZoomResolver {
         let easeOut = segment.easeOut * squeeze
 
         // A zoom that begins on frame zero opens already zoomed rather than animating in from
-        // nothing: if the first thing to show is a close-up, it should simply be there.
-        if segment.start <= 0, elapsed < easeIn {
+        // nothing: if the first thing to show is a close-up, it should simply be there. The same
+        // holds for a clip that begins partway through a zoom — ramping in just after a cut reads
+        // as a mistake, where cutting straight to the close-up reads as an edit.
+        if segment.start <= 0 || wasCutInto, elapsed < easeIn {
             return (1, false)
         }
         if easeIn > 0, elapsed < easeIn {

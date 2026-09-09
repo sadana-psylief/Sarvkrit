@@ -2,6 +2,7 @@ import AVFoundation
 import VideoToolbox
 import CoreGraphics
 import Foundation
+import os
 
 /// Turning a project into a file.
 ///
@@ -9,6 +10,8 @@ import Foundation
 /// the only way "the export matches what I saw" can be true rather than aspirational —
 /// `AnnotationRenderer` makes the same promise on the screenshot side with the same structure.
 actor StudioExporter {
+
+    private let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Studio")
 
     struct Progress: Equatable {
         var completed: Int
@@ -109,6 +112,29 @@ actor StudioExporter {
         guard writer.canAdd(input) else { throw ExportError.cannotWrite }
         writer.add(input)
 
+        // **The soundtrack.** Added before writing starts, because an `AVAssetWriter` will not take
+        // a new input once it has. Nil when the recording genuinely has no sound, so a screen-only
+        // take does not gain an empty track.
+        let audio = await StudioAudio.composition(project: project, recording: recording)
+        var audioInput: AVAssetWriterInput?
+        log.info("export: audio composition \(audio == nil ? "absent" : "built", privacy: .public)")
+        if audio != nil {
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 2,
+                AVEncoderBitRateKey: 128_000,
+            ]
+            let track = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+            track.expectsMediaDataInRealTime = false
+            if writer.canAdd(track) {
+                writer.add(track)
+                audioInput = track
+            } else {
+                log.error("export: the writer refused an audio input")
+            }
+        }
+
         guard writer.startWriting(), reader.startReading() else { throw ExportError.cannotWrite }
         if let cameraReader, !cameraReader.startReading() {
             // Not fatal: a camera that cannot be read costs the picture-in-picture, not the export.
@@ -171,7 +197,11 @@ actor StudioExporter {
                                              sources: FrameSources(screen: decoded,
                                                                    camera: decodedCamera,
                                                                    wallpaper: wallpaper),
-                                             cache: cache)
+                                             cache: cache,
+                                             clipSource: placed.clip.sourceEnd
+                                                 > placed.clip.sourceStart
+                                                 ? placed.clip.sourceStart..<placed.clip.sourceEnd
+                                                 : nil)
             guard let frame, let buffer = Self.buffer(from: frame, size: output,
                                                       pool: adaptor.pixelBufferPool) else {
                 continue
@@ -187,9 +217,84 @@ actor StudioExporter {
         }
 
         input.markAsFinished()
+
+        if let audioInput, let audio {
+            try await writeAudio(audio, to: audioInput)
+        }
+
         await writer.finishWriting()
         reader.cancelReading()
         guard writer.status == .completed else { throw ExportError.cannotWrite }
+    }
+
+    /// Reads the mixed composition and hands its samples to the writer.
+    ///
+    /// `AVAssetReaderAudioMixOutput` applies the per-clip gain and the time-scaling the composition
+    /// describes, so nothing here has to touch PCM — which is the point of building a composition
+    /// rather than re-timing samples by hand.
+    private func writeAudio(_ audio: (asset: AVAsset, mix: AVAudioMix),
+                            to input: AVAssetWriterInput) async throws {
+
+        let tracks = try await audio.asset.loadTracks(withMediaType: .audio)
+        guard !tracks.isEmpty else {
+            input.markAsFinished()
+            return
+        }
+
+        let reader = try AVAssetReader(asset: audio.asset)
+        // **Asked for in the writer's own format.** Narration is mono and system audio is stereo,
+        // and the writer input is configured for stereo at 44.1 kHz — so the conversion is asked of
+        // the mix output, which will do it, rather than left to the writer, which will not: a mono
+        // buffer appended to a stereo input is simply dropped and the file comes out silent.
+        var stereo = AudioChannelLayout()
+        stereo.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
+        let layout = withUnsafeBytes(of: stereo) { Data($0) }
+
+        let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 2,
+            AVChannelLayoutKey: layout,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ])
+        output.audioMix = audio.mix
+        // Every early exit marks the input finished. An `AVAssetWriter` will not finish while an
+        // input it was given is still open, so a silent bail here would hang the export rather
+        // than merely lose the sound.
+        guard reader.canAdd(output) else {
+            log.error("export audio: the reader refused a mix output")
+            input.markAsFinished()
+            return
+        }
+        reader.add(output)
+        guard reader.startReading() else {
+            let why = reader.error.map { String(describing: $0) } ?? "no error given"
+            log.error("export audio: the reader would not start — \(why, privacy: .public)")
+            input.markAsFinished()
+            return
+        }
+
+        var appended = 0
+        while let sample = output.copyNextSampleBuffer() {
+            while !input.isReadyForMoreMediaData {
+                try? await Task.sleep(nanoseconds: 2_000_000)
+            }
+            if input.append(sample) { appended += 1 }
+        }
+        input.markAsFinished()
+        // **Said out loud, because silence is this feature's failure mode.** Every export shipped
+        // without sound until now, and it did so quietly; an audio pass that reads nothing should
+        // never again be indistinguishable from one that worked.
+        if appended == 0 {
+            let why = reader.error.map { String(describing: $0) } ?? "the reader simply ended"
+            log.error("export audio: nothing was written — \(why, privacy: .public)")
+        } else {
+            log.info("export audio: \(appended, privacy: .public) buffers written")
+        }
+        reader.cancelReading()
     }
 
     private func settings(preset: ExportPreset, size: CGSize) -> [String: Any] {

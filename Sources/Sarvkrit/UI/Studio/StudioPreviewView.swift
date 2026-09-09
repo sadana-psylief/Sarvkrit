@@ -80,7 +80,8 @@ final class StudioPreviewView: NSView {
                             canvas: canvas,
                             imageRect: imageRect,
                             in: context,
-                            cache: cache)
+                            cache: cache,
+                            clipSource: model.currentClipSource)
         context.restoreGState()
     }
 }
