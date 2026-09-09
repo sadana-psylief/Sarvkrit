@@ -390,6 +390,39 @@ final class StudioExportTests: XCTestCase {
                              "the narration never arrived")
     }
 
+    /// **Where exactly the narration starts.**
+    ///
+    /// The looser test above — first third silent, last third loud — passes whether the offset is
+    /// applied once or twice, which is no use for the bug it was written for. This one pins the
+    /// moment: with a two-second offset the sound must arrive at two seconds, not four.
+    func testNarrationStartsExactlyWhereTheOffsetSaysItShould() async throws {
+        let bundle = try makeRecording(seconds: 6)
+        try await writeNarration(to: bundle.microphoneURL, seconds: 4)
+        var manifest = try bundle.readManifest()
+        manifest.hasMicrophone = true
+        manifest.cameraStartOffset = 2
+        try bundle.write(manifest)
+
+        let destination = directory.appendingPathComponent("exact.mp4")
+        try await StudioExporter().export(
+            project: try project(over: bundle, seconds: 6), events: EventLog(),
+            recording: bundle, preset: .web, to: destination, onProgress: { _ in })
+
+        let envelope = try await AudioEnvelope.read(url: destination, samplesPerSecond: 10)
+        let asset = AVURLAsset(url: destination)
+        let seconds = CMTimeGetSeconds(try await asset.load(.duration))
+        XCTAssertGreaterThan(envelope.count, 20)
+        XCTAssertGreaterThan(seconds, 1)
+
+        /// The first moment carrying signal, in seconds of the finished video.
+        let perSecond = Double(envelope.count) / seconds
+        let firstSound = envelope.firstIndex { $0 > 0.02 }
+            .map { Double($0) / perSecond }
+
+        XCTAssertEqual(try XCTUnwrap(firstSound), 2, accuracy: 0.5,
+                       "the narration does not start where the capture offset says it does")
+    }
+
     /// The loudest sample in a file's audio track, 0…1.
     private static func peak(of url: URL) async throws -> Float {
         let envelope = try await AudioEnvelope.read(url: url, samplesPerSecond: 20)
