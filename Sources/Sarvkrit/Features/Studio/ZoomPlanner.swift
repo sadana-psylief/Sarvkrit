@@ -25,8 +25,18 @@ enum ZoomPlanner {
         var leadOut: TimeInterval = 0.8
         /// Shorter than this and the zoom is over before it registers.
         var minimumActivity: TimeInterval = 1.0
-        /// Two activities closer than this would zoom out and straight back in, which is the most
-        /// nauseating thing this feature could do.
+        /// Two activities closer than this are one zoom rather than two.
+        ///
+        /// **This used to be the guard against nausea and could not keep the promise.** Zooming
+        /// out and straight back in is the worst thing this feature can do, but `maximumActivity`
+        /// refuses the merge whenever the pair would overrun and then trims the second activity to
+        /// start exactly where the first ends — manufacturing the very thing the merge was
+        /// avoiding. The two rules were in direct conflict and the cap won.
+        ///
+        /// `ZoomResolver.joinGap` is what keeps the promise now: neighbouring segments resolve as
+        /// one continuous move from one level to the next, so an abutting pair reads as a single
+        /// adjustment. This is left as a framing choice — whether two nearby bursts deserve one
+        /// shot or two — rather than as a defence.
         var mergeGap: TimeInterval = 0.8
         /// How much of the frame the activity should occupy once zoomed.
         var targetCoverage: Double = 0.6
