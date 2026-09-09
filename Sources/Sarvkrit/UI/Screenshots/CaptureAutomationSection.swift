@@ -70,6 +70,7 @@ struct CaptureAutomationSection: View {
         case .seek: return "Move the Playhead"
         case .playPause: return "Play / Pause"
         case .exportEditor: return "Export the Recording"
+        case .editorCommand: return "Editor Action (split, undo, …)"
         case .action(let action): return action.title
         }
     }

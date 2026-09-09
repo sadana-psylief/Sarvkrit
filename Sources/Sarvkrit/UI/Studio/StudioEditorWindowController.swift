@@ -143,6 +143,24 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Export
 
+    func perform(_ command: StudioEditorCommand) {
+        switch command {
+        case .split: model.split()
+        case .duplicateClip: model.duplicateSelectedClip()
+        case .deleteSelection:
+            if model.selectedZoom != nil { model.deleteSelectedZoom() } else {
+                model.deleteSelectedClip()
+            }
+        case .addZoom: model.addZoomAtPlayhead()
+        case .addText: model.addTextAtPlayhead()
+        case .addClick: model.addClickAtPlayhead()
+        case .addPointerHighlight: model.addPointerHighlightAtPlayhead()
+        case .undo: model.undo()
+        case .redo: model.redo()
+        case .resetEdits: model.resetEdits()
+        }
+    }
+
     private func export() {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "Recording.mp4"
@@ -225,6 +243,14 @@ final class StudioEditorController {
     func seek(to output: TimeInterval) -> Bool {
         guard let controller = controllers.last else { return false }
         controller.model.player.scrub(to: output)
+        return true
+    }
+
+    /// Performs one of the editor's own actions on the newest editor.
+    @discardableResult
+    func perform(_ command: StudioEditorCommand) -> Bool {
+        guard let controller = controllers.last else { return false }
+        controller.perform(command)
         return true
     }
 

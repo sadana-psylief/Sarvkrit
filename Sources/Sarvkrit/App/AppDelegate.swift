@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let recording = AppState.shared.features
                     .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
                 Task { @MainActor in await Self.record(source, windowID: windowID, with: recording) }
+            case .editorCommand(let command):
+                if !StudioEditorController.shared.perform(command) {
+                    Self.urlLog.error("editor command with no editor open")
+                }
             case .exportEditor(let destination):
                 if !StudioEditorController.shared.export(to: destination) {
                     Self.urlLog.error("export with no editor open")

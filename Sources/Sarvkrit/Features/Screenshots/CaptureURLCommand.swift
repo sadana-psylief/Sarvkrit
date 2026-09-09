@@ -56,6 +56,8 @@ enum CaptureURLCommand: Equatable {
     case playPause
     /// Exports the open editor to a file, skipping the save panel.
     case exportEditor(URL)
+    /// Performs one of the editor's own actions by name — the same ones the keyboard routes.
+    case editorCommand(StudioEditorCommand)
 
     static let scheme = "sarvkrit"
 
@@ -73,6 +75,7 @@ enum CaptureURLCommand: Equatable {
         case .seek: return "seek"
         case .playPause: return "play"
         case .exportEditor: return "export"
+        case .editorCommand: return "editor"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -98,7 +101,8 @@ enum CaptureURLCommand: Equatable {
         ScreenshotAction.allCases.map { .action($0) }
             + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
                .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause,
-               .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4"))]
+               .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4")),
+               .editorCommand(.split)]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -187,6 +191,13 @@ enum CaptureURLCommand: Equatable {
         if name == "seek" { return seconds(from: url).map { .seek($0) } }
         if name == "play" { return .playPause }
         if name == "export" { return filepath(from: url).map { .exportEditor($0) } }
+        if name == "editor" {
+            guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name.lowercased() == "do" })?.value,
+                let command = StudioEditorCommand(rawValue: raw.lowercased())
+            else { return nil }
+            return .editorCommand(command)
+        }
         if name == "record" {
             guard let source = recordingSource(from: url) else { return nil }
             return .record(source, windowID: windowID(from: url))

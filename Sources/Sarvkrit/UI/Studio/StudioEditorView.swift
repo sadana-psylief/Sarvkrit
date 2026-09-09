@@ -103,7 +103,7 @@ struct StudioEditorView: View {
     private func isAvailable(_ tab: StudioDocumentModel.Inspector) -> Bool {
         switch tab {
         case .canvas, .cursor, .masks: return true
-        case .camera, .audio: return true
+        case .camera, .audio, .text: return true
         // Enabled whenever there is audio to work from — the tab is where you *make* captions,
         // so gating it on already having them would hide the only way to get any.
         case .captions:
@@ -124,6 +124,7 @@ struct StudioEditorView: View {
                 case .cursor: CursorInspector(model: model)
                 case .masks: MaskInspector(model: model)
                 case .camera: CameraInspector(model: model)
+                case .text: TextInspector(model: model)
                 case .captions: CaptionsInspector(model: model)
                 case .keystrokes: KeystrokesInspector(model: model)
                 case .audio: AudioInspector(model: model)
@@ -172,6 +173,7 @@ struct StudioEditorView: View {
 
             Menu {
                 Button("Zoom") { model.addZoomAtPlayhead() }
+                Button("Text") { model.addTextAtPlayhead() }
                 Button("Click") { model.addClickAtPlayhead() }
                 Button("Pointer Highlight") { model.addPointerHighlightAtPlayhead() }
                 Button("Blur or Highlight") { model.addMaskAtPlayhead() }

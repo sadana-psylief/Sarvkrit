@@ -12,7 +12,7 @@ import Foundation
 final class StudioDocumentModel: ObservableObject {
 
     enum Inspector: String, CaseIterable, Identifiable {
-        case canvas, cursor, masks, camera, captions, audio, keystrokes
+        case canvas, cursor, masks, camera, text, captions, audio, keystrokes
 
         var id: String { rawValue }
 
@@ -22,6 +22,7 @@ final class StudioDocumentModel: ObservableObject {
             case .masks: return "Masks"
             case .cursor: return "Cursor"
             case .camera: return "Camera"
+            case .text: return "Text"
             case .captions: return "Captions"
             case .audio: return "Audio"
             case .keystrokes: return "Keystrokes"
@@ -34,6 +35,7 @@ final class StudioDocumentModel: ObservableObject {
             case .masks: return "eye.slash"
             case .cursor: return "cursorarrow"
             case .camera: return "video"
+            case .text: return "textformat"
             case .captions: return "captions.bubble"
             case .audio: return "speaker.wave.2"
             case .keystrokes: return "command"
@@ -52,6 +54,7 @@ final class StudioDocumentModel: ObservableObject {
     let player: StudioPlayer
     @Published var selectedZoom: ZoomSegment.ID?
     @Published var selectedClip: Clip.ID?
+    @Published var selectedText: TextOverlay.ID?
     @Published private(set) var isDirty = false
     /// Whether the shortcuts sheet is up. Set from the window's ⌘/ and cleared by the sheet.
     @Published var isShowingShortcuts = false
@@ -440,6 +443,38 @@ final class StudioDocumentModel: ObservableObject {
             }
         }
         return true
+    }
+
+    /// Puts a line of text on the video from the playhead, and selects it for editing.
+    func addTextAtPlayhead() {
+        let start = sourceTime
+        let overlay = TextOverlay(start: start, end: start + 3)
+        edit {
+            $0.textOverlays.append(overlay)
+            $0.textOverlays.sort { $0.start < $1.start }
+        }
+        selectedText = overlay.id
+        inspector = .text
+    }
+
+    func updateText(_ id: TextOverlay.ID, _ change: (inout TextOverlay) -> Void) {
+        edit { project in
+            guard let index = project.textOverlays.firstIndex(where: { $0.id == id }) else { return }
+            change(&project.textOverlays[index])
+        }
+    }
+
+    /// Live, for a drag or a slider: one undo step for the whole gesture.
+    func updateTextLive(_ id: TextOverlay.ID, _ change: (inout TextOverlay) -> Void) {
+        editLive { project in
+            guard let index = project.textOverlays.firstIndex(where: { $0.id == id }) else { return }
+            change(&project.textOverlays[index])
+        }
+    }
+
+    func removeText(_ id: TextOverlay.ID) {
+        edit { $0.textOverlays.removeAll { $0.id == id } }
+        if selectedText == id { selectedText = nil }
     }
 
     /// Dims everything around the pointer for a few seconds from the playhead.

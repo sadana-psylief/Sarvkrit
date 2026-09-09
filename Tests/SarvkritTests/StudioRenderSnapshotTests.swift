@@ -320,4 +320,33 @@ final class StudioRenderSnapshotTests: XCTestCase {
         XCTAssertNotEqual(png(withClick), png(without),
                           "the suppressed click is still in the picture")
     }
+
+    /// Hand-placed text reaches the finished frame — the seam, not the layer.
+    func testATextOverlayIsDrawn() throws {
+        var titled = project()
+        titled.textOverlays = [TextOverlay(start: 0, end: 10, text: "Look at this")]
+
+        let plain = try render(project(), at: 3)
+        let withText = try render(titled, at: 3)
+
+        XCTAssertNotEqual(png(plain), png(withText), "the text was not drawn")
+        try write(withText, named: "studio-text-overlay")
+    }
+
+    /// And it is gone once its range ends, rather than staying for the rest of the video.
+    func testATextOverlayLeavesLaterFramesAlone() throws {
+        var titled = project()
+        titled.textOverlays = [TextOverlay(start: 0, end: 2, text: "Intro")]
+
+        XCTAssertEqual(png(try render(project(), at: 6)), png(try render(titled, at: 6)))
+    }
+
+    /// Empty text draws nothing at all, so a freshly added line does not put a bare box on screen
+    /// before anything has been typed into it.
+    func testEmptyTextDrawsNothing() throws {
+        var titled = project()
+        titled.textOverlays = [TextOverlay(start: 0, end: 10, text: "")]
+
+        XCTAssertEqual(png(try render(project(), at: 3)), png(try render(titled, at: 3)))
+    }
 }

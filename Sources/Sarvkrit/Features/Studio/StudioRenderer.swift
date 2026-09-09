@@ -169,6 +169,9 @@ enum StudioRenderer {
         drawKeystrokes(project: project, sourceTime: sourceTime, events: events,
                        canvas: canvas, in: context)
         drawCaptions(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
+        // Last, so hand-placed text sits above everything including the camera — which is what
+        // somebody putting a title on a frame expects.
+        drawTextOverlays(project: project, sourceTime: sourceTime, canvas: canvas, in: context)
     }
 
     // MARK: - Background
@@ -368,6 +371,56 @@ enum StudioRenderer {
     }
 
     // MARK: - Captions
+
+    /// Where each visible line of hand-placed text sits, in canvas points.
+    ///
+    /// Shared with the canvas so dragging text hits exactly what is drawn, rather than a second
+    /// guess at the same geometry — the class of bug the wallpaper helper exists to avoid.
+    static func textBoxes(project: StudioProject, sourceTime: TimeInterval,
+                          canvas: CGSize) -> [(id: TextOverlay.ID, rect: CGRect)] {
+        guard canvas.height > 0 else { return [] }
+        return project.textOverlays.compactMap { overlay in
+            guard overlay.covers(sourceTime), !overlay.text.isEmpty else { return nil }
+            let style = TextLayer.Style(
+                font: overlay.font(forCanvasHeight: canvas.height),
+                colour: overlay.colour,
+                background: overlay.background,
+                padding: canvas.height * CGFloat(overlay.paddingFraction),
+                cornerRadius: canvas.height * CGFloat(overlay.cornerRadiusFraction),
+                haloColour: overlay.haloColour)
+            let rect = TextLayer.box(
+                for: overlay.text,
+                centredOn: CGPoint(x: canvas.width * overlay.origin.x,
+                                   y: canvas.height * overlay.origin.y),
+                maxWidth: canvas.width * CGFloat(overlay.maxWidthFraction),
+                style: style)
+            return (overlay.id, rect)
+        }
+    }
+
+    /// Hand-placed text, in canvas space — it belongs to the finished video rather than to the
+    /// recording, like the camera and the captions, so a zoom must not move it.
+    static func drawTextOverlays(project: StudioProject, sourceTime: TimeInterval,
+                                 canvas: CGSize, in context: CGContext) {
+        guard canvas.height > 0 else { return }
+        for overlay in project.textOverlays {
+            let opacity = overlay.opacity(at: sourceTime)
+            guard opacity > 0.001, !overlay.text.isEmpty else { continue }
+            let style = TextLayer.Style(
+                font: overlay.font(forCanvasHeight: canvas.height),
+                colour: overlay.colour,
+                background: overlay.background,
+                padding: canvas.height * CGFloat(overlay.paddingFraction),
+                cornerRadius: canvas.height * CGFloat(overlay.cornerRadiusFraction),
+                haloColour: overlay.haloColour,
+                opacity: opacity)
+            TextLayer.draw(overlay.text,
+                           centredOn: CGPoint(x: canvas.width * overlay.origin.x,
+                                              y: canvas.height * overlay.origin.y),
+                           maxWidth: canvas.width * CGFloat(overlay.maxWidthFraction),
+                           style: style, in: context)
+        }
+    }
 
     private static func drawCaptions(project: StudioProject, sourceTime: TimeInterval,
                                      canvas: CGSize, in context: CGContext) {

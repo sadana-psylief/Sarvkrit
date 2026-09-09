@@ -183,6 +183,109 @@ struct MaskInspector: View {
     }
 }
 
+/// Text put on the video by hand.
+///
+/// **Every measurement is a fraction of the canvas**, so a title keeps its framing when the aspect
+/// or the export size changes — the same reason the camera and the captions are written that way.
+struct TextInspector: View {
+    @ObservedObject var model: StudioDocumentModel
+
+    private var selected: TextOverlay? {
+        model.project.textOverlays.first { $0.id == model.selectedText }
+            ?? model.project.textOverlays.first { $0.covers(model.sourceTime) }
+    }
+
+    var body: some View {
+        Button {
+            model.addTextAtPlayhead()
+        } label: {
+            Label("Add Text Here", systemImage: "textformat")
+        }
+
+        if model.project.textOverlays.isEmpty {
+            Text("Text sits on top of everything, including the camera. Drag it on the canvas to "
+                 + "move it.")
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if let overlay = selected {
+            SectionHeader("The Selected Line")
+            TextField("Text", text: Binding(
+                get: { overlay.text },
+                set: { value in model.updateText(overlay.id) { $0.text = value } }),
+                      axis: .vertical)
+                .lineLimit(1...4)
+
+            slider("Size", value: Binding(
+                get: { overlay.sizeFraction },
+                set: { value in model.updateTextLive(overlay.id) { $0.sizeFraction = value } }),
+                   range: 0.02...0.18)
+
+            slider("Width", value: Binding(
+                get: { overlay.maxWidthFraction },
+                set: { value in
+                    model.updateTextLive(overlay.id) { $0.maxWidthFraction = value }
+                }),
+                   range: 0.2...1)
+
+            slider("Fade", value: Binding(
+                get: { overlay.fadeSeconds },
+                set: { value in model.updateTextLive(overlay.id) { $0.fadeSeconds = value } }),
+                   range: 0...1)
+
+            Toggle("Bold", isOn: Binding(
+                get: { overlay.isBold },
+                set: { value in model.updateText(overlay.id) { $0.isBold = value } }))
+
+            Picker("Typeface", selection: Binding(
+                get: { overlay.typeface },
+                set: { value in model.updateText(overlay.id) { $0.typeface = value } })) {
+                Text("Rounded").tag(TextElement.Typeface.rounded)
+                Text("System").tag(TextElement.Typeface.standard)
+                Text("Monospaced").tag(TextElement.Typeface.monospaced)
+            }
+
+            // A box or a halo, not both: a halo exists for text that cannot wear a box, and
+            // wearing both looks like a mistake.
+            Toggle("Background box", isOn: Binding(
+                get: { overlay.background != nil },
+                set: { on in
+                    model.updateText(overlay.id) {
+                        $0.background = on ? RGBAColour(r: 0, g: 0, b: 0, a: 0.55) : nil
+                        if on { $0.haloColour = nil }
+                    }
+                }))
+
+            Toggle("Halo", isOn: Binding(
+                get: { overlay.haloColour != nil },
+                set: { on in
+                    model.updateText(overlay.id) {
+                        $0.haloColour = on ? RGBAColour(r: 0, g: 0, b: 0, a: 0.85) : nil
+                        if on { $0.background = nil }
+                    }
+                }))
+
+            Button(role: .destructive) {
+                model.removeText(overlay.id)
+            } label: {
+                Label("Remove This Line", systemImage: "trash")
+            }
+        }
+    }
+
+    private func slider(_ title: String, value: Binding<Double>,
+                        range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: Theme.Typography.caption))
+                .foregroundStyle(.secondary)
+            Slider(value: value, in: range)
+        }
+    }
+}
+
 /// The camera.
 struct CameraInspector: View {
     @ObservedObject var model: StudioDocumentModel

@@ -496,6 +496,7 @@ final class StudioTimelineView: NSView {
         }
 
         add(to: menu, "Add Zoom Here", #selector(menuAddZoom), key: "Z")
+        add(to: menu, "Add Text Here", #selector(menuAddText))
         add(to: menu, "Add Click Here", #selector(menuAddClick))
         add(to: menu, "Add Pointer Highlight Here", #selector(menuAddPointerHighlight))
         add(to: menu, "Add Blur or Highlight Here", #selector(menuAddMask))
@@ -536,6 +537,7 @@ final class StudioTimelineView: NSView {
     }
     @objc private func menuAddZoom() { model.addZoomAtPlayhead() }
     @objc private func menuDeleteZoom() { model.deleteSelectedZoom() }
+    @objc private func menuAddText() { model.addTextAtPlayhead() }
     @objc private func menuAddClick() { model.addClickAtPlayhead() }
     @objc private func menuRemoveClick() { model.suppressClickNearPlayhead() }
     @objc private func menuAddPointerHighlight() { model.addPointerHighlightAtPlayhead() }

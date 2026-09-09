@@ -359,6 +359,24 @@ final class RecordingURLCommandTests: XCTestCase {
         XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://export")!))
     }
 
+    /// One command for the editor's own actions, by name.
+    ///
+    /// **A general door rather than a command per action.** The alternative was
+    /// `sarvkrit://split`, `sarvkrit://duplicate-clip` and so on, which is a lot of surface for
+    /// what is really "do the thing the keyboard already does" — and it is how the editor's edits
+    /// get verified at all without a mouse.
+    func testAnEditorCommandTakesItsNameFromTheKeyboard() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://editor?do=split")!),
+                       .editorCommand(.split))
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://editor?do=undo")!),
+                       .editorCommand(.undo))
+    }
+
+    func testAnUnknownEditorCommandIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://editor?do=fly")!))
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://editor")!))
+    }
+
     func testStopIsItsOwnCommand() {
         XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
                        .stopRecording)

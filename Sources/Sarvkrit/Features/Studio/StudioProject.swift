@@ -34,6 +34,8 @@ struct StudioProject: Codable, Equatable {
     var clickEdits = ClickEdits()
     /// Stretches where the pointer's surroundings are dimmed, to say "look here".
     var pointerHighlights: [PointerHighlight] = []
+    /// Text put on the video by hand. Distinct from `captions`, which come from transcription.
+    var textOverlays: [TextOverlay] = []
     var keystrokes = KeystrokeSettings()
     var deviceFrame = DeviceFrameSelection()
     /// Shown in the editor, never rendered into the video.
@@ -77,7 +79,7 @@ struct StudioProject: Codable, Equatable {
         case formatVersion, canvasSize, timeline, background, aspect, cropRect
         case zooms, cursor, captions, captionStyle, speakerNotes
         case masks, camera, cameraSegments, keystrokes, deviceFrame
-        case clickEdits, pointerHighlights
+        case clickEdits, pointerHighlights, textOverlays
     }
 
     init(from decoder: Decoder) throws {
@@ -103,6 +105,7 @@ struct StudioProject: Codable, Equatable {
         cameraSegments = read(.cameraSegments, [CameraSegment]())
         clickEdits = read(.clickEdits, ClickEdits())
         pointerHighlights = read(.pointerHighlights, [PointerHighlight]())
+        textOverlays = read(.textOverlays, [TextOverlay]())
         keystrokes = read(.keystrokes, KeystrokeSettings())
         deviceFrame = read(.deviceFrame, DeviceFrameSelection())
         speakerNotes = read(.speakerNotes, "")
@@ -134,6 +137,7 @@ struct StudioProject: Codable, Equatable {
         try container.encode(clickEdits, forKey: StudioCodingKey(Key.clickEdits.rawValue))
         try container.encode(pointerHighlights,
                              forKey: StudioCodingKey(Key.pointerHighlights.rawValue))
+        try container.encode(textOverlays, forKey: StudioCodingKey(Key.textOverlays.rawValue))
         try container.encode(keystrokes, forKey: StudioCodingKey(Key.keystrokes.rawValue))
         try container.encode(deviceFrame, forKey: StudioCodingKey(Key.deviceFrame.rawValue))
         try container.encode(speakerNotes, forKey: StudioCodingKey(Key.speakerNotes.rawValue))
