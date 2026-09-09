@@ -40,7 +40,24 @@ enum ZoomPlanner {
         var mergeGap: TimeInterval = 0.8
         /// How much of the frame the activity should occupy once zoomed.
         var targetCoverage: Double = 0.6
-        var levelRange: ClosedRange<Double> = 1.2...2.5
+
+        /// **The ceiling used to be 2.5 and almost everything reached it.** Two reasons to bring
+        /// it down.
+        ///
+        /// A point-like activity — one click, or a typing run — has no extent to fit, so the
+        /// coverage arithmetic below asks for an enormous number and takes whatever the maximum
+        /// is. The maximum was doing the job of a default, which is how a recording ends up with
+        /// four zooms at exactly the same level.
+        ///
+        /// And 2.5× is more magnification than the source can pay for. A 3024-wide recording
+        /// cropped to 2.5× shows 1210 pixels; exported at its own native width those 1210 are
+        /// stretched back over 3024, so the close-up is visibly softer than the shot around it.
+        /// 2× keeps the crop nearer the output resolution, and matters more now that an export can
+        /// be full size rather than always 1080p.
+        ///
+        /// Hand-made zooms are unaffected: `ZoomSegment.levelRange` still allows up to 4×, so
+        /// anyone who wants a harder close-up can set one.
+        var levelRange: ClosedRange<Double> = 1.2...2.0
         /// An activity that moves less than this fraction of the frame is pinned rather than
         /// followed — following something that barely moves reads as drift.
         var followThreshold: Double = 0.15
@@ -57,6 +74,15 @@ enum ZoomPlanner {
         /// segment is dropped: barely zooming for eleven seconds is worse than not zooming.
         var levelFloorMargin: Double = 0.15
         /// Keystrokes needed before typing counts as an activity in its own right.
+        /// How slowly the pointer has to be moving to count as attending to something, in
+        /// fractions of the frame's width per second.
+        ///
+        /// **Where somebody moved the mouse from is not what they are showing you.** The cursor
+        /// track is the signal the planner needs to judge how wide a shot to take, but most of it
+        /// is transit — a fling across the screen to reach a button. Counting that would drag the
+        /// box out to the full width and cancel the zoom on almost every click. Below this the
+        /// pointer is working; above it, it is travelling.
+        var dwellSpeedFraction: Double = 0.35
         var typingRun: Int = 5
         /// …with no gap longer than this between them.
         var typingInterval: TimeInterval = 2.0
@@ -95,9 +121,14 @@ enum ZoomPlanner {
 
         // Dropped rather than kept-but-weak. A zoom that barely magnifies still costs the viewer
         // a movement to follow, and pays nothing back.
+        //
+        // Judged on the *tight* box — was there a specific thing here — rather than on the shot
+        // the pointer widened it to. Otherwise a slow sweep around a button deletes the zoom onto
+        // the button, which is widening a shot into no shot at all.
         return activities
-            .map { segment(for: $0, frameSize: frameSize, tuning: tuning) }
-            .filter { $0.level > tuning.levelRange.lowerBound + tuning.levelFloorMargin }
+            .map { segment(for: $0, events: events, frameSize: frameSize, tuning: tuning) }
+            .filter { $0.tightLevel > tuning.levelRange.lowerBound + tuning.levelFloorMargin }
+            .map(\.segment)
     }
 
     // MARK: - Finding activities
@@ -207,28 +238,80 @@ enum ZoomPlanner {
         return result
     }
 
-    /// The level comes from the activity's own extent: zoom until it fills `targetCoverage` of the
-    /// frame, and no further. A single click has no extent and gets the maximum; a drag across half
-    /// the screen gets almost nothing, because zooming into it would hide half of itself.
-    private static func segment(for activity: Activity, frameSize: CGSize,
-                                tuning: Tuning) -> ZoomSegment {
-        let box = bounds(of: activity.points, frameSize: frameSize)
+    /// **Two boxes, because "is this worth zooming to" and "how wide a shot" are different
+    /// questions.**
+    ///
+    /// The tight box is the clicks: it says whether there is a specific thing here at all, and it
+    /// is what the drop filter in `plan` judges. The shot box adds wherever the pointer *rested*
+    /// during the activity: it says how much has to stay in frame. Judging both from one box meant
+    /// that widening a shot could delete it — measured against real recordings, feeding the cursor
+    /// into a single box removed two zooms outright and changed no level by more than 0.03.
+    ///
+    /// Either way the rule is the same: zoom until the box fills `targetCoverage` of the frame and
+    /// no further. A drag across half the screen gets almost nothing, because zooming into it
+    /// would hide half of itself.
+    private static func segment(for activity: Activity, events: EventLog, frameSize: CGSize,
+                                tuning: Tuning) -> (segment: ZoomSegment, tightLevel: Double) {
+        let tight = bounds(of: activity.points, frameSize: frameSize)
+        let shot = bounds(of: activity.points
+                            + dwellPoints(in: activity, events: events, frameSize: frameSize,
+                                          tuning: tuning),
+                          frameSize: frameSize)
 
-        // Guarded against zero: a single point would divide by nothing, and the answer we want in
-        // that case — "as close as you are allowed" — falls out of the clamp anyway.
-        let byWidth = tuning.targetCoverage * Double(frameSize.width) / Double(max(box.width, 1))
-        let byHeight = tuning.targetCoverage * Double(frameSize.height) / Double(max(box.height, 1))
-        let level = min(max(min(byWidth, byHeight), tuning.levelRange.lowerBound),
-                        tuning.levelRange.upperBound)
-
-        let travel = max(Double(box.width) / Double(frameSize.width),
-                         Double(box.height) / Double(frameSize.height))
+        let travel = max(Double(shot.width) / Double(frameSize.width),
+                         Double(shot.height) / Double(frameSize.height))
         let anchor: ZoomSegment.Anchor = travel > tuning.followThreshold
             ? .followCursor
-            : .fixed(CGPoint(x: box.midX / frameSize.width, y: box.midY / frameSize.height))
+            : .fixed(CGPoint(x: shot.midX / frameSize.width, y: shot.midY / frameSize.height))
 
-        return ZoomSegment(start: activity.start, end: activity.end,
-                           level: level, anchor: anchor, isAutomatic: true)
+        // **Widening must not turn the shot into a drift.** The floor of the range is where a zoom
+        // stops being a close-up and becomes a slow movement the viewer follows for nothing — the
+        // thing `testAWideActivityGetsNoZoomAtAll` exists to prevent. The pointer may open the
+        // shot up, but only as far as still-a-zoom.
+        let usable = tuning.levelRange.lowerBound + tuning.levelFloorMargin
+        let shotLevel = max(level(fitting: shot, frameSize: frameSize, tuning: tuning), usable)
+
+        let segment = ZoomSegment(start: activity.start, end: activity.end,
+                                  level: shotLevel, anchor: anchor, isAutomatic: true)
+        // The tight level travels alongside rather than on the segment: it is what the planner
+        // used to decide, not something a saved project should carry.
+        return (segment, level(fitting: tight, frameSize: frameSize, tuning: tuning))
+    }
+
+    /// The zoom that makes `box` fill `targetCoverage` of the frame, inside the allowed range.
+    ///
+    /// Guarded against zero: a single point would divide by nothing, and the answer wanted in that
+    /// case — as close as the range allows — falls out of the clamp.
+    private static func level(fitting box: CGRect, frameSize: CGSize, tuning: Tuning) -> Double {
+        let byWidth = tuning.targetCoverage * Double(frameSize.width) / Double(max(box.width, 1))
+        let byHeight = tuning.targetCoverage * Double(frameSize.height) / Double(max(box.height, 1))
+        return min(max(min(byWidth, byHeight), tuning.levelRange.lowerBound),
+                   tuning.levelRange.upperBound)
+    }
+
+    /// The cursor positions inside an activity where the pointer was attending rather than
+    /// travelling.
+    ///
+    /// Speed is the whole distinction, and it is measured against the frame's own width so that a
+    /// Retina capture and a small window mean the same thing by "fast". A sample the recorder
+    /// marked as outside the recorded region is not evidence about anything on screen — the same
+    /// rule the click path already applies with its own `isInside`.
+    private static func dwellPoints(in activity: Activity, events: EventLog,
+                                    frameSize: CGSize, tuning: Tuning) -> [CGPoint] {
+        let samples = events.cursor.filter {
+            $0.t >= activity.start && $0.t <= activity.end && $0.isInside
+        }
+        guard samples.count > 1 else { return samples.map(\.point) }
+
+        let limit = tuning.dwellSpeedFraction * Double(frameSize.width)
+        return samples.enumerated().compactMap { index, sample in
+            // Forward difference, and backwards for the last one, so every sample has a speed.
+            let other = index + 1 < samples.count ? samples[index + 1] : samples[index - 1]
+            let seconds = abs(other.t - sample.t)
+            guard seconds > 0.0001 else { return sample.point }
+            let travelled = hypot(other.point.x - sample.point.x, other.point.y - sample.point.y)
+            return Double(travelled) / seconds <= limit ? sample.point : nil
+        }
     }
 
     private static func bounds(of points: [CGPoint], frameSize: CGSize) -> CGRect {

@@ -236,9 +236,15 @@ final class ZoomPlannerTests: XCTestCase {
     }
 
     /// The case that must keep working: a tight cluster still earns a real close-up.
+    /// Asserted against the top of the range rather than against a number.
+    ///
+    /// **It used to say `> 2`, which stopped being true when the ceiling came down to 2.0** — and
+    /// the ceiling coming down was the point of that change, not a regression. What "properly"
+    /// means here is "as close as the planner is allowed to go", so that is what it now says.
     func testATightClusterStillZoomsProperly() {
         let tight = (0..<4).map { click(5 + Double($0) * 0.3, 500, 500) }
         let segment = plan(EventLog(clicks: tight)).first
-        XCTAssertGreaterThan(segment?.level ?? 0, 2)
+        XCTAssertEqual(segment?.level ?? 0, ZoomPlanner.Tuning().levelRange.upperBound,
+                       accuracy: 0.001)
     }
 }
