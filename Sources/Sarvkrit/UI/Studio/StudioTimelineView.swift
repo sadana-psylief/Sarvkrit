@@ -26,7 +26,16 @@ final class StudioTimelineView: NSView {
         case playhead
         case zoomBody(ZoomSegment.ID, grabbedAt: TimeInterval)
         case zoomEdge(ZoomSegment.ID, leading: Bool)
+        /// Reordering. The move is committed on release, so the whole drag is one undo step and
+        /// the clips do not shuffle about under the pointer while it is in flight.
+        case clipBody(Clip.ID, from: Int)
+        /// Rolling the cut between this clip and the next: one side gains what the other gives up,
+        /// and the cut stays where it is in the finished video.
+        case clipSeam(Clip.ID, lastTime: TimeInterval)
     }
+
+    /// Where a dragged clip would land, drawn as an insertion line.
+    private var dropIndex: Int?
 
     private var drag: Drag = .none
 
@@ -152,40 +161,105 @@ final class StudioTimelineView: NSView {
         return total >= 60 ? String(format: "%d:%02d", total / 60, total % 60) : "\(total)s"
     }
 
+    /// **A cut has to look like a cut.**
+    ///
+    /// Unselected clips used to have a fill and no border, so two neighbours of the same colour
+    /// read as one continuous bar and the only hint of a split was a two-pixel gap from the rounded
+    /// inset. "What happens when I split?" was a fair question: visually, almost nothing did.
+    ///
+    /// Now every clip carries its own edge, the seam between two of them is drawn explicitly, and a
+    /// clip that is hiding material says how much — the badge `Clip`'s own doc comment has promised
+    /// all along and which nothing drew.
     private func drawClips(in context: CGContext) {
         var elapsed: TimeInterval = 0
-        for clip in model.project.timeline.clips {
-            let rect = CGRect(x: x(forOutput: elapsed) ,
-                              y: clipTrack.minY,
-                              width: max(2, x(forOutput: elapsed + clip.outputDuration)
-                                            - x(forOutput: elapsed)),
-                              height: clipTrack.height)
+        let clips = model.project.timeline.clips
+
+        for (index, clip) in clips.enumerated() {
+            let from = x(forOutput: elapsed)
+            let to = x(forOutput: elapsed + clip.outputDuration)
+            let rect = CGRect(x: from, y: clipTrack.minY,
+                              width: max(2, to - from), height: clipTrack.height)
             let selected = model.selectedClip == clip.id
+            let dragging: Bool
+            if case .clipBody(let id, _) = drag, id == clip.id { dragging = true } else {
+                dragging = false
+            }
             let path = CGPath.rounded(rect.insetBy(dx: 1, dy: 2), cornerRadius: 6)
 
             context.addPath(path)
-            context.setFillColor(NSColor.systemOrange.withAlphaComponent(selected ? 0.55 : 0.38)
-                .cgColor)
+            context.setFillColor(NSColor.systemOrange
+                .withAlphaComponent(dragging ? 0.25 : (selected ? 0.55 : 0.38)).cgColor)
             context.fillPath()
 
-            if selected {
-                context.addPath(path)
-                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-                context.setLineWidth(1.5)
-                context.strokePath()
-            }
+            // Every clip, not only the selected one.
+            context.addPath(path)
+            context.setStrokeColor(selected
+                ? NSColor.controlAccentColor.cgColor
+                : NSColor.systemOrange.withAlphaComponent(0.9).cgColor)
+            context.setLineWidth(selected ? 1.5 : 1)
+            context.strokePath()
 
             // Speed is stated on the clip rather than hidden in an inspector: it changes how every
             // other track maps onto this stretch, so it should never be a surprise.
-            let text = clip.speed == 1
+            var text = clip.speed == 1
                 ? String(format: "%.1fs", clip.outputDuration)
                 : String(format: "%.1fs · %.2gx", clip.outputDuration, clip.speed)
+            if clip.hold > 0 { text += String(format: " · hold %.1fs", clip.hold) }
             NSAttributedString(string: text,
                                attributes: [.font: NSFont.systemFont(ofSize: 10, weight: .medium),
                                             .foregroundColor: NSColor.labelColor])
                 .draw(at: CGPoint(x: rect.minX + 8, y: rect.minY + 6))
+
+            drawTrimBadge(for: clip, at: index, in: rect, context: context)
+
+            elapsed += clip.outputDuration
+
+            // The seam, drawn on the boundary rather than left to a gap in the fills.
+            if index + 1 < clips.count {
+                let seamX = x(forOutput: elapsed).rounded() + 0.5
+                context.setStrokeColor(NSColor.underPageBackgroundColor.cgColor)
+                context.setLineWidth(2)
+                context.move(to: CGPoint(x: seamX, y: clipTrack.minY + 2))
+                context.addLine(to: CGPoint(x: seamX, y: clipTrack.maxY - 2))
+                context.strokePath()
+            }
+        }
+
+        drawDropLine(in: context)
+    }
+
+    /// How much of the recording a clip is hiding, if any.
+    ///
+    /// Trimming is a window, never a cut, so the material is always still there — and the badge is
+    /// what makes that visible instead of merely true. Right-click offers to put it back.
+    private func drawTrimBadge(for clip: Clip, at index: Int, in rect: CGRect,
+                               context: CGContext) {
+        let clips = model.project.timeline.clips
+        let lower = index > 0 ? clips[index - 1].sourceEnd : 0
+        let upper = index + 1 < clips.count ? clips[index + 1].sourceStart : model.recordingDuration
+        let hidden = max(0, clip.sourceStart - lower) + max(0, upper - clip.sourceEnd)
+        guard hidden > 0.15, rect.width > 92 else { return }
+
+        let label = NSAttributedString(
+            string: String(format: "✂︎ %.1fs hidden", hidden),
+            attributes: [.font: NSFont.systemFont(ofSize: 9, weight: .medium),
+                         .foregroundColor: NSColor.secondaryLabelColor])
+        label.draw(at: CGPoint(x: rect.minX + 8, y: rect.minY + 22))
+    }
+
+    /// Where a dragged clip would land.
+    private func drawDropLine(in context: CGContext) {
+        guard case .clipBody = drag, let dropIndex else { return }
+        var elapsed: TimeInterval = 0
+        for clip in model.project.timeline.clips.prefix(dropIndex) {
             elapsed += clip.outputDuration
         }
+        let position = x(forOutput: elapsed).rounded() + 0.5
+        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setLineWidth(3)
+        context.move(to: CGPoint(x: position, y: clipTrack.minY))
+        context.addLine(to: CGPoint(x: position, y: clipTrack.maxY))
+        context.strokePath()
     }
 
     private func drawZooms(in context: CGContext) {
@@ -253,6 +327,30 @@ final class StudioTimelineView: NSView {
         // playback and the drag write it alternately and the handle fights the pointer.
         model.player.beginScrubbing()
 
+        if clipTrack.contains(point) {
+            // A seam takes precedence over the clip body, the way a zoom's edge does over its
+            // middle: the narrow target is the one you have to aim at.
+            if let seam = seam(at: point) {
+                model.selectedClip = nil
+                model.beginGesture()
+                drag = .clipSeam(seam, lastTime: outputTime(forX: point.x))
+                needsDisplay = true
+                return
+            }
+            if let hit = clip(at: point),
+               let index = model.project.timeline.clips.firstIndex(where: { $0.id == hit.id }) {
+                model.selectedClip = hit.id
+                model.selectedZoom = nil
+                drag = .clipBody(hit.id, from: index)
+                dropIndex = index
+                needsDisplay = true
+                // **Returns rather than falling through.** It used to set the selection and then
+                // start a playhead scrub regardless, so a clip could never be dragged: every
+                // attempt scrubbed instead.
+                return
+            }
+        }
+
         if zoomTrack.contains(point), let hit = zoom(at: point) {
             model.selectedZoom = hit.segment.id
             model.selectedClip = nil
@@ -281,6 +379,13 @@ final class StudioTimelineView: NSView {
         switch drag {
         case .none:
             return
+        case .clipBody:
+            dropIndex = insertionIndex(forX: point.x)
+        case .clipSeam(let id, let lastTime):
+            let delta = time - lastTime
+            guard abs(delta) > 0.0001 else { return }
+            drag = .clipSeam(id, lastTime: time)
+            model.rollCut(after: id, by: delta)
         case .playhead:
             onScrub?(time)
         case .zoomBody(let id, let grabbedAt):
@@ -304,9 +409,41 @@ final class StudioTimelineView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if case .none = drag {} else if case .playhead = drag {} else { model.endGesture() }
+        if case .clipBody(_, let from) = drag, let dropIndex, dropIndex != from {
+            // Insert-before semantics: dropping to the right of where it came from means the
+            // index shifts down by one once the clip is lifted out.
+            model.moveClip(from: from, to: dropIndex > from ? dropIndex - 1 : dropIndex)
+        }
+        if case .none = drag {} else if case .playhead = drag {} else if case .clipBody = drag {
+        } else { model.endGesture() }
         drag = .none
+        dropIndex = nil
+        needsDisplay = true
         model.player.endScrubbing()
+    }
+
+    /// Which slot in the running order the pointer is over, 0…count.
+    private func insertionIndex(forX position: CGFloat) -> Int {
+        var elapsed: TimeInterval = 0
+        for (index, clip) in model.project.timeline.clips.enumerated() {
+            let middle = x(forOutput: elapsed + clip.outputDuration / 2)
+            if position < middle { return index }
+            elapsed += clip.outputDuration
+        }
+        return model.project.timeline.clips.count
+    }
+
+    /// The clip *before* a seam the pointer is close to, if any. Nil for the outer edges, which
+    /// are trims rather than seams.
+    private func seam(at point: CGPoint) -> Clip.ID? {
+        var elapsed: TimeInterval = 0
+        let clips = model.project.timeline.clips
+        for (index, clip) in clips.enumerated() {
+            elapsed += clip.outputDuration
+            guard index + 1 < clips.count else { break }
+            if abs(point.x - x(forOutput: elapsed)) <= Metrics.edgeGrab { return clip.id }
+        }
+        return nil
     }
 
     /// Editing a zoom marks it as the user's, so "Re-detect" will not take it away again.
@@ -347,6 +484,17 @@ final class StudioTimelineView: NSView {
             menu.addItem(.separator())
         }
 
+        if clipTrack.contains(point), let hit = clip(at: point) {
+            model.selectedClip = hit.id
+            model.selectedZoom = nil
+            add(to: menu, "Duplicate Clip", #selector(menuDuplicateClip))
+            add(to: menu, "Delete Clip", #selector(menuDeleteClip), key: "⌫")
+            if hasHiddenMaterial(hit) {
+                add(to: menu, "Put Back Trimmed Material", #selector(menuUntrimClip))
+            }
+            menu.addItem(.separator())
+        }
+
         add(to: menu, "Add Zoom Here", #selector(menuAddZoom), key: "Z")
         add(to: menu, "Add Click Here", #selector(menuAddClick))
         add(to: menu, "Add Pointer Highlight Here", #selector(menuAddPointerHighlight))
@@ -372,6 +520,20 @@ final class StudioTimelineView: NSView {
         menu.addItem(item)
     }
 
+    private func hasHiddenMaterial(_ clip: Clip) -> Bool {
+        let clips = model.project.timeline.clips
+        guard let index = clips.firstIndex(where: { $0.id == clip.id }) else { return false }
+        let lower = index > 0 ? clips[index - 1].sourceEnd : 0
+        let upper = index + 1 < clips.count ? clips[index + 1].sourceStart : model.recordingDuration
+        return max(0, clip.sourceStart - lower) + max(0, upper - clip.sourceEnd) > 0.15
+    }
+
+    @objc private func menuDuplicateClip() { model.duplicateSelectedClip() }
+    @objc private func menuDeleteClip() { model.deleteSelectedClip() }
+    @objc private func menuUntrimClip() {
+        guard let id = model.selectedClip else { return }
+        model.untrimClip(id)
+    }
     @objc private func menuAddZoom() { model.addZoomAtPlayhead() }
     @objc private func menuDeleteZoom() { model.deleteSelectedZoom() }
     @objc private func menuAddClick() { model.addClickAtPlayhead() }

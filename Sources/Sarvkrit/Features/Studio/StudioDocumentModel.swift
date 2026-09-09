@@ -43,6 +43,8 @@ final class StudioDocumentModel: ObservableObject {
 
     let bundle: RecordingBundle
     let events: EventLog
+    /// How long the recording itself runs, which is the furthest a trim can ever be undone to.
+    let recordingDuration: TimeInterval
 
     @Published private(set) var project: StudioProject
     @Published var inspector: Inspector = .canvas
@@ -70,6 +72,7 @@ final class StudioDocumentModel: ObservableObject {
     init(bundle: RecordingBundle, manifest: RecordingManifest, events: EventLog) {
         self.bundle = bundle
         self.events = events
+        self.recordingDuration = manifest.duration
 
         let existing = try? JSONDecoder().decode(
             StudioProject.self,
@@ -215,6 +218,41 @@ final class StudioDocumentModel: ObservableObject {
         guard let selectedClip else { return }
         edit { $0.timeline = $0.timeline.delete(id: selectedClip) }
         self.selectedClip = nil
+    }
+
+    /// Moves a clip in the running order.
+    func moveClip(from index: Int, to destination: Int) {
+        edit { $0.timeline = $0.timeline.move(from: index, to: destination) }
+    }
+
+    func duplicateSelectedClip() {
+        guard let selectedClip else { return }
+        edit { $0.timeline = $0.timeline.duplicate(id: selectedClip) }
+    }
+
+    /// Live, because this is a drag: one undo step for the whole gesture.
+    func rollCut(after id: Clip.ID, by seconds: TimeInterval) {
+        editLive { $0.timeline = $0.timeline.roll(after: id, by: seconds) }
+    }
+
+    /// Puts back everything a clip's trim is hiding, both ends.
+    ///
+    /// The payoff the non-destructive model was built for: `sourceStart`/`sourceEnd` are a window,
+    /// never a cut, so the material was always still there.
+    func untrimClip(_ id: Clip.ID) {
+        edit { project in
+            guard let index = project.timeline.clips.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            // Only as far as the neighbours allow, so un-trimming cannot overlap the next shot.
+            let lower = index > 0 ? project.timeline.clips[index - 1].sourceEnd : 0
+            let upper = index + 1 < project.timeline.clips.count
+                ? project.timeline.clips[index + 1].sourceStart : self.recordingDuration
+            project.timeline.clips[index].sourceStart = min(project.timeline.clips[index].sourceStart,
+                                                            max(0, lower))
+            project.timeline.clips[index].sourceEnd = max(project.timeline.clips[index].sourceEnd,
+                                                          upper)
+        }
     }
 
     func addZoomAtPlayhead() {

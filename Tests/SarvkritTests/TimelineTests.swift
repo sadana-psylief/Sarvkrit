@@ -238,4 +238,170 @@ final class TimelineTests: XCTestCase {
             XCTAssertEqual(back, output, accuracy: 0.001)
         }
     }
+
+    // MARK: - Order
+
+    /// **Reordering is a move on an array, and that is not a coincidence.**
+    ///
+    /// `sourceTime(forOutput:)` walks the clips in array order, and every other track — zooms,
+    /// masks, camera layouts, captions — is stored in *source* time and resolved through that
+    /// mapping. So a clip carries its material with it, and whatever was attached to that material
+    /// arrives with it. There was simply no method to do it: split, delete, trim and setSpeed, and
+    /// nothing that changed order.
+    func testMovingAClipChangesTheOrder() {
+        let a = Clip(sourceStart: 0, sourceEnd: 2)
+        let b = Clip(sourceStart: 10, sourceEnd: 13)
+        let timeline = Timeline(clips: [a, b]).move(from: 0, to: 1)
+
+        XCTAssertEqual(timeline.clips.map(\.id), [b.id, a.id])
+    }
+
+    func testMovingAClipKeepsTheTotalDuration() {
+        let timeline = Timeline(clips: [Clip(sourceStart: 0, sourceEnd: 2),
+                                        Clip(sourceStart: 10, sourceEnd: 13)])
+        XCTAssertEqual(timeline.move(from: 1, to: 0).duration, timeline.duration, accuracy: 1e-9)
+    }
+
+    /// The material moves with the clip: after the swap, the second half of the finished video
+    /// shows what used to be the first.
+    func testAMovedClipTakesItsMaterialWithIt() throws {
+        let timeline = Timeline(clips: [Clip(sourceStart: 0, sourceEnd: 2),
+                                        Clip(sourceStart: 10, sourceEnd: 13)]).move(from: 0, to: 1)
+
+        XCTAssertEqual(try XCTUnwrap(timeline.sourceTime(forOutput: 0.5)).sourceTime, 10.5,
+                       accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(timeline.sourceTime(forOutput: 3.5)).sourceTime, 0.5,
+                       accuracy: 1e-9)
+    }
+
+    /// A move that changes nothing is refused, so it costs no undo step.
+    func testAMoveToTheSamePlaceIsRefused() {
+        let timeline = Timeline(clips: [Clip(sourceStart: 0, sourceEnd: 2),
+                                        Clip(sourceStart: 10, sourceEnd: 13)])
+        XCTAssertEqual(timeline.move(from: 0, to: 0), timeline)
+    }
+
+    func testAMoveOutOfBoundsIsRefused() {
+        let timeline = Timeline(clips: [Clip(sourceStart: 0, sourceEnd: 2)])
+        XCTAssertEqual(timeline.move(from: 0, to: 7), timeline)
+        XCTAssertEqual(timeline.move(from: 4, to: 0), timeline)
+    }
+
+    // MARK: - Duplicate
+
+    func testDuplicatingAClipAddsItAfterTheOriginal() {
+        let a = Clip(sourceStart: 0, sourceEnd: 2)
+        let b = Clip(sourceStart: 10, sourceEnd: 13)
+        let timeline = Timeline(clips: [a, b]).duplicate(id: a.id)
+
+        XCTAssertEqual(timeline.clips.count, 3)
+        XCTAssertEqual(timeline.clips[0].id, a.id)
+        XCTAssertEqual(timeline.clips[2].id, b.id)
+    }
+
+    /// A new identity, or selection and every per-clip edit would address both at once.
+    func testADuplicateGetsItsOwnIdentity() {
+        let a = Clip(sourceStart: 0, sourceEnd: 2)
+        let timeline = Timeline(clips: [a]).duplicate(id: a.id)
+        XCTAssertNotEqual(timeline.clips[0].id, timeline.clips[1].id)
+    }
+
+    func testADuplicateShowsTheSameMaterialTwice() throws {
+        let a = Clip(sourceStart: 4, sourceEnd: 6)
+        let timeline = Timeline(clips: [a]).duplicate(id: a.id)
+
+        XCTAssertEqual(timeline.duration, 4, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(timeline.sourceTime(forOutput: 0.5)).sourceTime, 4.5,
+                       accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(timeline.sourceTime(forOutput: 2.5)).sourceTime, 4.5,
+                       accuracy: 1e-9)
+    }
+
+    // MARK: - Rolling a cut
+
+    /// Dragging the seam between two clips moves material from one to the other without changing
+    /// where the cut sits in the finished video — the thing a cut is usually adjusted *for*.
+    func testRollingACutTradesMaterialBetweenNeighbours() {
+        let a = Clip(sourceStart: 0, sourceEnd: 5)
+        let b = Clip(sourceStart: 5, sourceEnd: 10)
+        let rolled = Timeline(clips: [a, b]).roll(after: a.id, by: 1)
+
+        XCTAssertEqual(rolled.clips[0].sourceEnd, 6, accuracy: 1e-9)
+        XCTAssertEqual(rolled.clips[1].sourceStart, 6, accuracy: 1e-9)
+        XCTAssertEqual(rolled.duration, 10, accuracy: 1e-9)
+    }
+
+    /// A roll that would leave either side too small to grab is refused rather than performed.
+    func testARollThatWouldLeaveASliverIsRefused() {
+        let a = Clip(sourceStart: 0, sourceEnd: 5)
+        let b = Clip(sourceStart: 5, sourceEnd: 10)
+        let timeline = Timeline(clips: [a, b])
+        XCTAssertEqual(timeline.roll(after: a.id, by: 5), timeline)
+        XCTAssertEqual(timeline.roll(after: a.id, by: -5), timeline)
+    }
+
+    // MARK: - Freeze frame
+
+    /// **A held frame is a clip that keeps showing its last moment.** One field rather than a new
+    /// type, so it composes with speed and trimming instead of sitting beside them.
+    func testAHoldLengthensTheClipWithoutConsumingMoreSource() {
+        var clip = Clip(sourceStart: 0, sourceEnd: 4)
+        clip.hold = 3
+        let timeline = Timeline(clips: [clip])
+
+        XCTAssertEqual(timeline.duration, 7, accuracy: 1e-9)
+    }
+
+    func testDuringTheHoldTheSourceTimeStopsAtTheEnd() throws {
+        var clip = Clip(sourceStart: 0, sourceEnd: 4)
+        clip.hold = 3
+        let timeline = Timeline(clips: [clip])
+
+        let moving = try XCTUnwrap(timeline.sourceTime(forOutput: 2)).sourceTime
+        let held = try XCTUnwrap(timeline.sourceTime(forOutput: 5.5)).sourceTime
+        let later = try XCTUnwrap(timeline.sourceTime(forOutput: 6.5)).sourceTime
+
+        XCTAssertEqual(moving, 2, accuracy: 1e-9)
+        XCTAssertEqual(held, 4, accuracy: 0.001, "the hold should show the clip's last frame")
+        XCTAssertEqual(later, held, accuracy: 1e-9, "the held frame must not drift")
+    }
+
+    /// It composes with speed: the moving part is shortened, the hold is not.
+    func testAHoldIsNotAffectedBySpeed() {
+        var clip = Clip(sourceStart: 0, sourceEnd: 4)
+        clip.speed = 2
+        clip.hold = 3
+        XCTAssertEqual(Timeline(clips: [clip]).duration, 5, accuracy: 1e-9)
+    }
+
+    /// And the clip after a hold still starts where it should.
+    func testAClipAfterAHoldStartsAfterIt() throws {
+        var first = Clip(sourceStart: 0, sourceEnd: 2)
+        first.hold = 2
+        let second = Clip(sourceStart: 20, sourceEnd: 22)
+        let timeline = Timeline(clips: [first, second])
+
+        XCTAssertEqual(try XCTUnwrap(timeline.sourceTime(forOutput: 4.5)).sourceTime, 20.5,
+                       accuracy: 1e-9)
+    }
+
+    // MARK: - Older projects
+
+    /// **A project saved before a field existed must still open.**
+    ///
+    /// `Clip` uses synthesized `Codable`, and a synthesized decoder throws on a missing key even
+    /// when the property has a default — a default is not the same as optional. So every field
+    /// added here is a chance to make every saved project unreadable, and
+    /// `StudioDocumentModel` treats an unreadable project as "no project", which would silently
+    /// discard somebody's edits.
+    func testAClipSavedBeforeHoldExistedStillDecodes() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","sourceStart":0,"sourceEnd":5,"speed":1,
+         "volume":1,"systemAudioVolume":1,"isMuted":false,"hidesCursor":false,
+         "disablesCursorSmoothing":false}
+        """
+        let clip = try JSONDecoder().decode(Clip.self, from: Data(json.utf8))
+        XCTAssertEqual(clip.hold, 0)
+        XCTAssertEqual(clip.sourceEnd, 5, accuracy: 1e-9)
+    }
 }
