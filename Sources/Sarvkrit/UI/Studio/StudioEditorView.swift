@@ -30,6 +30,9 @@ struct StudioEditorView: View {
                 .frame(height: StudioTimelineView.preferredHeight)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $model.isShowingShortcuts) {
+            StudioShortcutsSheet { model.isShowingShortcuts = false }
+        }
     }
 
     // MARK: - Chrome
@@ -158,14 +161,31 @@ struct StudioEditorView: View {
 
             Spacer()
 
-            Button { model.split() } label: { Image(systemName: "scissors") }
-                .buttonStyle(.plain).clickableCursor().help("Split at the playhead (⌘B)")
-                .accessibilityLabel("Split at the playhead")
-            Button { model.addZoomAtPlayhead() } label: {
-                Image(systemName: "plus.magnifyingglass")
+            // **Named, not guessed at.** These were two unlabelled glyphs side by side, and the
+            // right-hand one was the only way to add a zoom short of knowing about the `Z` key.
+            // "There is no way to add a zoom manually" was the result, which is a fair reading of
+            // an editor that never said otherwise.
+            Button { model.split() } label: {
+                Label("Split", systemImage: "scissors").labelStyle(.titleAndIcon)
             }
-            .buttonStyle(.plain).clickableCursor().help("Add a zoom here (Z)")
-            .accessibilityLabel("Add a zoom at the playhead")
+            .buttonStyle(.plain).clickableCursor().help("Split the clip at the playhead (⌘B)")
+
+            Menu {
+                Button("Zoom") { model.addZoomAtPlayhead() }
+                Button("Click") { model.addClickAtPlayhead() }
+                Button("Pointer Highlight") { model.addPointerHighlightAtPlayhead() }
+                Button("Blur or Highlight") { model.addMaskAtPlayhead() }
+                Divider()
+                Button("Camera Full Frame") { model.addCameraSegment(.fullFrame) }
+                Button("Hide Camera") { model.addCameraSegment(.hidden) }
+                Divider()
+                Button("Keyboard Shortcuts…") { model.isShowingShortcuts = true }
+            } label: {
+                Label("Add Here", systemImage: "plus.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Add something at the playhead — the same list as right-clicking the timeline")
 
             Text(Self.clock(player.playhead) + " / " + Self.clock(model.duration))
                 .font(.system(size: Theme.Typography.caption, design: .monospaced))

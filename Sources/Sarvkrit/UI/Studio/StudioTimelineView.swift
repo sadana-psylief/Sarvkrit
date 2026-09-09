@@ -319,6 +319,69 @@ final class StudioTimelineView: NSView {
         }
     }
 
+    // MARK: - The menu
+
+    /// Everything that can be placed at a moment, at the moment you are pointing at.
+    ///
+    /// **This is the answer to "there is no way to add zoom, click, point manually".** Adding a zoom
+    /// by hand had worked all along — an unlabelled magnifying glass in the transport bar and the
+    /// `Z` key — and was reported as absent, which is a fair report: two unlabelled glyphs and a
+    /// keyboard shortcut with no menu is not a discoverable editor. Masks and camera segments were
+    /// worse off, reachable only from inside their own inspector tabs.
+    ///
+    /// A right-click is where people look for "do something here", and until now this view had no
+    /// `menu(for:)` and no `rightMouseDown` at all.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        // The playhead moves to where you clicked first, so every "here" below means the place you
+        // pointed at rather than wherever the playhead happened to be left.
+        onScrub?(outputTime(forX: point.x))
+        needsDisplay = true
+
+        let menu = NSMenu()
+
+        if zoomTrack.contains(point), let hit = zoom(at: point) {
+            model.selectedZoom = hit.segment.id
+            model.selectedClip = nil
+            add(to: menu, "Delete Zoom", #selector(menuDeleteZoom))
+            menu.addItem(.separator())
+        }
+
+        add(to: menu, "Add Zoom Here", #selector(menuAddZoom), key: "Z")
+        add(to: menu, "Add Click Here", #selector(menuAddClick))
+        add(to: menu, "Add Pointer Highlight Here", #selector(menuAddPointerHighlight))
+        add(to: menu, "Add Blur or Highlight Here", #selector(menuAddMask))
+        menu.addItem(.separator())
+        add(to: menu, "Camera Full Frame Here", #selector(menuCameraFullFrame))
+        add(to: menu, "Hide Camera Here", #selector(menuCameraHidden))
+        menu.addItem(.separator())
+        add(to: menu, "Split Clip Here", #selector(menuSplit), key: "⌘B")
+        add(to: menu, "Remove Click Here", #selector(menuRemoveClick))
+        return menu
+    }
+
+    /// The key equivalent is shown as a label rather than made live: these shortcuts are already
+    /// routed by `StudioKeyRouting` on the window, and claiming them here too would mean two owners
+    /// for one keystroke.
+    private func add(to menu: NSMenu, _ title: String, _ action: Selector, key: String? = nil) {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        if let key {
+            item.attributedTitle = NSAttributedString(string: "\(title)   \(key)")
+        }
+        menu.addItem(item)
+    }
+
+    @objc private func menuAddZoom() { model.addZoomAtPlayhead() }
+    @objc private func menuDeleteZoom() { model.deleteSelectedZoom() }
+    @objc private func menuAddClick() { model.addClickAtPlayhead() }
+    @objc private func menuRemoveClick() { model.suppressClickNearPlayhead() }
+    @objc private func menuAddPointerHighlight() { model.addPointerHighlightAtPlayhead() }
+    @objc private func menuAddMask() { model.addMaskAtPlayhead() }
+    @objc private func menuCameraFullFrame() { model.addCameraSegment(.fullFrame) }
+    @objc private func menuCameraHidden() { model.addCameraSegment(.hidden) }
+    @objc private func menuSplit() { model.split() }
+
     private func zoom(at point: CGPoint) -> (segment: ZoomSegment, edge: Bool?)? {
         for segment in model.project.zooms {
             guard let from = x(forSource: segment.start),

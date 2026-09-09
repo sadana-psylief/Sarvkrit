@@ -51,10 +51,16 @@ final class StudioDocumentModel: ObservableObject {
     @Published var selectedZoom: ZoomSegment.ID?
     @Published var selectedClip: Clip.ID?
     @Published private(set) var isDirty = false
-    @Published var timelineZoom: Double = 1
+    /// Whether the shortcuts sheet is up. Set from the window's ⌘/ and cleared by the sheet.
+    @Published var isShowingShortcuts = false
     @Published var exportProgress: Double?
 
     private var undoStack: UndoStack<StudioProject>
+    /// The project exactly as it opened, for "undo every edit".
+    ///
+    /// Kept here rather than read back off the undo stack, whose history is trimmed at its depth —
+    /// after two hundred edits the first state is genuinely gone from it.
+    private let originalProject: StudioProject
     private lazy var saver = CoalescingSaver<StudioProject>(
         label: "\(AppIdentity.bundleID).studio-save") { [bundle] project in
             try? JSONEncoder().encode(project)
@@ -85,6 +91,7 @@ final class StudioDocumentModel: ObservableObject {
 
         self.project = project
         self.undoStack = UndoStack(initial: project, depth: 200)
+        self.originalProject = project
         // Opened only when the recording actually has one, so a screen-only take pays for no
         // decoder. Nothing read `manifest.hasCamera` before this — which is why the camera was
         // recorded faithfully and then never shown.
@@ -148,6 +155,28 @@ final class StudioDocumentModel: ObservableObject {
 
     var canUndo: Bool { undoStack.canUndo }
     var canRedo: Bool { undoStack.canRedo }
+
+    /// What a rendered frame needs from outside the project.
+    ///
+    /// **One place, used by the live canvas and by "copy this frame".** The screenshot editor states
+    /// why next to its own equivalent: the two disagreeing about a background is a failure it has
+    /// already had once. Studio managed worse — three of these four fields were never filled at all,
+    /// so the camera and any wallpaper simply did not render.
+    var frameSources: FrameSources {
+        FrameSources(screen: player.decoded,
+                     camera: player.decodedCamera,
+                     wallpaper: FrameSources.wallpaper(for: project))
+    }
+
+    /// Puts the project back to how it opened, and leaves that on the undo stack.
+    ///
+    /// **Restores the first state rather than re-planning.** Those differ the moment somebody has
+    /// edited and then re-detected zooms, and "reset" honestly means "back to how I found it".
+    func resetEdits() {
+        guard originalProject != project else { return }
+        let original = originalProject
+        edit { $0 = original }
+    }
 
     func undo() {
         undoStack.undo()

@@ -54,6 +54,8 @@ final class StudioPlayer: ObservableObject {
     @Published private(set) var frameToken = 0
     @Published private(set) var isPlaying = false
     @Published var rate: Float = 1
+    /// Whether reaching the end starts again rather than stopping. ⌘L.
+    @Published var loops = false
 
     /// Where the playhead is, in *output* time.
     @Published var playhead: TimeInterval = 0
@@ -193,7 +195,14 @@ final class StudioPlayer: ObservableObject {
             let step = PlaybackClock.advance(playhead: playhead, elapsed: elapsed,
                                              rate: rate, duration: duration)
             playhead = step.playhead
-            if step.reachedEnd { pause() }
+            if step.reachedEnd {
+                if loops, rate > 0 {
+                    playhead = 0
+                    seek(to: sourceTime(0))
+                } else {
+                    pause()
+                }
+            }
 
             // **Only where it is actually needed.** Output time is not source time — a trim makes
             // them diverge — so the player still has to be put in the right place, but `rate` is

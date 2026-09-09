@@ -71,6 +71,23 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
 
     private func togglePlayback() { model.player.toggle() }
 
+    /// The composited frame, as a PNG on the pasteboard.
+    ///
+    /// Rendered through `model.frameSources`, the same one the canvas uses, so what you paste is
+    /// what you were looking at.
+    private func copyFrame() {
+        guard let frame = StudioRenderer.frame(of: model.project, atSource: model.sourceTime,
+                                               events: model.events,
+                                               sources: model.frameSources),
+              let data = CaptureWriter.pngData(from: frame) else {
+            ToastPresenter.shared.show("Nothing to copy yet", symbolName: "photo.badge.exclamationmark")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(data, forType: .png)
+        ToastPresenter.shared.show("Frame copied", symbolName: "doc.on.clipboard")
+    }
+
     // MARK: - Keys
 
     private func installKeyMonitor() {
@@ -108,9 +125,18 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         case .save: model.markSaved()
         case .export: export()
         case .close: window?.performClose(nil)
-        case .setIn, .setOut, .fitTimeline, .loopPlayback, .copyFrame,
-             .resetEdits, .showShortcuts, .commandMenu:
-            // Not yet wired. Deliberately silent rather than half-done.
+        case .showShortcuts: model.isShowingShortcuts = true
+        case .loopPlayback:
+            model.player.loops.toggle()
+            ToastPresenter.shared.show(model.player.loops ? "Looping" : "Not looping",
+                                       symbolName: "repeat")
+        case .copyFrame: copyFrame()
+        case .resetEdits: model.resetEdits()
+        case .setIn, .setOut, .fitTimeline, .commandMenu:
+            // Still not wired, and now said out loud rather than silently: ⌘/ lists In and Out as
+            // not built, instead of leaving two keys that look live and do nothing. `fitTimeline`
+            // has nothing to fit — the timeline always shows the whole project — and the command
+            // menu is its own piece of work.
             break
         }
     }

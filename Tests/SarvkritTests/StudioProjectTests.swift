@@ -152,4 +152,35 @@ final class StudioProjectTests: XCTestCase {
         XCTAssertEqual(decoded.pointerHighlights.first?.dimming, 0.7)
         XCTAssertEqual(decoded.pointerHighlights.first?.end, 2.5)
     }
+
+    /// ⌘⌫ was routed to `break`. "Undo every edit" has to genuinely return the project to how it
+    /// opened, and has to be undoable itself — losing an hour's work to a mis-typed shortcut with
+    /// no way back would be the worst thing in this editor.
+    @MainActor
+    func testResettingEditsReturnsTheProjectAndStaysUndoable() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("reset-tests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let bundle = try RecordingBundle.create(at: directory.appendingPathComponent("r.sarvrec"))
+        var manifest = RecordingManifest(source: .display, pixelSize: CGSize(width: 100, height: 80),
+                                         pointPixelScale: 1, fps: 60)
+        manifest.state = .complete
+        manifest.duration = 10
+        try bundle.write(manifest)
+        try bundle.writeEvents(EventLog())
+
+        let model = StudioDocumentModel(bundle: bundle, manifest: manifest, events: EventLog())
+        let opened = model.project
+
+        model.addPointerHighlightAtPlayhead()
+        XCTAssertNotEqual(model.project, opened)
+
+        model.resetEdits()
+        XCTAssertEqual(model.project, opened, "reset did not return the project")
+
+        model.undo()
+        XCTAssertNotEqual(model.project, opened, "reset was not undoable")
+    }
 }

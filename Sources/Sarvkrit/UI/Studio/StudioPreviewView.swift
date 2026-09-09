@@ -76,10 +76,7 @@ final class StudioPreviewView: NSView {
         StudioRenderer.draw(project: model.project,
                             sourceTime: model.sourceTime,
                             events: model.events,
-                            sources: FrameSources(screen: model.player.decoded,
-                                                  camera: model.player.decodedCamera,
-                                                  wallpaper: FrameSources.wallpaper(
-                                                      for: model.project)),
+                            sources: model.frameSources,
                             canvas: canvas,
                             imageRect: imageRect,
                             in: context,
