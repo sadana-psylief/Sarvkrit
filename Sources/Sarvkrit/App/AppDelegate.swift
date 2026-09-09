@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let recording = AppState.shared.features
                     .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
                 Task { @MainActor in await Self.record(source, windowID: windowID, with: recording) }
+            case .addPicture(let file):
+                if !StudioEditorController.shared.addPicture(from: file) {
+                    Self.urlLog.error("could not add that picture")
+                }
             case .editorCommand(let command):
                 if !StudioEditorController.shared.perform(command) {
                     Self.urlLog.error("editor command with no editor open")

@@ -677,8 +677,11 @@ final class StudioDocumentModel: ObservableObject {
             return false
         }
 
-        let start = sourceTime
-        let overlay = MediaOverlay(start: start, end: start + 4, asset: name)
+        // A fade-length early, for the same reason text is: an overlay whose range begins exactly
+        // at the playhead is fully transparent there, so asking for a picture "here" and seeing
+        // nothing appear reads as a bug.
+        let overlay = MediaOverlay(start: max(0, sourceTime - MediaOverlay.defaultFade),
+                                   end: sourceTime + 4, asset: name)
         edit {
             $0.mediaOverlays.append(overlay)
             $0.mediaOverlays.sort { $0.start < $1.start }

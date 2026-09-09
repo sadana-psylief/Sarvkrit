@@ -246,6 +246,13 @@ final class StudioEditorController {
         return true
     }
 
+    /// Brings a picture into the newest editor.
+    @discardableResult
+    func addPicture(from url: URL) -> Bool {
+        guard let controller = controllers.last else { return false }
+        return controller.model.addMediaAtPlayhead(from: url)
+    }
+
     /// Performs one of the editor's own actions on the newest editor.
     @discardableResult
     func perform(_ command: StudioEditorCommand) -> Bool {

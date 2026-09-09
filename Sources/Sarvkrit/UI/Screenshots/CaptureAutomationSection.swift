@@ -71,6 +71,7 @@ struct CaptureAutomationSection: View {
         case .playPause: return "Play / Pause"
         case .exportEditor: return "Export the Recording"
         case .editorCommand: return "Editor Action (split, undo, …)"
+        case .addPicture: return "Add a Picture"
         case .action(let action): return action.title
         }
     }

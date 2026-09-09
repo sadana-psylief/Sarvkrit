@@ -55,4 +55,12 @@ final class MediaOverlayTests: XCTestCase {
         XCTAssertFalse(MediaStore.allowedExtensions.contains("mov"),
                        "a movie overlay wants its own decoder; see the note on MediaStore")
     }
+
+    /// **Visible where it was asked for.** An overlay whose range begins exactly at the playhead is
+    /// fully transparent there — the first frame of its own fade — so both kinds start a
+    /// fade-length early. Text learned this first; pictures shipped without it for one build.
+    func testAnOverlayIsOpaqueAFadeLengthAfterItsStart() {
+        let overlay = MediaOverlay(start: 5 - MediaOverlay.defaultFade, end: 9, asset: "a.png")
+        XCTAssertEqual(overlay.opacity(at: 5), 1, accuracy: 0.001)
+    }
 }

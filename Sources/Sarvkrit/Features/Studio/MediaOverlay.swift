@@ -21,9 +21,10 @@ struct MediaOverlay: Codable, Equatable, Identifiable {
     var rect = CGRect(x: 0.62, y: 0.06, width: 0.32, height: 0.32)
     var opacity: Double = 1
     var cornerRadiusFraction: Double = 0
-    var fadeSeconds: TimeInterval = 0.2
+    var fadeSeconds: TimeInterval = MediaOverlay.defaultFade
 
     static let minimumDuration: TimeInterval = 0.4
+    static let defaultFade: TimeInterval = 0.2
 
     func covers(_ t: TimeInterval) -> Bool { t >= start && t < end }
 

@@ -377,6 +377,17 @@ final class RecordingURLCommandTests: XCTestCase {
         XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://editor")!))
     }
 
+    /// Stamping a picture onto a recording from a script — a logo on every take, say.
+    func testAPictureTakesAFilePath() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://picture?filepath=/tmp/logo.png")!),
+            .addPicture(URL(fileURLWithPath: "/tmp/logo.png")))
+    }
+
+    func testAPictureWithoutAPathIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://picture")!))
+    }
+
     func testStopIsItsOwnCommand() {
         XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
                        .stopRecording)
