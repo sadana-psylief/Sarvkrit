@@ -17,6 +17,33 @@ enum AX {
         return element
     }
 
+    /// Whether the point falls inside any window this process owns.
+    static func isPointOverOwnWindow(_ point: CGPoint) -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] else { return false }
+        return isPoint(point, overWindowsOf: ProcessInfo.processInfo.processIdentifier,
+                       in: windows)
+    }
+
+    /// Pure, so the geometry can be tested without a window server.
+    ///
+    /// `kCGWindowBounds` and the coordinates `AXUIElementCopyElementAtPosition` takes are both
+    /// top-left origin with y increasing downwards, which is the only reason one can stand in for
+    /// the other.
+    static func isPoint(_ point: CGPoint, overWindowsOf pid: pid_t,
+                        in windows: [[String: Any]]) -> Bool {
+        for window in windows {
+            guard let owner = window[kCGWindowOwnerPID as String] as? NSNumber,
+                  owner.int32Value == pid,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
+            else { continue }
+            if rect.contains(point) { return true }
+        }
+        return false
+    }
+
     static func application(pid: pid_t) -> AXUIElement {
         let element = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(element, messagingTimeout)
@@ -25,7 +52,23 @@ enum AX {
 
     /// Hit-test in global display coordinates. `CGEvent.location` is already in exactly this
     /// space (origin top-left), so no flipping is needed.
+    /// The element at a screen point, or nil.
+    ///
+    /// **Never asks about our own windows, and that is what stops it crashing.**
+    /// `AXUIElementCopyElementAtPosition` is answered *in-process* when the point is over a window
+    /// this app owns: AppKit serves it synchronously on the calling thread, through
+    /// `NSHostingView.accessibilityHitTest` and into SwiftUI, which evaluates a view body and
+    /// asserts it is on the main actor. Both callers run this on a background queue on purpose —
+    /// it costs up to four Accessibility round trips against an app that may be busy — so the
+    /// answer arrives as a trap rather than an element.
+    ///
+    /// Both callers already discard our own process; neither could do it soon enough, because the
+    /// PID they test belongs to the element this call was meant to return. So the question is
+    /// answered here instead, with the window list — Core Graphics, no Accessibility, no SwiftUI,
+    /// safe from any thread. Nothing wants our own windows anyway: the app cannot drive itself
+    /// through the Accessibility API.
     static func element(at point: CGPoint) -> AXUIElement? {
+        guard !isPointOverOwnWindow(point) else { return nil }
         var element: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(
             systemWide(), Float(point.x), Float(point.y), &element

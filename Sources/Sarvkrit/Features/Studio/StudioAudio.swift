@@ -1,0 +1,165 @@
+import AVFoundation
+import Foundation
+import os
+
+/// The edited soundtrack, as something the exporter can read.
+///
+/// **Every export was silent.** `StudioExporter` wrote a single video input and read only the
+/// screen's video track — while the recorder captured narration, the manifest recorded
+/// `hasMicrophone` and `hasSystemAudio`, and every `Clip` carried `volume`, `systemAudioVolume` and
+/// `isMuted`. All of those controls were editing a track that never reached a file.
+///
+/// **Built as an `AVComposition` rather than by hand.** The hard parts here are time-scaling a
+/// speed-changed clip and mixing two sources with per-clip gain, and AVFoundation already does both
+/// correctly. Re-timing PCM by hand would mean owning a resampler, and getting that subtly wrong
+/// sounds like a broken app rather than an off-by-one.
+enum StudioAudio {
+
+    private static let log = Logger(subsystem: AppIdentity.logSubsystem, category: "Studio")
+
+    /// The narration and system tracks a bundle actually has.
+    ///
+    /// Narration lands in `camera.mov` when a camera was recording — one `AVCaptureSession` with
+    /// both inputs writes one file — and in `mic.m4a` when it was the microphone alone. Rather than
+    /// infer that from the manifest, both are asked whether they have an audio track.
+    static func narrationURL(in recording: RecordingBundle) async -> URL? {
+        for url in [recording.microphoneURL, recording.cameraURL] where
+            FileManager.default.fileExists(atPath: url.path) {
+            let tracks = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+            if tracks?.isEmpty == false { return url }
+        }
+        return nil
+    }
+
+    /// System audio rides in `screen.mov` alongside the picture — one writer, one fragment
+    /// interval, and a raw recording that plays with sound.
+    static func systemAudioURL(in recording: RecordingBundle) async -> URL? {
+        for url in [recording.screenURL, recording.systemAudioURL] where
+            FileManager.default.fileExists(atPath: url.path) {
+            let tracks = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio)
+            if tracks?.isEmpty == false { return url }
+        }
+        return nil
+    }
+
+    /// The project's audio, cut and gain-staged to match the timeline.
+    ///
+    /// Nil when the recording has no sound at all, which is an ordinary answer — a screen-only take
+    /// should not gain an empty audio track.
+    static func composition(project: StudioProject,
+                            recording: RecordingBundle) async -> (asset: AVAsset,
+                                                                  mix: AVAudioMix)? {
+        let narration = await narrationURL(in: recording)
+        let system = await systemAudioURL(in: recording)
+        guard narration != nil || system != nil else { return nil }
+
+        // **The microphone starts late, and the picture does not.** An `AVCaptureSession` takes a
+        // couple of seconds to come up, so the narration file begins that much after the screen.
+        // `cameraStartOffset` records it — despite the name it is the capture session's offset,
+        // whichever file the sound landed in. Reading the file as if its time were the screen's
+        // put every word seconds *before* it was said, and left the tail silent.
+        //
+        // System audio has no such offset: it rides in `screen.mov`, anchored to the first video
+        // frame like the picture itself.
+        let narrationOffset = (try? recording.readManifest())?.cameraStartOffset ?? 0
+
+        let composition = AVMutableComposition()
+        var parameters: [AVMutableAudioMixInputParameters] = []
+        // **The assets are held, not just their tracks.** `AVAssetTrack.asset` is a weak reference,
+        // so building one inline and keeping only the track lets the asset go — and then
+        // `insertTimeRange` fails with `-12780` and the export comes out silent, which is exactly
+        // the bug this file exists to fix.
+        var retained: [AVURLAsset] = []
+
+        for source in [(narration, narrationOffset, false), (system, 0.0, true)] {
+            guard let url = source.0 else { continue }
+            let asset = AVURLAsset(url: url)
+            retained.append(asset)
+            guard let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
+                  let track = composition.addMutableTrack(
+                      withMediaType: .audio,
+                      preferredTrackID: kCMPersistentTrackID_Invalid)
+            else { continue }
+
+            let offset = source.1
+            let available = ((try? await asset.load(.duration))?.seconds).map {
+                $0.isFinite ? $0 : 0
+            } ?? 0
+
+            let gain = AVMutableAudioMixInputParameters(track: track)
+            // A tape-style pitch shift on a sped-up clip is what a speed change is expected to
+            // sound like; the alternative is owning a time-stretcher.
+            gain.audioTimePitchAlgorithm = .varispeed
+
+            var cursor = CMTime.zero
+            for clip in project.timeline.clips {
+                // Where this clip's material sits inside *this* file.
+                let wantedStart = clip.sourceStart - offset
+                let wantedEnd = clip.sourceEnd - offset
+                let from = max(0, wantedStart)
+                let to = min(wantedEnd, available)
+
+                if to > from {
+                    // Output seconds this file has nothing for — before the microphone existed.
+                    // Left as silence rather than filled, which is the honest answer.
+                    let lead = (from - wantedStart) / max(clip.speed, 0.0001)
+                    let insertAt = cursor + CMTime(seconds: lead, preferredTimescale: 600)
+                    let range = CMTimeRange(
+                        start: CMTime(seconds: from, preferredTimescale: 600),
+                        duration: CMTime(seconds: to - from, preferredTimescale: 600))
+                    do {
+                        try track.insertTimeRange(range, of: sourceTrack, at: insertAt)
+                        if clip.speed != 1 {
+                            track.scaleTimeRange(
+                                CMTimeRange(start: insertAt, duration: range.duration),
+                                toDuration: CMTime(seconds: (to - from) / clip.speed,
+                                                   preferredTimescale: 600))
+                        }
+                    } catch {
+                        // Logged, because "the export is silent" was the bug this whole file
+                        // exists to fix and a swallowed insert would recreate it exactly.
+                        let why = String(describing: error)
+                        log.error("audio: could not insert a clip's range: \(why, privacy: .public)")
+                    }
+                }
+
+                // Set at the clip's own start, so each clip's gain holds until the next changes it.
+                let level = clip.isMuted ? 0 : (source.2 ? clip.systemAudioVolume : clip.volume)
+                gain.setVolume(Float(max(0, min(1, level))), at: cursor)
+                // The whole clip, including any held last frame — which is silence, since nothing
+                // was inserted for it.
+                cursor = cursor + CMTime(seconds: clip.outputDuration, preferredTimescale: 600)
+            }
+
+            // **The audio fades with the picture.** Set after the per-clip levels so the ramps win
+            // at the two ends, which is what "fade in" means.
+            let total = CMTime(seconds: project.duration, preferredTimescale: 600)
+            if project.fadeIn > 0 {
+                gain.setVolumeRamp(fromStartVolume: 0, toEndVolume: 1,
+                                   timeRange: CMTimeRange(
+                                       start: .zero,
+                                       duration: CMTime(seconds: project.fadeIn,
+                                                        preferredTimescale: 600)))
+            }
+            if project.fadeOut > 0, project.duration > project.fadeOut {
+                gain.setVolumeRamp(fromStartVolume: 1, toEndVolume: 0,
+                                   timeRange: CMTimeRange(
+                                       start: CMTime(seconds: project.duration - project.fadeOut,
+                                                     preferredTimescale: 600),
+                                       end: total))
+            }
+            parameters.append(gain)
+        }
+
+        // An `AVMutableCompositionTrack` exists the moment it is added, empty or not, so the
+        // presence of a track says nothing. Duration is what says whether anything went in.
+        guard composition.duration.seconds > 0 else {
+            log.error("audio: the composition came out empty, so the export would be silent")
+            return nil
+        }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = parameters
+        _ = retained
+        return (composition, mix)
+    }
+}

@@ -283,3 +283,148 @@ final class CaptureThumbnailCacheTests: XCTestCase {
         XCTAssertNil(store.thumbnail(for: item, height: 240))
     }
 }
+
+/// The recording commands.
+///
+/// **These exist so recording can be driven from a script**, which every previous round of
+/// debugging this feature needed and did not have — each one depended on somebody reproducing the
+/// failure by hand and describing what they saw.
+///
+/// The window selector is the part that matters: the failure that started all this was a *window*
+/// recording with a camera selected, and without a way to name a window a script cannot reach it.
+final class RecordingURLCommandTests: XCTestCase {
+
+    func testRecordDefaultsToTheWholeDisplay() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://record")!),
+                       .record(.display, windowID: nil))
+    }
+
+    func testEachSourceIsReachable() {
+        for source in RecordingSource.allCases {
+            XCTAssertEqual(
+                CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=\(source.rawValue)")!),
+                .record(source, windowID: nil))
+        }
+    }
+
+    func testAWindowCanBeNamedByID() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=window&window=4231")!),
+            .record(.window, windowID: 4231))
+    }
+
+    /// A source we do not have is not silently a display recording: a typo in a script should do
+    /// nothing, the same rule the rest of this parser follows.
+    func testAnUnknownSourceIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://record?source=webcam")!))
+    }
+
+    /// Moving the editor's playhead from a script.
+    ///
+    /// **This exists so the seekbar can be verified at all.** Three rounds of editor bugs have been
+    /// reported and none could be reproduced here, because this machine refuses synthetic input —
+    /// there is no way to drag a scrubber from a script. This is the smallest thing that makes the
+    /// picture-follows-the-handle question answerable without a mouse.
+    func testSeekTakesATimeInSeconds() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://seek?t=22.5")!),
+                       .seek(22.5))
+    }
+
+    func testSeekWithoutATimeIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://seek")!))
+    }
+
+    func testANegativeSeekIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://seek?t=-3")!))
+    }
+
+    /// Starting and stopping playback from a script — the literal complaint was "when I click play
+    /// the seekbar never moves", and there is no other way for me to press it.
+    func testPlayPauseIsItsOwnCommand() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://play")!), .playPause)
+    }
+
+    /// Exporting from a script, to a named file.
+    ///
+    /// **This exists so "does the export have sound" can be answered.** Export was behind a save
+    /// panel, so verifying it needed a click — and every export shipped silent for exactly as long
+    /// as nobody could check one without a mouse.
+    func testExportTakesADestination() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://export?filepath=/tmp/out.mp4")!),
+            .exportEditor(URL(fileURLWithPath: "/tmp/out.mp4"), preset: .web))
+    }
+
+    /// And the quality, so "is the sharpest export actually sharper" is answerable the same way
+    /// "does the export have sound" became answerable.
+    func testExportTakesAPreset() {
+        guard case .exportEditor(_, let preset) = CaptureURLCommand.parse(
+            URL(string: "sarvkrit://export?filepath=/tmp/out.mp4&preset=sharpest")!)
+        else { return XCTFail("not an export") }
+        XCTAssertEqual(preset.id, ExportPreset.sharpest.id)
+    }
+
+    /// A named height overrides the preset and permits the upscale, because naming a size is the
+    /// deliberate choice the no-upscale rule exists to protect against making by accident.
+    func testExportTakesAHeightAndAllowsItToUpscale() {
+        guard case .exportEditor(_, let preset) = CaptureURLCommand.parse(
+            URL(string: "sarvkrit://export?filepath=/tmp/out.mp4&height=2160")!)
+        else { return XCTFail("not an export") }
+        XCTAssertEqual(preset.height, 2160)
+        XCTAssertTrue(preset.allowsUpscale)
+    }
+
+    /// An unknown preset name falls back rather than refusing: a typo in a script should still
+    /// produce a file.
+    func testAnUnknownPresetFallsBack() {
+        guard case .exportEditor(_, let preset) = CaptureURLCommand.parse(
+            URL(string: "sarvkrit://export?filepath=/tmp/out.mp4&preset=nonsense")!)
+        else { return XCTFail("not an export") }
+        XCTAssertEqual(preset.id, ExportPreset.web.id)
+    }
+
+    func testExportWithoutADestinationIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://export")!))
+    }
+
+    /// One command for the editor's own actions, by name.
+    ///
+    /// **A general door rather than a command per action.** The alternative was
+    /// `sarvkrit://split`, `sarvkrit://duplicate-clip` and so on, which is a lot of surface for
+    /// what is really "do the thing the keyboard already does" — and it is how the editor's edits
+    /// get verified at all without a mouse.
+    func testAnEditorCommandTakesItsNameFromTheKeyboard() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://editor?do=split")!),
+                       .editorCommand(.split))
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://editor?do=undo")!),
+                       .editorCommand(.undo))
+    }
+
+    func testAnUnknownEditorCommandIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://editor?do=fly")!))
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://editor")!))
+    }
+
+    /// Stamping a picture onto a recording from a script — a logo on every take, say.
+    func testAPictureTakesAFilePath() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://picture?filepath=/tmp/logo.png")!),
+            .addPicture(URL(fileURLWithPath: "/tmp/logo.png")))
+    }
+
+    func testAPictureWithoutAPathIsRefused() {
+        XCTAssertNil(CaptureURLCommand.parse(URL(string: "sarvkrit://picture")!))
+    }
+
+    func testStopIsItsOwnCommand() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://stop-recording")!),
+                       .stopRecording)
+    }
+
+    /// Both appear in the settings list, so neither is a command only its author knows about.
+    func testBothAreListed() {
+        let names = CaptureURLCommand.all.map(\.name)
+        XCTAssertTrue(names.contains("record"))
+        XCTAssertTrue(names.contains("stop-recording"))
+    }
+}

@@ -37,7 +37,45 @@ enum CaptureURLCommand: Equatable {
     /// Opens whatever image is on the clipboard in the editor.
     case openFromClipboard
     /// Sarvkrit's own window, on the Capture pane.
-    case openSettings
+    /// Opens the settings window, optionally on a named pane — a feature's own id, `general` or
+    /// `about`. Without one it lands wherever the window was last left.
+    case openSettings(pane: String?)
+    /// Starts a recording, skipping the pre-record bar — camera, microphone and countdown are
+    /// whatever the settings already say.
+    ///
+    /// **The window selector is the point.** Recording a *window* is the case that has been
+    /// hardest to diagnose, and without a way to name one from a script it can only be reached by
+    /// hand. Nil with `.window` means the frontmost window that is not one of ours.
+    case record(RecordingSource, windowID: CGWindowID?)
+    /// Stops the recording in progress and opens it in the editor.
+    case stopRecording
+    /// Moves the open editor's playhead, in seconds.
+    ///
+    /// **The scriptable form of dragging the scrubber**, which is otherwise unreachable without a
+    /// mouse — and therefore untestable on a machine that refuses synthetic input.
+    case seek(TimeInterval)
+    /// Starts or stops playback in the open editor.
+    case playPause
+    /// Exports the open editor to a file, skipping both export dialogs.
+    ///
+    /// `preset=` names one of `ExportPreset.all` by id; `height=` overrides the size and permits an
+    /// upscale, since naming a size explicitly is the deliberate choice the cap exists to protect
+    /// against making by accident.
+    case exportEditor(URL, preset: ExportPreset)
+    /// Performs one of the editor's own actions by name — the same ones the keyboard routes.
+    case editorCommand(StudioEditorCommand)
+    /// Brings a picture into the open editor at the playhead.
+    case addPicture(URL)
+    /// Raises the pre-record bar, as ⌃⇧R does.
+    ///
+    /// **The bar and the aiming overlay are the two surfaces a script could not reach**, and both
+    /// have now been reported against — "I cannot close it until I record something" and "it
+    /// should be a rectangle already on screen". `record` deliberately skips both, so neither
+    /// could be looked at without a keyboard this machine will not let anything synthesise.
+    case showRecordBar
+    /// Raises the aiming surface for whatever source is currently chosen: the area overlay, the
+    /// window list, or straight to the countdown for a whole display.
+    case aimRecording
 
     static let scheme = "sarvkrit"
 
@@ -50,6 +88,15 @@ enum CaptureURLCommand: Equatable {
         case .openFromClipboard: return "open-from-clipboard"
         case .openSettings: return "open-settings"
         case .captureRect: return "capture-area"
+        case .record: return "record"
+        case .stopRecording: return "stop-recording"
+        case .seek: return "seek"
+        case .playPause: return "play"
+        case .exportEditor: return "export"
+        case .editorCommand: return "editor"
+        case .addPicture: return "picture"
+        case .showRecordBar: return "record-bar"
+        case .aimRecording: return "aim"
         case .action(let action): return Self.names[action] ?? action.rawValue
         }
     }
@@ -73,8 +120,11 @@ enum CaptureURLCommand: Equatable {
     /// and a settings row offering a URL with somebody else's coordinates in it would be noise.
     static var all: [CaptureURLCommand] {
         ScreenshotAction.allCases.map { .action($0) }
-            + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings,
-               .cancel]
+            + [.capturePreviousArea, .openAnnotate(nil), .openFromClipboard, .openSettings(pane: nil),
+               .cancel, .record(.display, windowID: nil), .stopRecording, .seek(0), .playPause,
+               .exportEditor(URL(fileURLWithPath: "/tmp/Recording.mp4"), preset: .web),
+               .editorCommand(.split), .addPicture(URL(fileURLWithPath: "/tmp/logo.png")),
+               .showRecordBar, .aimRecording]
     }
 
     private static func rect(from url: URL) -> CGRect? {
@@ -116,6 +166,60 @@ enum CaptureURLCommand: Equatable {
         return index
     }
 
+    /// Absent means the whole display, which is the right default for an unattended script.
+    /// A source we do not have returns nil rather than falling back — a typo should record
+    /// nothing, the same rule the rest of this parser follows.
+    private static func recordingSource(from url: URL) -> RecordingSource? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "source" })?.value, !raw.isEmpty
+        else { return .display }
+        return RecordingSource(rawValue: raw.lowercased())
+    }
+
+    private static func windowID(from url: URL) -> CGWindowID? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "window" })?.value,
+              let value = UInt32(raw)
+        else { return nil }
+        return CGWindowID(value)
+    }
+
+    /// Refused rather than clamped when absent or negative: a script that computed a time wrongly
+    /// should move nothing, the same rule the rest of this parser follows.
+    /// The export settings named in the URL, falling back to the default preset.
+    private static func preset(from url: URL) -> ExportPreset {
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? {
+            items.first { $0.name.lowercased() == name }?.value
+        }
+        var preset = value("preset")
+            .flatMap { named in ExportPreset.all.first { $0.id == named.lowercased() } }
+            ?? .web
+        if let raw = value("height"), let height = Int(raw), height > 0 {
+            preset.height = height
+            // Named explicitly, so it is the deliberate choice the cap exists to protect against
+            // making by accident.
+            preset.allowsUpscale = true
+        }
+        return preset
+    }
+
+    private static func pane(from url: URL) -> String? {
+        let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first { $0.name.lowercased() == "pane" }?.value?
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        return raw?.isEmpty == false ? raw : nil
+    }
+
+    private static func seconds(from url: URL) -> TimeInterval? {
+        guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name.lowercased() == "t" })?.value,
+            let value = Double(raw), value >= 0, value.isFinite
+        else { return nil }
+        return value
+    }
+
     static func parse(_ url: URL) -> CaptureURLCommand? {
         guard url.scheme?.lowercased() == scheme else { return nil }
 
@@ -130,7 +234,27 @@ enum CaptureURLCommand: Equatable {
         if name == "capture-previous-area" { return .capturePreviousArea }
         if name == "open-annotate" { return .openAnnotate(filepath(from: url)) }
         if name == "open-from-clipboard" { return .openFromClipboard }
-        if name == "open-settings" { return .openSettings }
+        if name == "open-settings" { return .openSettings(pane: pane(from: url)) }
+        if name == "stop-recording" { return .stopRecording }
+        if name == "record-bar" { return .showRecordBar }
+        if name == "aim" { return .aimRecording }
+        if name == "seek" { return seconds(from: url).map { .seek($0) } }
+        if name == "play" { return .playPause }
+        if name == "export" {
+            return filepath(from: url).map { .exportEditor($0, preset: preset(from: url)) }
+        }
+        if name == "picture" { return filepath(from: url).map { .addPicture($0) } }
+        if name == "editor" {
+            guard let raw = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name.lowercased() == "do" })?.value,
+                let command = StudioEditorCommand(rawValue: raw.lowercased())
+            else { return nil }
+            return .editorCommand(command)
+        }
+        if name == "record" {
+            guard let source = recordingSource(from: url) else { return nil }
+            return .record(source, windowID: windowID(from: url))
+        }
         if let match = names.first(where: { $0.value == name })?.key {
             // All four or none. Three of them is a script with a bug in it, and guessing the
             // fourth would take a screenshot of the wrong thing rather than saying so.

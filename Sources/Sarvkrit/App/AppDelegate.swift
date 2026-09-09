@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireShelf()
         wireCutPasteToasts()
         wireScreenshots()
+        wireRecording()
         wirePinToScreen()
         // Installed unconditionally, before anything can put a window on screen. This is the one
         // shortcut that must never be missing when it is needed.
@@ -22,9 +23,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reconcileUpdateAgent()
         observeActivation()
 
+        // Anything the Finder handed us before this point can be opened now. See
+        // `application(_:open:)` for why it has to wait.
+        hasFinishedLaunching = true
+        let waiting = pendingRecordings
+        pendingRecordings = []
+        for url in waiting { StudioEditorController.shared.open(fileAt: url) }
+
         guard !AppState.shared.hasCompletedOnboarding else { return }
         MainWindowController.shared.show()
     }
+
+    /// Recordings the Finder asked for before the app had finished starting up.
+    ///
+    /// **`application(_:open:)` fires before `applicationDidFinishLaunching` returns** when the
+    /// app is launched by double-clicking a file — which is the very first thing a Finder user
+    /// does. Opening an editor from inside a half-wired app is not worth the risk, so the URL
+    /// waits the few milliseconds until launch is done.
+    private var pendingRecordings: [URL] = []
+    private var hasFinishedLaunching = false
 
     /// The `sarvkrit://` URL scheme.
     ///
@@ -36,6 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `LSMultipleInstancesProhibited` is not in the way.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
+            // A recording opened from the Finder, an Open panel or the recordings list. Files
+            // arrive down the same delegate method as the URL scheme, so they are sorted here.
+            if url.isFileURL, url.pathExtension == RecordingBundle.fileExtension {
+                Self.urlLog.info("open recording via file")
+                if hasFinishedLaunching {
+                    StudioEditorController.shared.open(fileAt: url)
+                } else {
+                    pendingRecordings.append(url)
+                }
+                continue
+            }
             guard let command = CaptureURLCommand.parse(url) else {
                 Self.urlLog.error("ignored \(url.absoluteString, privacy: .public)")
                 continue
@@ -55,7 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openEditor(with: file)
             case .openFromClipboard:
                 openEditorFromClipboard()
-            case .openSettings:
+            case .openSettings(let pane):
+                if let pane { AppState.shared.pendingSidebarSelection = pane }
                 MainWindowController.shared.show()
             case .action(let action):
                 guard let screenshots = AppState.shared.features
@@ -67,6 +96,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     await Self.captureRect(rect, displayIndex: displayIndex, with: screenshots)
                 }
+            case .showRecordBar:
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                Self.toggleRecording(recording)
+            case .aimRecording:
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                PreRecordBarController.shared.dismiss()
+                Self.aim(recording, setup: recording.setup)
+            case .record(let source, let windowID):
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                Task { @MainActor in await Self.record(source, windowID: windowID, with: recording) }
+            case .addPicture(let file):
+                if !StudioEditorController.shared.addPicture(from: file) {
+                    Self.urlLog.error("could not add that picture")
+                }
+            case .editorCommand(let command):
+                if !StudioEditorController.shared.perform(command) {
+                    Self.urlLog.error("editor command with no editor open")
+                }
+            case .exportEditor(let destination, let preset):
+                if !StudioEditorController.shared.export(to: destination, preset: preset) {
+                    Self.urlLog.error("export with no editor open")
+                }
+            case .playPause:
+                if !StudioEditorController.shared.togglePlayback() {
+                    Self.urlLog.error("play with no editor open")
+                }
+            case .seek(let seconds):
+                if !StudioEditorController.shared.seek(to: seconds) {
+                    Self.urlLog.error("seek with no editor open")
+                }
+            case .stopRecording:
+                guard let recording = AppState.shared.features
+                    .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+                guard recording.recorder.isRecording else {
+                    Self.urlLog.error("stop-recording with nothing recording")
+                    return
+                }
+                Self.stopRecording(recording)
             }
         }
     }
@@ -102,6 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let urlLog = Logger(subsystem: AppIdentity.logSubsystem, category: "URLScheme")
     private static let captureLog = Logger(subsystem: AppIdentity.logSubsystem, category: "Capture")
+    private static let recordingLog = Logger(subsystem: AppIdentity.logSubsystem,
+                                             category: "Recording")
 
     /// Registers the background update check, and repairs it when it has gone missing.
     ///
@@ -216,6 +288,290 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The capture itself is async because ScreenCaptureKit is; the hotkey fires on the main
     /// thread and hands off to a Task rather than blocking it, since a capture of a large display
     /// takes long enough to be felt as a stutter if it ran inline.
+    /// The recorder reaches its HUD through these closures. Nothing under `Features/` imports
+    /// the UI layer, which is why they exist at all.
+    private func wireRecording() {
+        guard let feature = AppState.shared.features
+            .compactMap({ $0 as? ScreenRecordingFeature }).first else { return }
+
+        feature.startStop = { MainActor.assumeIsolated { Self.toggleRecording(feature) } }
+        // ⌃⇧⎋ takes everything down, and a running recording is part of everything. It stops and
+        // keeps the take rather than discarding it: an escape hatch should not destroy work.
+        CaptureOverlayGuard.shared.stopRecording = {
+            MainActor.assumeIsolated {
+                guard feature.recorder.isRecording else { return }
+                Self.stopRecording(feature)
+            }
+        }
+        // The dedicated shortcut skips straight to the area picker rather than making somebody
+        // change the segmented control every time.
+        feature.recordArea = {
+            MainActor.assumeIsolated { Self.toggleRecording(feature, forcing: .area) }
+        }
+        feature.pauseResume = {
+            MainActor.assumeIsolated {
+                guard feature.recorder.isRecording else { return }
+                RecordingHUDController.shared.onPauseResume?()
+            }
+        }
+        feature.markMoment = {
+            MainActor.assumeIsolated {
+                guard feature.recorder.isRecording else { return }
+                feature.recorder.flag()
+                ToastPresenter.shared.show("Marked", symbolName: "flag")
+            }
+        }
+
+        RecordingHUDController.shared.onStop = {
+            MainActor.assumeIsolated { Self.stopRecording(feature) }
+        }
+        RecordingHUDController.shared.onPauseResume = {
+            MainActor.assumeIsolated {
+                let recorder = feature.recorder
+                guard recorder.isRecording else { return }
+                if recorder.isPaused { recorder.resume() } else { recorder.pause() }
+            }
+        }
+        RecordingHUDController.shared.onDiscard = {
+            Task { @MainActor in
+                await feature.recorder.discard()
+                RecordingHUDController.shared.dismiss()
+                feature.noteRecording(false)
+                ToastPresenter.shared.show("Discarded", symbolName: "trash")
+            }
+        }
+    }
+
+    /// **A second press stops rather than starting a second recording** — the same rule the
+    /// screenshot path applies to a scrolling capture already in progress.
+    @MainActor
+    private static func toggleRecording(_ feature: ScreenRecordingFeature,
+                                        forcing source: RecordingSource? = nil) {
+        guard !feature.recorder.isRecording else { return stopRecording(feature) }
+        // A start already in flight is neither a stop nor a reason to put the bar back up.
+        // `isRecording` is only set once the stream is live, two `await`s later.
+        guard !feature.recorder.isStarting else { return }
+        if PreRecordBarController.shared.isShowing {
+            return PreRecordBarController.shared.dismiss()
+        }
+
+        if let source { feature.setup.source = source }
+        PreRecordBarController.shared.onRecord = { setup in
+            MainActor.assumeIsolated { aim(feature, setup: setup) }
+        }
+        PreRecordBarController.shared.show(setup: feature.setup)
+    }
+
+    /// Works out *what* to record, then counts down, then starts.
+    ///
+    /// Area and window both need something chosen on screen first. Area reuses the frozen-screen
+    /// overlay the screenshot path already has — the screen is captured once and the selection is
+    /// drawn over a still, which is why an open menu stays put while you aim at it.
+    @MainActor
+    private static func aim(_ feature: ScreenRecordingFeature, setup: RecordingSetup) {
+        let capturer = AppState.shared.features
+            .compactMap { $0 as? ScreenshotFeature }.first?.capturer ?? SCKScreenCaptureService()
+
+        switch setup.source {
+        case .display:
+            begin(feature, setup: setup, areaRect: nil, display: nil, window: nil)
+
+        case .area:
+            Task { @MainActor in
+                let frames: [DisplayFrame]
+                do {
+                    frames = try await capturer.snapshotAllDisplays(options: CaptureOptions())
+                } catch {
+                    // Swallowed with `try?` until now, so a refused screen grant put nothing at
+                    // all on screen — which is exactly the "I do not see the area" report.
+                    let described = String(describing: error)
+                    recordingLog.error("couldn't freeze the screen to aim: \(described, privacy: .public)")
+                    let failure = RecordingFailureMessage.describe(error)
+                    ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
+                    return
+                }
+                // Opens with a rectangle already on screen — last time's, or a centred default
+                // the first time — so aiming is an adjustment rather than a drag from nothing.
+                let seed = RecordingArea.seed(remembered: setup.lastArea,
+                                              displays: frames.map(\.geometry.frame))
+                CaptureOverlayController.shared.present(
+                    frames: frames,
+                    chrome: .init(showsCrosshair: true, showsMagnifier: true,
+                                  showsDimensions: true,
+                                  hint: seed == nil
+                                      ? "Drag the area to record"
+                                      : "Resize the area, then click inside it to record",
+                                  initialSelection: seed)
+                ) { _, display, rect in
+                    MainActor.assumeIsolated {
+                        guard let display, let rect else { return }
+                        begin(feature, setup: setup, areaRect: rect, display: display, window: nil)
+                    }
+                }
+            }
+
+        case .window:
+            Task { @MainActor in
+                let windows: [CapturableWindow]
+                do {
+                    windows = try await capturer.shareableWindows()
+                } catch {
+                    let described = String(describing: error)
+                    recordingLog.error("couldn't list windows to aim: \(described, privacy: .public)")
+                    let failure = RecordingFailureMessage.describe(error)
+                    ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
+                    return
+                }
+                WindowPickerListController.shared.present(
+                    windows: windows,
+                    thumbnail: { _ in nil }
+                ) { window in
+                    MainActor.assumeIsolated {
+                        guard let window else { return }
+                        begin(feature, setup: setup, areaRect: nil, display: nil, window: window)
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private static func begin(_ feature: ScreenRecordingFeature, setup: RecordingSetup,
+                              areaRect: CGRect?, display: DisplaySnapshotGeometry?,
+                              window: CapturableWindow?) {
+        // The countdown is the screenshot path's, unchanged: it already knows how to place itself
+        // and how to be cancelled by ⌃⇧⎋.
+        CountdownPresenter.shared.run(seconds: setup.countdownSeconds) { proceed in
+            MainActor.assumeIsolated {
+                guard proceed else { return }
+                start(feature, setup: setup, areaRect: areaRect, display: display, window: window)
+            }
+        }
+    }
+
+    @MainActor
+    private static func start(_ feature: ScreenRecordingFeature, setup: RecordingSetup,
+                              areaRect: CGRect?, display: DisplaySnapshotGeometry?,
+                              window: CapturableWindow?) {
+        let destination = RecordingBundle.defaultDirectory()
+            .appendingPathComponent("\(recordingName()).\(RecordingBundle.fileExtension)")
+        var request = setup.request(fps: feature.framesPerSecond,
+                                    hidesDesktopIcons: feature.hidesDesktopIcons,
+                                    destination: destination)
+        request.areaRect = areaRect
+        request.display = display
+        request.window = window
+
+        Task { @MainActor in
+            do {
+                try FileManager.default.createDirectory(
+                    at: RecordingBundle.defaultDirectory(), withIntermediateDirectories: true)
+                try await feature.recorder.start(request, setup: setup)
+                // Remembered only now that a recording is really running. A cancelled or refused
+                // aim must not overwrite the rect the user still wants back.
+                if let areaRect { setup.lastArea = areaRect }
+                feature.noteRecording(true)
+                RecordingHUDController.shared.show(
+                    elapsed: { feature.recorder.elapsed },
+                    dropped: { feature.recorder.droppedFrames })
+                // Nil when this take has no camera, so no window appears for a screen-only
+                // recording rather than an empty circle.
+                if let preview = feature.recorder.cameraPreviewLayer() {
+                    CameraPreviewWindowController.shared.show(preview)
+                }
+            } catch RecordingError.noDisplays {
+                // Denial has no error to catch; ScreenCaptureKit just reports nothing. macOS does
+                // not hand a running process a new grant either, so the answer is a relaunch.
+                if ScreenRecordingRelaunch.looksLikeStaleGrant(
+                    preflightGranted: AppState.shared.permissions.canCaptureScreen,
+                    capturedDisplayCount: 0) {
+                    // Said out loud first. `relaunch()` terminates us, and an app that quits and
+                    // reappears with no explanation is indistinguishable from one that crashed.
+                    recordingLog.error("screen grant looks stale — relaunching")
+                    ToastPresenter.shared.show("Restarting to pick up screen access",
+                                               symbolName: "arrow.clockwise")
+                    ScreenRecordingRelaunch.relaunch()
+                } else {
+                    AppState.shared.permissions.request(.screenRecording)
+                }
+            } catch {
+                // Logged as well as shown, like the screenshot path: the toast tells the user
+                // something went wrong, and only this says what. Diagnosing the last failure took
+                // a crash report because this line did not exist.
+                let described = String(describing: error)
+                recordingLog.error("couldn't start recording: \(described, privacy: .public)")
+                let failure = RecordingFailureMessage.describe(error)
+                ToastPresenter.shared.show(failure.text, symbolName: failure.symbolName)
+            }
+        }
+    }
+
+    /// Starts a recording without the pre-record bar, for `sarvkrit://record`.
+    ///
+    /// Skips the bar and the countdown deliberately: a script that has asked to record has already
+    /// made both of those decisions, and an unattended run should not wait for a click.
+    @MainActor
+    private static func record(_ source: RecordingSource, windowID: CGWindowID?,
+                               with feature: ScreenRecordingFeature) async {
+        guard !feature.recorder.isRecording, !feature.recorder.isStarting else {
+            urlLog.error("record while one is already starting or running")
+            return
+        }
+        let capturer = AppState.shared.features
+            .compactMap { $0 as? ScreenshotFeature }.first?.capturer ?? SCKScreenCaptureService()
+
+        var window: CapturableWindow?
+        if source == .window {
+            do {
+                let windows = try await capturer.shareableWindows()
+                // Named by id, or else the frontmost window that is not one of ours — a script
+                // has no way to learn a window id ahead of time, and refusing without one would
+                // make the common case unreachable.
+                window = windowID.flatMap { id in windows.first { $0.id == id } }
+                    ?? WindowListFilter.presentable(windows)
+                        .first { $0.owningBundleID != AppIdentity.bundleID }
+            } catch {
+                let described = String(describing: error)
+                urlLog.error("couldn't list windows for record: \(described, privacy: .public)")
+            }
+            guard window != nil else {
+                ToastPresenter.shared.show("No window to record",
+                                           symbolName: "macwindow.badge.plus")
+                return
+            }
+        }
+
+        // Area from a script means the whole display: there is nobody to drag a selection.
+        let effective: RecordingSource = source == .area ? .display : source
+        feature.setup.source = effective
+        start(feature, setup: feature.setup, areaRect: nil, display: nil, window: window)
+    }
+
+    @MainActor
+    private static func stopRecording(_ feature: ScreenRecordingFeature) {
+        Task { @MainActor in
+            let dropped = feature.recorder.droppedFrames
+            let bundle = try? await feature.recorder.finish()
+            RecordingHUDController.shared.dismiss()
+            CameraPreviewWindowController.shared.dismiss()
+            feature.noteRecording(false)
+            guard let bundle else { return }
+            if dropped > 0 {
+                ToastPresenter.shared.show("\(dropped) frames dropped",
+                                           symbolName: "exclamationmark.triangle")
+            }
+            // **The moment the feature turns on.** What you want after a recording is to watch it;
+            // what you want after a screenshot is to send it. So this opens the editor rather than
+            // revealing a file in Finder.
+            StudioEditorController.shared.open(bundle)
+        }
+    }
+
+    private static func recordingName() -> String {
+        CaptureFilename.make(pattern: "Recording {date} at {time}", mode: .fullscreen,
+                             date: Date(), counter: 0)
+    }
+
     private func wireScreenshots() {
         guard let screenshots = AppState.shared.features
             .compactMap({ $0 as? ScreenshotFeature }).first else { return }
