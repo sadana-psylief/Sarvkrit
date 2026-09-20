@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import os
 
 // The root half of Sarvkrit's fan control.
 //
@@ -18,15 +19,58 @@ guard let options = FanHelperOptions(arguments: Array(CommandLine.arguments.drop
     exit(64)
 }
 
+// MARK: - Detach, before anything else happens
+//
+// **`do shell script ... with administrator privileges` kills the whole process group when it
+// returns.** It runs through Authorization Services rather than sudo, and the cleanup reaps
+// anything the script left behind — `nohup` and `&` do not save it, because the process is not
+// being hung up, it is being killed outright. A helper launched that way is exec'd and destroyed
+// microseconds later, which presents as a script that succeeded and a helper that never connected.
+//
+// So the helper detaches itself the moment it knows it is meant to stay: fork, let the parent die
+// inside the doomed group, and `setsid()` the child into a session of its own where the cleanup
+// cannot reach it. Textbook daemonisation, done here for a specific and well-earned reason.
+//
+// This happens before the logger, the SMC connection and anything from Dispatch exist — forking a
+// process that has already started those is a way to inherit a broken copy of them.
+if !options.releaseAndExit && !options.hasDetached {
+    var attributes: posix_spawnattr_t?
+    posix_spawnattr_init(&attributes)
+    // The whole point: the new process leads its own session, so the group-wide cleanup that
+    // follows `do shell script` cannot reach it.
+    posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+    defer { posix_spawnattr_destroy(&attributes) }
+
+    let executable = CommandLine.arguments[0]
+    let arguments = CommandLine.arguments + ["--detached"]
+    var spawned: pid_t = 0
+
+    let cArguments: [UnsafeMutablePointer<CChar>?] =
+        arguments.map { strdup($0) } + [nil]
+    defer { for argument in cArguments where argument != nil { free(argument) } }
+
+    let result = posix_spawn(&spawned, executable, nil, &attributes, cArguments, environ)
+    // The first copy's work is done either way: it must not go on to hold a fan.
+    exit(result == 0 ? 0 : 71)
+}
+
+let log = Logger(subsystem: "ai.psylief.sarvkrit", category: "FanHelper")
+log.notice("fan helper starting, pid \(getpid(), privacy: .public)")
+
 let client = SMCClient()
 guard client.open() else {
-    FileHandle.standardError.write(Data("cannot open the SMC\n".utf8))
+    log.error("could not open the SMC")
     exit(70)
 }
 let writer = SMCFanWriter(client: client)
 
 /// The only way out. Hands the fans back first, always.
+///
+/// Logs the code on the way out. The helper's stdout goes to /dev/null — it is launched detached
+/// from a root shell — so without this an early exit is completely silent, which is exactly the
+/// failure that is hardest to diagnose and most alarming to a user who just typed a password.
 func surrender(_ code: Int32) -> Never {
+    log.notice("fan helper exiting, code \(code, privacy: .public)")
     writer.release()
     client.close()
     exit(code)
@@ -71,7 +115,11 @@ let connected = withUnsafePointer(to: &address) { pointer in
         connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
     }
 }
-guard connected == 0 else { surrender(74) }
+log.notice("connecting to the socket")
+guard connected == 0 else {
+    log.error("connect failed, errno \(errno, privacy: .public)")
+    surrender(74)
+}
 
 // The other end must be the user we were told we are working for.
 //
@@ -89,6 +137,7 @@ guard getpeereid(descriptor, &peerUID, &peerGID) == 0, peerUID == options.ownerU
 var timeout = timeval(tv_sec: 1, tv_usec: 0)
 setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
+log.notice("connected; saying hello")
 _ = "HELLO 1\n".withCString { write(descriptor, $0, strlen($0)) }
 
 // MARK: - The loop

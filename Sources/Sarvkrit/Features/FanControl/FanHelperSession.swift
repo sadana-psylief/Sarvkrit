@@ -57,8 +57,10 @@ final class FanHelperSession: FanCommandSink {
     }
 
     func start() -> Bool {
+        Self.log.notice("session start() on \(self.socketPath, privacy: .public)")
         guard !isConnected else { return true }
         guard bind() else { return false }
+        Self.log.notice("listening; about to ask for authorisation")
 
         guard let helperPath = Bundle.main.bundleURL
             .appendingPathComponent(FanHelperScript.bundledPath).path as String?,
@@ -72,7 +74,9 @@ final class FanHelperSession: FanCommandSink {
 
         // The password dialog. `false` here is usually the user cancelling, which is an ordinary
         // outcome and not a failure to report.
-        guard runPrivileged(script) else {
+        let authorised = runPrivileged(script)
+        Self.log.notice("privileged script returned \(authorised, privacy: .public)")
+        guard authorised else {
             closeEverything()
             return false
         }
@@ -123,7 +127,9 @@ final class FanHelperSession: FanCommandSink {
                 Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard bound == 0, listen(listener, 1) == 0 else {
+        let listened = bound == 0 ? listen(listener, 1) : -1
+        guard bound == 0, listened == 0 else {
+            Self.log.error("could not listen on the fan socket: errno \(errno, privacy: .public)")
             closeEverything()
             return false
         }
@@ -149,7 +155,10 @@ final class FanHelperSession: FanCommandSink {
         }
 
         peer = accept(listener, nil, nil)
-        guard peer >= 0 else { return false }
+        guard peer >= 0 else {
+            Self.log.error("accept failed: errno \(errno, privacy: .public)")
+            return false
+        }
 
         // The only acceptable peer is root. Anything else is not our helper, whatever it says.
         var peerUID: uid_t = 0
@@ -190,6 +199,7 @@ final class FanHelperSession: FanCommandSink {
     }
 
     private func closeEverything() {
+        Self.log.notice("closing the fan socket (listener \(self.listener, privacy: .public), peer \(self.peer, privacy: .public))")
         heartbeat?.invalidate()
         heartbeat = nil
         if peer >= 0 { close(peer); peer = -1 }

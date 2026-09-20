@@ -68,6 +68,24 @@ final class FanHelperOptionsTests: XCTestCase {
             ["--socket", "/tmp/f.sock", "--owner-pid", "4242", "--owner-uid", "0"]))
     }
 
+    /// The helper re-execs itself into its own session to escape the process group that
+    /// `do shell script with administrator privileges` tears down. The second copy is told not to
+    /// do it again, or it would spawn itself forever.
+    func testTheDetachedFlagIsParsedAndDefaultsToFalse() throws {
+        XCTAssertFalse(try XCTUnwrap(FanHelperOptions(arguments: full)).hasDetached)
+        XCTAssertTrue(try XCTUnwrap(FanHelperOptions(arguments: full + ["--detached"])).hasDetached)
+    }
+
+    /// It is a bare flag, not a flag with a value — the parser must not swallow the next argument.
+    func testTheDetachedFlagDoesNotSwallowWhatFollowsIt() throws {
+        let options = try XCTUnwrap(FanHelperOptions(
+            arguments: ["--detached", "--socket", "/tmp/f.sock",
+                        "--owner-pid", "4242", "--owner-uid", "501"]))
+        XCTAssertTrue(options.hasDetached)
+        XCTAssertEqual(options.socketPath, "/tmp/f.sock")
+        XCTAssertEqual(options.ownerPID, 4242)
+    }
+
     func testTheIdleTimeoutHasASaneDefaultAndCanBeSet() throws {
         XCTAssertEqual(try XCTUnwrap(FanHelperOptions(arguments: full)).idleTimeout, 15)
         let custom = try XCTUnwrap(FanHelperOptions(arguments: full + ["--idle-timeout", "30"]))

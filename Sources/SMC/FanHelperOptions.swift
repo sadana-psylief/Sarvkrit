@@ -15,16 +15,23 @@ struct FanHelperOptions {
     var idleTimeout: TimeInterval
     /// One-shot: hand the fans back and exit, for a hold left behind by a helper that died badly.
     var releaseAndExit: Bool
+    /// Set on the copy that has already re-exec'd itself into its own session, so it does not do
+    /// it again — and again, and again.
+    var hasDetached: Bool
 
     init?(arguments: [String]) {
         var values: [String: String] = [:]
         var releaseAndExit = false
+        var hasDetached = false
 
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]
             if argument == "--release-and-exit" {
                 releaseAndExit = true
+                index += 1
+            } else if argument == "--detached" {
+                hasDetached = true
                 index += 1
             } else if argument.hasPrefix("--"), index + 1 < arguments.count {
                 values[argument] = arguments[index + 1]
@@ -35,6 +42,7 @@ struct FanHelperOptions {
         }
 
         self.releaseAndExit = releaseAndExit
+        self.hasDetached = hasDetached
         self.idleTimeout = values["--idle-timeout"].flatMap(TimeInterval.init) ?? 15
 
         if releaseAndExit {
