@@ -83,4 +83,33 @@ final class CaptureFilenameTests: XCTestCase {
                                          in: URL(fileURLWithPath: "/tmp")) { _ in true }
         XCTAssertTrue(url.lastPathComponent.hasPrefix("Shot "))
     }
+    // MARK: - Two recordings in the same second
+
+    /// **A recording bundle is a directory, and creating one that already exists succeeds.**
+    /// `RecordingBundle.create` uses `createDirectory(withIntermediateDirectories: true)`, which
+    /// does not complain — so two recordings whose names collide wrote into the same bundle, the
+    /// second's screen.mov replacing the first's while the first's project.json and event log
+    /// survived. Two takes merged into one, silently.
+    ///
+    /// The name is only accurate to the second, and `record` → `stop-recording` → `record` from a
+    /// script fits inside one comfortably.
+    func testTwoRecordingsInTheSameSecondGetDifferentBundles() {
+        let directory = URL(fileURLWithPath: "/tmp/recordings")
+        let base = CaptureFilename.make(pattern: "Recording {date} at {time}",
+                                        mode: .fullscreen,
+                                        date: Date(timeIntervalSince1970: 1_000_000))
+        var taken: Set<String> = []
+        func claim() -> URL {
+            let url = CaptureFilename.unique(base: base, extension: "sarvrec", in: directory) {
+                taken.contains($0.lastPathComponent)
+            }
+            taken.insert(url.lastPathComponent)
+            return url
+        }
+
+        let first = claim()
+        let second = claim()
+        XCTAssertNotEqual(first, second, "the second recording would have reused the first bundle")
+        XCTAssertEqual(second.pathExtension, "sarvrec")
+    }
 }

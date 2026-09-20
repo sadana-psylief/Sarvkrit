@@ -464,8 +464,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static func start(_ feature: ScreenRecordingFeature, setup: RecordingSetup,
                               areaRect: CGRect?, display: DisplaySnapshotGeometry?,
                               window: CapturableWindow?) {
-        let destination = RecordingBundle.defaultDirectory()
-            .appendingPathComponent("\(recordingName()).\(RecordingBundle.fileExtension)")
+        // **Unique, because `RecordingBundle.create` would otherwise reuse the directory.** The
+        // name is only accurate to the second and `createDirectory(withIntermediateDirectories:)`
+        // succeeds silently on one that already exists — so two recordings started inside the same
+        // second wrote into one bundle, the second's screen.mov replacing the first's while the
+        // first's project.json and event log survived. Two takes silently merged into one. The
+        // screenshot export path has always called `unique` for exactly this reason; this one
+        // simply never did.
+        let destination = CaptureFilename.unique(
+            base: recordingName(),
+            extension: RecordingBundle.fileExtension,
+            in: RecordingBundle.defaultDirectory()) { FileManager.default.fileExists(atPath: $0.path) }
         var request = setup.request(fps: feature.framesPerSecond,
                                     hidesDesktopIcons: feature.hidesDesktopIcons,
                                     destination: destination)
