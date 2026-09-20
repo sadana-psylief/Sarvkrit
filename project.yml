@@ -43,6 +43,12 @@ targets:
             subpath: Contents/Library/LaunchAgents
       - path: Sources/LaunchAgent/check-for-update.sh
         buildPhase: resources
+
+      # The SMC layer lives outside Sources/Sarvkrit for the same reason the update-check files
+      # do, plus one of its own: the root fan helper is a separate target that cannot import an
+      # app target, so it compiles these files directly. Everything here imports Foundation,
+      # IOKit and os and nothing else — one AppIdentity reference and the helper stops linking.
+      - path: Sources/SMC
     postBuildScripts:
       # Belt and braces on the executable bit. Git tracks mode 755 and the copy preserves it, but
       # a non-executable script is the quietest failure in this feature: launchd fails the spawn
