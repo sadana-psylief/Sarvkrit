@@ -145,4 +145,42 @@ final class CaptureDeletionTests: XCTestCase {
         XCTAssertTrue(fileManager.removed.isEmpty, "an expired capture was erased, not trashed")
         XCTAssertTrue(reopened.items.isEmpty)
     }
+    // MARK: - An edited capture stays editable
+
+    /// **Annotate a capture, close it, reopen it from history — and the annotations had become
+    /// permanent pixels.** `commitEdit` wrote back only the flattened image through
+    /// `replaceImage`, so the history entry was a flat PNG: reopening found no base bitmap and no
+    /// document, and handed the editor a single-layer image with the arrow baked into it. Nothing
+    /// said so; the arrow was simply no longer a thing you could select or delete.
+    ///
+    /// The fix costs roughly double the file size, and `CaptureDocumentFile` already argues that
+    /// is the right trade "only where it buys something" — an edited capture is exactly that case.
+    /// An un-edited one stays flat.
+    func testAnEditedCaptureIsStoredSoItCanBeEditedAgain() throws {
+        let store = store()
+        let item = try add(to: store)
+        let base = try StubScreenCaptureService.image(size: CGSize(width: 20, height: 16))
+        let flattened = try StubScreenCaptureService.image(size: CGSize(width: 20, height: 16))
+
+        var document = AnnotationDocument(imageSize: CGSize(width: 20, height: 16))
+        document.add(.rectangle(ShapeElement(rect: CGRect(x: 1, y: 1, width: 5, height: 5))))
+
+        XCTAssertTrue(store.replaceImage(of: item.id, with: flattened,
+                                         document: document, base: base))
+
+        let data = try Data(contentsOf: store.url(for: item))
+        let read = try CaptureDocumentFile.decode(data)
+        XCTAssertNotNil(read.base, "the original pixels were not kept, so the edit is permanent")
+        XCTAssertEqual(read.document?.elements.count, 1,
+                       "the annotations came back as pixels rather than as elements")
+    }
+
+    /// A plain capture is still flat: the doubled size is paid only by the captures that gain
+    /// something from it.
+    func testAnUnEditedCaptureStaysFlat() throws {
+        let store = store()
+        let item = try add(to: store)
+        let data = try Data(contentsOf: store.url(for: item))
+        XCTAssertNil(try CaptureDocumentFile.decode(data).base)
+    }
 }

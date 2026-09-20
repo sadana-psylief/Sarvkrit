@@ -129,10 +129,25 @@ final class CaptureHistoryStore: ObservableObject {
     ///
     /// This is how the editor hands work back: it never writes to this directory itself, so there
     /// is exactly one writer and the thumbnail cache can be invalidated in the same breath.
+    ///
+    /// **With `document` and `base`, the entry stays editable.** Without them this wrote the
+    /// flattened image alone, so annotating a capture and reopening it from history handed the
+    /// editor a single-layer picture with the arrow baked into the pixels — no longer something
+    /// that could be selected, moved or deleted, and nothing said so.
+    ///
+    /// `CaptureDocumentFile` already argues the roughly doubled file size is worth paying "only
+    /// where it buys something". An edited capture is exactly that case; an un-edited one stays
+    /// flat, which is why these are optional rather than required.
     @discardableResult
-    func replaceImage(of id: UUID, with image: CGImage) -> Bool {
-        guard let index = items.firstIndex(where: { $0.id == id }),
-              let data = CaptureWriter.pngData(from: image) else { return false }
+    func replaceImage(of id: UUID, with image: CGImage,
+                      document: AnnotationDocument? = nil,
+                      base: CGImage? = nil) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
+        let editable = document.flatMap { document in
+            base.flatMap { try? CaptureDocumentFile.encode(document: document, base: $0,
+                                                           flattened: image) }
+        }
+        guard let data = editable ?? CaptureWriter.pngData(from: image) else { return false }
         do {
             try data.write(to: url(for: items[index].fileName), options: .atomic)
         } catch {

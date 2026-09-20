@@ -21,10 +21,15 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var monitor: Any?
     private let onClose: (ScreenshotEditorWindowController) -> Void
-    private let onCommit: (CGImage, UUID?) -> Void
+    /// Flattened image, the document and base behind it, and the history id.
+    ///
+    /// **The document travels with the pixels** so the entry it is written back to stays
+    /// editable. Handing over the flattened image alone baked every annotation into the
+    /// capture the moment the editor closed.
+    private let onCommit: (CGImage, AnnotationDocument, CGImage, UUID?) -> Void
 
     init(model: EditorDocumentModel,
-         onCommit: @escaping (CGImage, UUID?) -> Void,
+         onCommit: @escaping (CGImage, AnnotationDocument, CGImage, UUID?) -> Void,
          onClose: @escaping (ScreenshotEditorWindowController) -> Void) {
         self.model = model
         self.onCommit = onCommit
@@ -125,7 +130,7 @@ final class ScreenshotEditorWindowController: NSObject, NSWindowDelegate {
 
     private func save(editable: Bool) {
         guard let flattened = model.flattenWithBackground() else { return }
-        onCommit(flattened, model.historyItemID)
+        onCommit(flattened, model.document, model.base, model.historyItemID)
         model.markSaved()
 
         if editable {
@@ -182,7 +187,7 @@ final class ScreenshotEditorController {
     private var controllers: [ScreenshotEditorWindowController] = []
 
     /// Called when an edit is saved, so the history entry can be rewritten in place.
-    var commitEdit: ((CGImage, UUID?) -> Void)?
+    var commitEdit: ((CGImage, AnnotationDocument, CGImage, UUID?) -> Void)?
 
     var openCount: Int { controllers.count }
 
@@ -191,7 +196,9 @@ final class ScreenshotEditorController {
                                         historyItemID: historyItemID)
         let controller = ScreenshotEditorWindowController(
             model: model,
-            onCommit: { [weak self] flattened, id in self?.commitEdit?(flattened, id) },
+            onCommit: { [weak self] flattened, document, base, id in
+                self?.commitEdit?(flattened, document, base, id)
+            },
             onClose: { [weak self] controller in
                 self?.controllers.removeAll { $0 === controller }
             })

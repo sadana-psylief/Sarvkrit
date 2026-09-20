@@ -667,9 +667,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Saving an edit rewrites the history entry in place rather than adding a second one:
         // the store is the sole writer of that directory, and the overlay and the history row are
         // both pointing at this id while the edit happens.
-        ScreenshotEditorController.shared.commitEdit = { [weak screenshots] image, id in
+        ScreenshotEditorController.shared.commitEdit = {
+            [weak screenshots] image, document, base, id in
             guard let screenshots, let id else { return }
-            MainActor.assumeIsolated { _ = screenshots.store.replaceImage(of: id, with: image) }
+            MainActor.assumeIsolated {
+                // The document and base go with it, so reopening this entry finds the annotations
+                // as elements rather than as pixels they have already become.
+                screenshots.store.replaceImage(of: id, with: image,
+                                               document: document, base: base)
+            }
         }
 
         CaptureHistoryWindowController.shared.store = screenshots.store
