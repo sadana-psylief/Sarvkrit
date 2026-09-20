@@ -39,13 +39,24 @@ final class KeepAwakeFeature: Feature, ObservableObject {
     private var timer: Timer?
 
     private static let keepDisplayKey = "keepAwake.keepDisplayOn"
-    private static let lidClosedKey = "keepAwake.lidClosed"
+    /// Internal, not private, so the turn-off tests can arrange state through the same keys the
+    /// app stores rather than keeping their own copies of the strings.
+    static let lidClosedKey = "keepAwake.lidClosed"
     private static let durationKey = "keepAwake.duration"
     /// Our record that *we* were the ones who set the system flag.
-    private static let weSetFlagKey = "keepAwake.weSetSleepDisabled"
+    static let weSetFlagKey = "keepAwake.weSetSleepDisabled"
 
-    init(defaults: UserDefaults = .standard) {
+    /// Injected for the same reason `defaults` is: every path that changes the system flag goes
+    /// through here, and a test that reached the real one would raise a root password dialog in
+    /// the middle of `make test`.
+    private let runPrivileged: (String) -> Bool
+
+    init(
+        defaults: UserDefaults = .standard,
+        runPrivileged: @escaping (String) -> Bool = SleepDisableFlag.runPrivileged
+    ) {
         self.defaults = defaults
+        self.runPrivileged = runPrivileged
     }
 
     // MARK: - Settings
@@ -66,7 +77,10 @@ final class KeepAwakeFeature: Feature, ObservableObject {
             guard newValue != lidClosed else { return }
             objectWillChange.send()
             defaults.set(newValue, forKey: Self.lidClosedKey)
-            applyLidClosed()
+            // Split, because on and off are not symmetrical. `applyLidClosed()` sets the flag and
+            // is also called from `activate()`; clearing must happen only here, where the user has
+            // just asked for normal sleep back.
+            if newValue { applyLidClosed() } else { clearFlagIfOurs() }
         }
     }
 
@@ -102,9 +116,22 @@ final class KeepAwakeFeature: Feature, ObservableObject {
         timer?.invalidate()
         timer = nil
         expiresAt = nil
-        // The flag is deliberately NOT cleared here: it needs root, and a dying app can't put up a
-        // password dialog. The watchdog started when it was enabled clears it within seconds.
+        // The flag is deliberately NOT cleared here, and the reason is narrower than it looks.
+        // Clearing needs root, and `AppState` calls this from `deinit` as well as from a toggle —
+        // in the test host that is a `KeepAwakeFeature` on the real `UserDefaults.standard`, so a
+        // password dialog here would interrupt `make test` on a machine where the flag happens to
+        // be on, and never on CI. The user's click arrives as `userDidDisable()` instead.
+        //
+        // On the way out of the app nothing calls this at all: the watchdog notices the pid is
+        // gone and clears the flag within seconds. What it cannot do is notice a *toggle*, which
+        // is the whole reason `userDidDisable()` exists.
         reconcile()
+    }
+
+    /// The user switched Keep Awake off. Distinct from `deactivate()` on purpose — see the comment
+    /// there for what that distinction is protecting.
+    func userDidDisable() {
+        clearFlagIfOurs()
     }
 
     @MainActor
@@ -134,7 +161,7 @@ final class KeepAwakeFeature: Feature, ObservableObject {
             pid: ProcessInfo.processInfo.processIdentifier,
             watchdogSeconds: Int(duration.watchdogSeconds)
         )
-        if SleepDisableFlag.runPrivileged(script) {
+        if runPrivileged(script) {
             weSetFlag = true
             log.notice("sleep disabled system-wide, with a watchdog to restore it")
         } else {
@@ -147,8 +174,24 @@ final class KeepAwakeFeature: Feature, ObservableObject {
 
     /// Asks the user to restore normal sleep. Only ever called from an explicit click.
     func restoreSleep() {
-        guard SleepDisableFlag.runPrivileged(SleepDisableFlag.disableScript()) else { return }
-        weSetFlag = false
+        clearFlagIfOurs()
+    }
+
+    /// Puts normal sleep back, if the flag is ours to put back.
+    ///
+    /// Gated on `weSetFlag` because of `KeepAwakeState.action`'s `(false, true, false)` row: a flag
+    /// somebody disabled sleep with by hand, in a terminal, for a reason we know nothing about, is
+    /// not ours to clear. The gate also means the common case — turning off a feature that never
+    /// touched the system flag — costs no password prompt at all.
+    ///
+    /// A refusal leaves `weSetFlag` alone deliberately. The flag is still set and still ours, so
+    /// the pane must keep offering to restore it rather than forgetting it exists.
+    private func clearFlagIfOurs() {
+        guard weSetFlag else { reconcile(); return }
+        if runPrivileged(SleepDisableFlag.disableScript()) {
+            weSetFlag = false
+            log.notice("normal sleep restored")
+        }
         reconcile()
     }
 

@@ -81,10 +81,13 @@ struct KeepAwakeDetailView: View {
 
     private var strandedNotice: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Label("Sleep is still disabled from last session", systemImage: "exclamationmark.triangle.fill")
+            Label("Your Mac still can't sleep", systemImage: "exclamationmark.triangle.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.orange)
-            Text("Your Mac restarted while the lid-closed option was on, which stopped the background task that would have restored normal sleep. It's safe to fix now.")
+            // Deliberately doesn't name a cause. It used to say the Mac had restarted, which was
+            // one of the two ways to get here and reads as nonsense in the other — declining the
+            // password prompt on the way out leaves the flag set in the same session.
+            Text("The lid-closed option left system sleep switched off, and putting it back needs your password. It's safe to do now.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

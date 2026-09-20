@@ -116,6 +116,16 @@ git push origin "$TAG"
 gh release create "$TAG" "$DMG" --title "Sarvkrit $VERSION" --notes-file "$NOTES"
 rm -f "$NOTES"
 
+## Past this point the release is public and cannot be taken back, so a failing tap push must not
+## read as a failing release. It is reported and left for `make tap` rather than aborting: the
+## worst case is Homebrew users sitting one version behind for as long as it takes to re-run.
+./scripts/update-tap.sh "$VERSION" || {
+  echo >&2
+  echo "warning: $TAG is published, but the Homebrew cask was not updated." >&2
+  echo "         Homebrew users stay on the previous version until you re-run:" >&2
+  echo "           make tap VERSION=$VERSION" >&2
+}
+
 ## sarvkrit.com/download and the GitHub "latest" link both resolve through
 ## releases/latest/download/Sarvkrit.dmg, so they pick this up with no change on the site side.
 echo

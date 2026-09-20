@@ -283,6 +283,10 @@ final class AppState: ObservableObject {
         objectWillChange.send()
         store.setEnabled(feature.id, enabled)
         sync()
+        // After `sync()`, so the feature is already stood down by the time it is told the user is
+        // the one who did it. This is the only caller, which is what makes it a reliable signal of
+        // an actual click — `deactivate()` alone cannot say that, since `deinit` calls it too.
+        if !enabled { feature.userDidDisable() }
     }
 
     /// Rebuild the event tap because a feature's *mask* changed, rather than its enabled state.
