@@ -26,6 +26,10 @@ enum FanHelperScript {
 
     static let bundleIdentifier = "ai.psylief.sarvkrit.fanhelper"
 
+    /// Where the helper sits inside the app bundle, relative to the `.app` itself.
+    /// `FanHelperBundleTests` asserts the build actually puts it here.
+    static let bundledPath = "Contents/MacOS/sarvkrit-fan-helper"
+
     /// Pins the anchor, the helper's identity and the team, and deliberately not the certificate's
     /// common name — that carries the personal name on an Apple Development certificate and
     /// changes when the certificate is reissued.

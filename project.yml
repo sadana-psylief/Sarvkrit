@@ -49,6 +49,20 @@ targets:
       # app target, so it compiles these files directly. Everything here imports Foundation,
       # IOKit and os and nothing else — one AppIdentity reference and the helper stops linking.
       - path: Sources/SMC
+    dependencies:
+      # Built first and signed as it lands, rather than copied in as a loose file: the root script
+      # runs `codesign --verify` against this binary before it will execute it, and an unsigned
+      # copy fails that check after the user has already typed their password.
+      #
+      # `wrapper` + an explicit subpath rather than `destination: executables`, which maps to
+      # Xcode's dstSubfolderSpec 6 and lands in Contents/Executables on macOS. FanHelperBundleTests
+      # pins the resulting path either way.
+      - target: SarvkritFanHelper
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/MacOS
     postBuildScripts:
       # Belt and braces on the executable bit. Git tracks mode 755 and the copy preserves it, but
       # a non-executable script is the quietest failure in this feature: launchd fails the spawn
@@ -73,6 +87,30 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_PREVIEWS: YES
         SWIFT_EMIT_LOC_STRINGS: YES
+
+  # The root half of fan control. Holds no policy — it writes SMC keys and hands the fans back
+  # the moment anything goes quiet. Shares Sources/SMC with the app because it cannot import an
+  # app target, which is why nothing in that directory may reference AppKit or AppIdentity.
+  SarvkritFanHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/FanHelper
+      - path: Sources/SMC
+    settings:
+      base:
+        PRODUCT_NAME: sarvkrit-fan-helper
+        PRODUCT_BUNDLE_IDENTIFIER: ai.psylief.sarvkrit.fanhelper
+        CODE_SIGN_IDENTITY: "Apple Development"
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        ENABLE_HARDENED_RUNTIME: YES
+        # Both of these, together. CREATE_INFOPLIST_SECTION_IN_BINARY embeds a plist into the
+        # binary, but a tool target has no plist to embed unless GENERATE_INFOPLIST_FILE makes
+        # one — and without it codesign falls back to naming the binary after PRODUCT_NAME. The
+        # root script's requirement pins the identifier, so that fallback can never match it.
+        # FanHelperBundleTests runs the exact same requirement, so this stays honest.
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
 
   SarvkritTests:
     type: bundle.unit-test

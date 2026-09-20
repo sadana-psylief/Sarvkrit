@@ -83,6 +83,8 @@ final class SMCClient {
         return SMCValueCodec.decode(type: info.type, bytes: bytes)
     }
 
+    func callForWrite(_ input: [UInt8]) -> Bool { call(input) != nil }
+
     private func call(_ input: [UInt8]) -> [UInt8]? {
         guard connection != 0 || open() else { return nil }
 
@@ -100,5 +102,28 @@ final class SMCClient {
         // A key this Mac does not carry comes back as a result code, not an IOKit error.
         guard output[SMCParamStruct.resultOffset] != SMCParamStruct.keyNotFound else { return nil }
         return output
+    }
+}
+
+extension SMCClient {
+    /// Writes a key. **Needs root**, and is called from exactly one place: the fan helper.
+    ///
+    /// `FanWritePrivilegeTests` asserts that nothing under `Sources/Sarvkrit` calls this, which is
+    /// what keeps "the app cannot hold a fan" a fact rather than an intention. The SMC layer is
+    /// compiled into both targets, so the app can see this method; it must never use it.
+    func writeDouble(_ value: Double, to key: SMCKey) -> Bool {
+        guard let info = keyInfo(key),
+              let payload = SMCValueCodec.encode(value, type: info.type, size: info.size)
+        else { return false }
+
+        var input = [UInt8](repeating: 0, count: SMCParamStruct.size)
+        SMCParamStruct.putNative(&input, SMCParamStruct.keyOffset, key.code)
+        SMCParamStruct.putNative(&input, SMCParamStruct.dataSizeOffset, UInt32(info.size))
+        SMCParamStruct.putNative(&input, SMCParamStruct.dataTypeOffset, info.type)
+        input[SMCParamStruct.commandOffset] = SMCParamStruct.writeBytes
+        for (offset, byte) in payload.prefix(info.size).enumerated() {
+            input[SMCParamStruct.bytesOffset + offset] = byte
+        }
+        return callForWrite(input)
     }
 }
