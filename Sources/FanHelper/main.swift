@@ -63,11 +63,6 @@ withUnsafeMutableBytes(of: &address.sun_path) { destination in
     destination.copyBytes(from: pathBytes)
 }
 
-// The socket must belong to the user we were told we are working for. A socket owned by anyone
-// else is not the app's, whatever the path says.
-var info = stat()
-guard stat(options.socketPath, &info) == 0, info.st_uid == options.ownerUID else { surrender(77) }
-
 let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
 guard descriptor >= 0 else { surrender(74) }
 
@@ -77,6 +72,18 @@ let connected = withUnsafePointer(to: &address) { pointer in
     }
 }
 guard connected == 0 else { surrender(74) }
+
+// The other end must be the user we were told we are working for.
+//
+// Checked on the *connected* descriptor rather than by stat()ing the path first: a path can be
+// replaced between the check and the connect, and a socket owned by somebody else is not the
+// app's whatever the path says. `getpeereid` asks about the connection that actually exists,
+// which is the one question that cannot be raced.
+var peerUID: uid_t = 0
+var peerGID: gid_t = 0
+guard getpeereid(descriptor, &peerUID, &peerGID) == 0, peerUID == options.ownerUID else {
+    surrender(77)
+}
 
 // Blocking reads wake up once a second so the liveness checks below still run on a quiet socket.
 var timeout = timeval(tv_sec: 1, tv_usec: 0)

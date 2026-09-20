@@ -55,15 +55,23 @@ final class FanControlDrivingTests: XCTestCase {
     private final class Bench {
         let helper = HelperSpy()
         var celsius: Double? = 50
+        /// What `F0Md` reads. Starts absent, so the ordinary path is unaffected.
+        var forcedAfterWake: Bool?
         var privilegedScripts: [String] = []
         var privilegedSucceeds = true
 
         func feature(_ defaults: UserDefaults) -> FanControlFeature {
             FanControlFeature(
                 defaults: defaults,
-                makeSampler: { FanSampler(read: { key in
-                    ["FNum": 2, "F0Ac": 2400, "F0Mn": 2317, "F0Mx": 6800,
-                     "F1Ac": 2400, "F1Mn": 2317, "F1Mx": 6800][key.description]
+                makeSampler: { [unowned self] in FanSampler(read: { [unowned self] key in
+                    var keys: [String: Double] = [
+                        "FNum": 2, "F0Ac": 2400, "F0Mn": 2317, "F0Mx": 6800,
+                        "F1Ac": 2400, "F1Mn": 2317, "F1Mx": 6800]
+                    if let forced = self.forcedAfterWake {
+                        keys["F0Md"] = forced ? 1 : 0
+                        keys["F1Md"] = forced ? 1 : 0
+                    }
+                    return keys[key.description]
                 }) },
                 makeSink: { [unowned self] _ in self.helper },
                 readTemperature: { [unowned self] in self.celsius },
@@ -210,7 +218,7 @@ final class FanControlDrivingTests: XCTestCase {
 
     // MARK: - Persistence
 
-    func testTheChosenModeSurvivesARestartButNeverStartsDriving() {
+    func testTheChosenModeSurvivesARestart() {
         let bench = Bench()
         let first = bench.feature(defaults)
         first.activate()
@@ -219,7 +227,67 @@ final class FanControlDrivingTests: XCTestCase {
         settle()
         first.deactivate()
 
-        let second = Bench().feature(defaults)
-        XCTAssertEqual(second.mode, .manual(percent: 65))
+        XCTAssertEqual(Bench().feature(defaults).mode, .manual(percent: 65))
+    }
+
+    /// The actual safety claim behind persisting the mode: a Mac that boots must not spend the
+    /// user's password on a setting from last week, with no prompt they asked for and no
+    /// explanation. Restoring a mode is the user picking it again.
+    func testARestoredModeDoesNotStartDrivingByItself() {
+        let bench = Bench()
+        let first = bench.feature(defaults)
+        first.activate()
+        settle()
+        first.mode = .manual(percent: 65)
+        settle()
+        first.deactivate()
+
+        let next = Bench()
+        let second = next.feature(defaults)
+        second.activate()
+        settle()
+
+        XCTAssertEqual(next.helper.started, 0, "a restored mode must not ask for a password")
+        XCTAssertTrue(next.helper.sent.isEmpty)
+        second.deactivate()
+    }
+
+    /// The SMC can drop a forced fan mode across a sleep cycle. Without this the fans quietly go
+    /// back to macOS on wake while the panel goes on claiming Sarvkrit is holding them.
+    func testWakingUpTakesBackAHoldTheMacDropped() {
+        let bench = Bench()
+        let feature = bench.feature(defaults)
+        feature.activate()
+        settle()
+        feature.mode = .manual(percent: 70)
+        settle()
+        let sentBefore = bench.helper.speeds.count
+
+        bench.forcedAfterWake = false      // the SMC let go while the Mac slept
+        feature.systemDidWake()
+        settle()
+
+        XCTAssertGreaterThan(bench.helper.speeds.count, sentBefore,
+                             "the hold must be re-asserted after a wake that dropped it")
+        feature.deactivate()
+    }
+
+    /// A fan still held after a wake needs nothing doing. Re-sending regardless would be a write
+    /// to firmware every lid-open for no reason.
+    func testWakingUpLeavesAHoldTheMacKept() {
+        let bench = Bench()
+        let feature = bench.feature(defaults)
+        feature.activate()
+        settle()
+        feature.mode = .manual(percent: 70)
+        settle()
+        let sentBefore = bench.helper.speeds.count
+
+        bench.forcedAfterWake = true       // still ours
+        feature.systemDidWake()
+        settle()
+
+        XCTAssertEqual(bench.helper.speeds.count, sentBefore)
+        feature.deactivate()
     }
 }

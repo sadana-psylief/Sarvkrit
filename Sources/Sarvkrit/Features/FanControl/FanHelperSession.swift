@@ -132,12 +132,21 @@ final class FanHelperSession: FanCommandSink {
         return true
     }
 
-    /// Waits a short while for the helper to appear, then gives up rather than blocking the app
-    /// forever on a root process that never started.
+    /// Waits a short while for the helper to appear, then gives up.
+    ///
+    /// **`poll()` before `accept()`, not `SO_RCVTIMEO`.** That socket option bounds data reads,
+    /// not connection acceptance — an `accept()` on a listener nobody ever connects to blocks
+    /// forever regardless of it. This runs on the main thread, where the event tap's run loop
+    /// lives, so "forever" would be felt as input latency in whatever app the user is typing in.
+    /// A helper that never arrives is an ordinary outcome: the copy failed, the signature check
+    /// failed, the SMC would not open.
     private func acceptHelper() -> Bool {
-        var timeout = timeval(tv_sec: 10, tv_usec: 0)
-        setsockopt(listener, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                   socklen_t(MemoryLayout<timeval>.size))
+        var descriptor = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&descriptor, 1, 10_000)
+        guard ready > 0, descriptor.revents & Int16(POLLIN) != 0 else {
+            Self.log.error("the fan helper never connected")
+            return false
+        }
 
         peer = accept(listener, nil, nil)
         guard peer >= 0 else { return false }

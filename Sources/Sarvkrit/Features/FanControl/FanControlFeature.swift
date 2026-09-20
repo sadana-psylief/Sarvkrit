@@ -74,6 +74,9 @@ final class FanControlFeature: Feature, ObservableObject {
     /// The helper went away while we were driving. A stated condition, never a cue to re-prompt.
     private(set) var controlWasLost = false
     private var timer: Timer?
+    private var wakeObserver: NSObjectProtocol?
+    /// Set on wake, cleared by the sample that answers it. See `systemDidWake()`.
+    private var needsWakeReconcile = false
     /// Invalidates a sample already in flight when the feature is switched off, so a reading
     /// computed for a run that has ended can never land in the panel.
     private var generation = 0
@@ -142,6 +145,7 @@ final class FanControlFeature: Feature, ObservableObject {
         isRunning = true
         controlWasLost = false
         sampler = makeSampler()
+        observeWake()
         poll()
     }
 
@@ -153,6 +157,10 @@ final class FanControlFeature: Feature, ObservableObject {
             isRunning = false
             timer?.invalidate()
             timer = nil
+            if let wakeObserver {
+                NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
+                self.wakeObserver = nil
+            }
             sampler = nil
             // Costs no password: the helper is already root and already connected. A prompt to
             // *stop* doing something would be indefensible.
@@ -189,6 +197,8 @@ final class FanControlFeature: Feature, ObservableObject {
             hardware = reading
         }
 
+        if needsWakeReconcile { reconcileAfterWake() }
+
         switch reading {
         case .fanless:
             // Settled, and it will not change before the next launch.
@@ -198,6 +208,61 @@ final class FanControlFeature: Feature, ObservableObject {
         case .unreadable, .fans:
             startTimerIfNeeded()
         }
+    }
+
+    // MARK: - Waking
+
+    private func observeWake() {
+        guard wakeObserver == nil else { return }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.systemDidWake() }
+        }
+    }
+
+    /// The SMC can drop a forced fan mode across a sleep cycle, and nothing tells us when it has.
+    /// Without this the fans quietly go back to macOS on wake while the panel goes on claiming
+    /// Sarvkrit is holding them — which is the worst of both, since the user believes a setting
+    /// is in force that is not.
+    ///
+    /// Re-reads the mode key and asks `FanReconcile` rather than re-sending blind: a fan the Mac
+    /// kept needs nothing doing, and a write to firmware on every lid-open is not free.
+    func systemDidWake() {
+        guard isRunning else { return }
+        // Deliberately does not decide here. `hardware` holds whatever was last sampled, which on
+        // wake is from before the Mac slept — exactly the reading that cannot be trusted. Ask for
+        // a fresh one and reconcile when it lands; reading the SMC is a blocking IOKit call and
+        // the event tap's run loop is on this thread.
+        needsWakeReconcile = true
+        poll()
+    }
+
+    private func reconcileAfterWake() {
+        needsWakeReconcile = false
+
+        let situation = FanReconcile.Situation(
+            weForcedIt: weForcedIt,
+            modeIsForced: currentlyForced() ?? weForcedIt,
+            wantsControl: mode != .monitor)
+
+        switch FanReconcile.action(for: situation) {
+        case .takeControl:
+            // Forget what we last sent, so the throttle cannot mistake this for a repeat.
+            lastCommand = nil
+            lastCommandAt = nil
+            tick()
+        case .offerToRelease, .doNothing:
+            break
+        }
+    }
+
+    /// What the SMC says about who is driving, or nil on a Mac with no mode key.
+    private func currentlyForced() -> Bool? {
+        guard case let .fans(fans) = hardware else { return nil }
+        let known = fans.compactMap(\.isForced)
+        guard !known.isEmpty else { return nil }
+        return known.contains(true)
     }
 
     // MARK: - Driving

@@ -53,12 +53,18 @@ struct SMCFanWriter {
     }
 
     /// The safe direction, and the one that runs when something has already gone wrong — so it
-    /// asks for nothing beyond the fan count and gives up on no individual failure.
+    /// asks for nothing it can do without and gives up on no individual failure.
+    ///
+    /// **An unreadable `FNum` is not a reason to stop.** This runs precisely when the SMC has just
+    /// misbehaved, and refusing to release because the coprocessor will not say how many fans it
+    /// has would leave them forced with the helper on its way out — the single outcome this whole
+    /// design exists to prevent. So a Mac that will not answer gets every addressable mode key
+    /// written blind. A key that does not exist fails harmlessly.
     @discardableResult
     func release() -> Bool {
-        guard let count = fanCount() else { return false }
+        let indices = fanCount().map { Array(0..<$0) } ?? Array(0..<10)
         var releasedEverything = true
-        for index in 0..<count {
+        for index in indices {
             guard let modeKey = FanKey.mode(index) else { continue }
             releasedEverything = write(0, modeKey) && releasedEverything
         }

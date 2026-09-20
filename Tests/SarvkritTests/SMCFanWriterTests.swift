@@ -104,6 +104,17 @@ final class SMCFanWriterTests: XCTestCase {
         XCTAssertEqual(bench.wrote("F0Md"), 0)
     }
 
+    /// The case that matters most and was wrong: `release()` runs when something has *already*
+    /// gone wrong, and an SMC that will not say how many fans there are is exactly that. Bailing
+    /// out here leaves the fans forced and the helper exiting, which is the one outcome this
+    /// whole design exists to prevent. Write the mode key blind instead.
+    func testAnSMCThatWillNotSayHowManyFansThereAreIsStillReleased() {
+        let bench = Bench([:])
+        XCTAssertTrue(bench.writer().release())
+        XCTAssertEqual(bench.wrote("F0Md"), 0)
+        XCTAssertEqual(bench.wrote("F1Md"), 0)
+    }
+
     func testAFanlessMacIsNothingToDoRatherThanAFailure() {
         let bench = Bench(["FNum": 0])
         XCTAssertTrue(bench.writer().release())
