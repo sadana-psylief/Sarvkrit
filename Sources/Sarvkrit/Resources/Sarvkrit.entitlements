@@ -4,5 +4,27 @@
 <dict>
 	<key>com.apple.security.automation.apple-events</key>
 	<true/>
+
+	<!--
+	  Camera and microphone, for Screen Recording's optional camera and narration.
+
+	  **A usage string is necessary and not sufficient.** This build has Hardened Runtime on
+	  (project.yml, ENABLE_HARDENED_RUNTIME), and under it macOS refuses to even show the
+	  permission prompt unless the matching entitlement is present. The failure is silent from
+	  the app's side: requestAccess returns denied, authorizationStatus reports denied, and the
+	  user is told to check System Settings — where the app does not appear, because it was
+	  never allowed to ask. tccd says so plainly:
+
+	      Prompting policy for hardened runtime; service: kTCCServiceCamera requires
+	      entitlement com.apple.security.device.camera but it is missing
+
+	  These are hardened-runtime exceptions, NOT the App Sandbox. The sandbox must stay off —
+	  see the README — and it is off precisely because com.apple.security.app-sandbox is absent
+	  from this file. Adding either key below does not turn it on.
+	-->
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>

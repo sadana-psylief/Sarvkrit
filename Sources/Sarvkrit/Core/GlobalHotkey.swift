@@ -46,6 +46,10 @@ final class GlobalHotkey {
         /// never be the reason a user cannot use their own screen.
         static let dismissAllOverlays: UInt32 = 13
         static let historyBrowser: UInt32 = 14
+        static let recordStartStop: UInt32 = 15
+        static let recordArea: UInt32 = 16
+        static let recordPauseResume: UInt32 = 17
+        static let recordFlag: UInt32 = 18
     }
 
     /// Distinct per hotkey. Two sharing an id would collide.

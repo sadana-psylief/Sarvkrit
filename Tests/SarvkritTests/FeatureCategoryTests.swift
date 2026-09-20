@@ -36,6 +36,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["file-rules"], .files)
         XCTAssertEqual(byID["shelf"], .files)
         XCTAssertEqual(byID["screenshot"], .capture)
+        XCTAssertEqual(byID["screen-recording"], .capture)
         XCTAssertEqual(byID["pin-to-screen"], .capture)
         XCTAssertEqual(byID["audio-switcher"], .sound)
         XCTAssertEqual(byID["mute-microphone"], .sound)
@@ -117,7 +118,8 @@ final class FeatureCategoryTests: XCTestCase {
         MainActor.assumeIsolated {
             let needsOwnPane: Set<String> = [
                 "clipboard-history", "file-rules", "trash-cleanup", "app-sweep", "keep-awake",
-                "window-management", "text-snippets", "shelf", "screenshot", "pin-to-screen",
+                "window-management", "text-snippets", "shelf", "screenshot", "screen-recording",
+                "pin-to-screen",
                 "audio-switcher",
                 "mute-microphone", "music-blocker", "volume-mixer", "privacy-guard",
                 // Displays lists what is connected and which channel each one answers on, which

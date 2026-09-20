@@ -129,10 +129,25 @@ final class CaptureHistoryStore: ObservableObject {
     ///
     /// This is how the editor hands work back: it never writes to this directory itself, so there
     /// is exactly one writer and the thumbnail cache can be invalidated in the same breath.
+    ///
+    /// **With `document` and `base`, the entry stays editable.** Without them this wrote the
+    /// flattened image alone, so annotating a capture and reopening it from history handed the
+    /// editor a single-layer picture with the arrow baked into the pixels — no longer something
+    /// that could be selected, moved or deleted, and nothing said so.
+    ///
+    /// `CaptureDocumentFile` already argues the roughly doubled file size is worth paying "only
+    /// where it buys something". An edited capture is exactly that case; an un-edited one stays
+    /// flat, which is why these are optional rather than required.
     @discardableResult
-    func replaceImage(of id: UUID, with image: CGImage) -> Bool {
-        guard let index = items.firstIndex(where: { $0.id == id }),
-              let data = CaptureWriter.pngData(from: image) else { return false }
+    func replaceImage(of id: UUID, with image: CGImage,
+                      document: AnnotationDocument? = nil,
+                      base: CGImage? = nil) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return false }
+        let editable = document.flatMap { document in
+            base.flatMap { try? CaptureDocumentFile.encode(document: document, base: $0,
+                                                           flattened: image) }
+        }
+        guard let data = editable ?? CaptureWriter.pngData(from: image) else { return false }
         do {
             try data.write(to: url(for: items[index].fileName), options: .atomic)
         } catch {
@@ -151,17 +166,36 @@ final class CaptureHistoryStore: ObservableObject {
 
     func remove(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        try? fileManager.removeItem(at: url(for: items[index]))
+        discard(url(for: items[index]))
         forgetThumbnails(id)
         items.remove(at: index)
         save()
     }
 
     func clear() {
-        for item in items { try? fileManager.removeItem(at: url(for: item)) }
+        for item in items { discard(url(for: item)) }
         thumbnails.removeAll()
         items = []
         save()
+    }
+
+    /// Sends a capture's file to the Trash.
+    ///
+    /// **These are the user's screenshots and there was no way back to one.** Every deletion here
+    /// went through `removeItem`, which erases — so a capture that aged out of the retention
+    /// window, or one lost to a mis-click on "Delete All Captures", was gone with no undo and
+    /// nothing in the Trash to fish it out of. The recordings list already treats its bundles this
+    /// way, for the same reason.
+    ///
+    /// Falling back to erasing matters: some volumes have no Trash, and a delete that silently
+    /// does nothing is worse than one that is blunt. The entry is dropped either way — a history
+    /// row pointing at a file that is still there would be its own kind of lie.
+    private func discard(_ url: URL) {
+        do {
+            try fileManager.trashItem(at: url, resultingItemURL: nil)
+        } catch {
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     /// Drops anything past the retention window. Runs on load and whenever the setting changes.
@@ -171,7 +205,10 @@ final class CaptureHistoryStore: ObservableObject {
             now: now, window: retention))
         guard !expired.isEmpty else { return }
         for item in items where expired.contains(item.id) {
-            try? fileManager.removeItem(at: url(for: item))
+            // **The sweep nobody asked for.** This runs on load, so an expired capture goes while
+            // the user is doing something else entirely. Recoverable is the only defensible way
+            // to delete something nobody pressed a button for.
+            discard(url(for: item))
             forgetThumbnails(item.id)
         }
         items.removeAll { expired.contains($0.id) }

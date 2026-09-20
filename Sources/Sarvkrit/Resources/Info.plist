@@ -4,6 +4,23 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Sarvkrit Recording</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>ai.psylief.sarvkrit.recording</string>
+			</array>
+			<key>LSTypeIsPackage</key>
+			<true/>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -22,7 +39,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
 			<key>CFBundleURLName</key>
-			<string>ai.hercules.sarvkrit.capture</string>
+			<string>ai.psylief.sarvkrit.capture</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>sarvkrit</string>
@@ -39,6 +56,8 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Sarvkrit needs this to set the volume of individual apps. Their audio passes through Sarvkrit so it can be turned up or down, and is never recorded, stored or sent anywhere.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Sarvkrit needs the camera to record you alongside your screen. The video is written to your Mac and never sent anywhere.</string>
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>Sarvkrit needs access to your Desktop to apply the file rules you create.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
@@ -47,9 +66,33 @@
 	<string>Sarvkrit needs access to your Downloads folder to apply the file rules you create.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Sarvkrit</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sarvkrit needs the microphone to record narration over your screen recording. The audio is written to your Mac and never sent anywhere.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Sarvkrit works out captions for your recordings on this Mac. macOS asks because it gates the recognition API, not because anything is uploaded — nothing leaves your machine.</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Sarvkrit Recording</string>
+			<key>UTTypeIdentifier</key>
+			<string>ai.psylief.sarvkrit.recording</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sarvrec</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

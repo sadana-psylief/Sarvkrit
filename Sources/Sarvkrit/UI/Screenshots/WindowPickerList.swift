@@ -163,6 +163,19 @@ struct WindowPickerListView: View {
         onPick(visible[selection])
     }
 
+    /// The size the captured file will actually be.
+    ///
+    /// **`CapturableWindow.frame` is in points and every other size in this app is in pixels** —
+    /// the history rows, the selection readout, the magnifier. `DimensionReadout` exists to pin
+    /// that decision, and this row was the one place that bypassed it, so a window listed as
+    /// "1512 × 898" produced a 3024 × 1796 file and nothing explained the doubling.
+    private func pixelSize(of window: CapturableWindow) -> CGSize {
+        let scale = NSScreen.screens
+            .first { $0.frame.intersects(window.frame) }?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor ?? 1
+        return CGSize(width: window.frame.width * scale, height: window.frame.height * scale)
+    }
+
     private func row(_ window: CapturableWindow, isSelected: Bool) -> some View {
         HStack(spacing: Theme.Space.md) {
             preview(window)
@@ -176,7 +189,7 @@ struct WindowPickerListView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Text("\(Int(window.frame.width)) × \(Int(window.frame.height))")
+            Text(DimensionReadout.text(for: pixelSize(of: window)))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
         }

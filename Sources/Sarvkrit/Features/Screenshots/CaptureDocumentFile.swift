@@ -22,7 +22,10 @@ import os
 ///
 /// The cost is roughly double the file size, since the base bitmap is stored twice. That is paid
 /// only where it buys something: **plain save, copy and drag-out produce a flat PNG with no
-/// chunks**, and only history entries and an explicit "save as re-editable" carry them.
+/// chunks**, and so does a freshly taken capture — an un-annotated screenshot's IDAT *is* its
+/// original, so a second copy would buy nothing. The chunks are written by an explicit "save as
+/// re-editable", and by the history entry of a capture that has actually been annotated, so that
+/// reopening it finds the annotations as elements rather than as pixels they have become.
 ///
 /// Both chunk types are ancillary, private and **unsafe-to-copy**. The last of those is
 /// deliberate: if another editor crops or resizes the image it is required to drop our chunks

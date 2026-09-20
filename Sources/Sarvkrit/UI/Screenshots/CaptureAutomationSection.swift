@@ -49,8 +49,9 @@ struct CaptureAutomationSection: View {
         } footer: {
             Text("""
                 Run any of these from a script, Shortcuts, Raycast or a Stream Deck key with \
-                `open sarvkrit://…`. The last one puts every overlay, countdown and pinned window \
-                away — the same thing ⌃⇧⎋ does, for when a script needs to clean up after itself.
+                `open sarvkrit://…`. Dismiss Everything puts every overlay, countdown and pinned \
+                window away — the same thing ⌃⇧⎋ does, for when a script needs to clean up after \
+                itself.
                 """)
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -65,6 +66,17 @@ struct CaptureAutomationSection: View {
         case .openFromClipboard: return "Annotate Clipboard Image"
         case .openSettings: return "Open Settings"
         case .captureRect: return "Capture Area"
+        case .record: return "Start Recording"
+        case .stopRecording: return "Stop Recording"
+        case .seek: return "Move the Playhead"
+        case .playPause: return "Play / Pause"
+        case .exportEditor: return "Export the Recording"
+        case .editorCommand: return "Editor Action (split, undo, …)"
+        case .addPicture: return "Add a Picture"
+        case .captureWindowByID: return "Capture a Named Window"
+        case .recogniseRect: return "Read Text in an Area"
+        case .showRecordBar: return "Set Up a Recording"
+        case .aimRecording: return "Aim the Recording"
         case .action(let action): return action.title
         }
     }
