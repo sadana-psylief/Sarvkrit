@@ -18,6 +18,9 @@ struct SMCKey: Hashable, CustomStringConvertible {
         code = bytes.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
     }
 
+    /// From a code the SMC handed back, for logging and error messages.
+    init(code: UInt32) { self.code = code }
+
     var description: String {
         let bytes = [24, 16, 8, 0].map { UInt8((code >> $0) & 0xFF) }
         return String(decoding: bytes, as: UTF8.self)
