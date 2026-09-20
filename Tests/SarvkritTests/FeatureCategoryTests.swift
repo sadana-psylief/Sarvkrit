@@ -126,6 +126,9 @@ final class FeatureCategoryTests: XCTestCase {
                 // the generic pane's fixed prose cannot say.
                 "displays",
                 "system-monitor",
+                // Fan Control lists each fan with its own speed and range, which the generic
+                // pane's fixed prose cannot say — and on a fanless Mac it has to say so instead.
+                "fan-control",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()
