@@ -48,10 +48,13 @@ final class TextRecognizerTests: XCTestCase {
         let image = try XCTUnwrap(context.makeImage())
         let result = TextRecognizer.recognize(image, includeBarcodes: false)
 
-        if result.fragments.isEmpty {
-            // Not a failure: recognition quality is the OS's, and this asserts our plumbing.
-            return
-        }
+        // **This used to return early when nothing came back**, on the grounds that recognition
+        // quality belongs to the OS. But that made the one test proving text recognition works
+        // pass when it produced nothing at all — which is precisely the failure a user reports as
+        // "the shortcut does nothing", and precisely what this test exists to catch. Measured on
+        // a real run before tightening it: one fragment, reading exactly "Sarvkrit".
+        XCTAssertFalse(result.fragments.isEmpty,
+                       "nothing was recognised in 84pt system font on white")
         XCTAssertTrue(result.text.lowercased().contains("sarv"),
                       "got \(result.text) — plumbing is wired but the string came back wrong")
     }

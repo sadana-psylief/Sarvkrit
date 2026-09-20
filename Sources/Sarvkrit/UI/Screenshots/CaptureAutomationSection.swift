@@ -49,8 +49,9 @@ struct CaptureAutomationSection: View {
         } footer: {
             Text("""
                 Run any of these from a script, Shortcuts, Raycast or a Stream Deck key with \
-                `open sarvkrit://…`. The last one puts every overlay, countdown and pinned window \
-                away — the same thing ⌃⇧⎋ does, for when a script needs to clean up after itself.
+                `open sarvkrit://…`. Dismiss Everything puts every overlay, countdown and pinned \
+                window away — the same thing ⌃⇧⎋ does, for when a script needs to clean up after \
+                itself.
                 """)
             .font(.caption)
             .foregroundStyle(.secondary)
