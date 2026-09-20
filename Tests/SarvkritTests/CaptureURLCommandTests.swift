@@ -427,4 +427,45 @@ final class RecordingURLCommandTests: XCTestCase {
         XCTAssertTrue(names.contains("record"))
         XCTAssertTrue(names.contains("stop-recording"))
     }
+    // MARK: - The two modes that needed a mouse
+
+    /// **Window and text recognition were the only capture modes that could not be driven from a
+    /// script**, so they were the only ones that could not be verified without a mouse — which on
+    /// this machine means not verified at all. Area already had coordinates; these now match it.
+    func testAScreenshotWindowCanBeNamedByID() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://capture-window?window=42")!),
+                       .captureWindowByID(42))
+    }
+
+    /// Without one it is still the interactive picker, exactly as before.
+    func testWindowCaptureWithoutAnIDStaysInteractive() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://capture-window")!),
+                       .action(.window))
+    }
+
+    func testTextRecognitionTakesARectangle() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(
+                URL(string: "sarvkrit://capture-text?x=10&y=20&width=300&height=100")!),
+            .recogniseRect(CGRect(x: 10, y: 20, width: 300, height: 100), displayIndex: nil))
+    }
+
+    func testTextRecognitionWithoutARectangleStaysInteractive() {
+        XCTAssertEqual(CaptureURLCommand.parse(URL(string: "sarvkrit://capture-text")!),
+                       .action(.textRecognition))
+    }
+
+    /// A half-given rectangle is a script with a bug in it, and guessing the rest would read the
+    /// wrong part of the screen rather than saying so — the same rule `capture-area` follows.
+    func testAHalfGivenRectangleFallsBackToTheInteractiveMode() {
+        XCTAssertEqual(
+            CaptureURLCommand.parse(URL(string: "sarvkrit://capture-text?x=10&y=20")!),
+            .action(.textRecognition))
+    }
+
+    func testBothNewCommandsKeepTheirModesName() {
+        XCTAssertEqual(CaptureURLCommand.captureWindowByID(nil).name, "capture-window")
+        XCTAssertEqual(CaptureURLCommand.recogniseRect(.zero, displayIndex: nil).name,
+                       "capture-text")
+    }
 }

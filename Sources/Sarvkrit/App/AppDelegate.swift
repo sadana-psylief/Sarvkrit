@@ -90,6 +90,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let screenshots = AppState.shared.features
                     .compactMap({ $0 as? ScreenshotFeature }).first else { return }
                 screenshots.perform(action)
+            case .captureWindowByID(let id):
+                guard let screenshots = AppState.shared.features
+                    .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+                Task { @MainActor in await Self.captureWindow(id: id, with: screenshots) }
+            case .recogniseRect(let rect, let displayIndex):
+                guard let screenshots = AppState.shared.features
+                    .compactMap({ $0 as? ScreenshotFeature }).first else { return }
+                Task { @MainActor in
+                    await Self.captureRect(rect, displayIndex: displayIndex,
+                                           as: .textRecognition, with: screenshots)
+                }
             case .captureRect(let rect, let displayIndex):
                 guard let screenshots = AppState.shared.features
                     .compactMap({ $0 as? ScreenshotFeature }).first else { return }
@@ -804,9 +815,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ToastPresenter.shared.show("No text found", symbolName: "text.viewfinder")
     }
 
+    /// One window, named by a script rather than pointed at.
+    @MainActor
+    private static func captureWindow(id: CGWindowID?,
+                                      with feature: ScreenshotFeature) async {
+        do {
+            guard let result = try await CaptureSession.captureWindow(
+                id: id, using: feature.capturer, options: feature.captureOptions) else { return }
+            deliver(result, mode: .window, with: feature)
+        } catch {
+            captureLog.error("capture window failed: \(String(describing: error), privacy: .public)")
+            reportFailure()
+        }
+    }
+
     @MainActor
     /// A rect handed over by a script: capture it and deliver it like any other capture.
     private static func captureRect(_ rect: CGRect, displayIndex: Int?,
+                                    as mode: CaptureMode = .area,
                                     with feature: ScreenshotFeature) async {
         do {
             guard let result = try await CaptureSession.captureRect(
@@ -823,9 +849,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                            symbolName: "rectangle.dashed")
                 return
             }
-            // `.area`, because that is what it is — the same destination rules, the same history
-            // entry, the same overlay afterwards. Only the aiming was different.
-            deliver(result, mode: .area, with: feature)
+            // `.area` by default, because that is what it is — the same destination rules, the
+            // same history entry, the same overlay afterwards. Only the aiming was different.
+            // `.textRecognition` routes the very same capture to the pasteboard as text instead,
+            // which `CaptureDestination` already decides on its own.
+            deliver(result, mode: mode, with: feature)
         } catch {
             captureLog.error("capture rect failed: \(String(describing: error), privacy: .public)")
             reportFailure()

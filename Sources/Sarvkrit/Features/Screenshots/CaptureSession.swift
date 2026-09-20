@@ -125,6 +125,29 @@ enum CaptureSession {
                       display: frames.first { $0.geometry.frame.intersects(picked.frame) }?.geometry)
     }
 
+    /// One named window, with no picker.
+    ///
+    /// **So window capture can be verified without a mouse.** Every other mode has a headless
+    /// route — `captureRect` for an area, `captureFullscreen` for the screen — and this one did
+    /// not, which left the mode with the most geometry in it the only one that could not be
+    /// exercised from a script. Nil `id` takes the frontmost capturable window, since a script has
+    /// no way to learn a window id in advance.
+    static func captureWindow(id: CGWindowID?,
+                              using capturer: ScreenCapturing,
+                              options: CaptureOptions) async throws -> Result? {
+        let windows = try await capturer.shareableWindows()
+        let listed = WindowListFilter.presentable(windows)
+        guard let picked = id.flatMap({ wanted in windows.first { $0.id == wanted } })
+            ?? listed.first
+        else { throw CaptureError.windowGone }
+
+        let capture = try await capturer.captureWindow(picked, options: options)
+        let frames = try await capturer.snapshotAllDisplays(options: options)
+        return Result(image: capture.image,
+                      sourceRect: picked.frame,
+                      display: frames.first { $0.geometry.frame.intersects(picked.frame) }?.geometry)
+    }
+
     /// A thumbnail per window.
     ///
     /// One at a time, and bounded by the list filter — which leaves a handful of real windows

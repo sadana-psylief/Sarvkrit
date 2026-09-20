@@ -66,6 +66,14 @@ enum CaptureURLCommand: Equatable {
     case editorCommand(StudioEditorCommand)
     /// Brings a picture into the open editor at the playhead.
     case addPicture(URL)
+    /// Captures one window with no picker — `window=<id>`, or the frontmost capturable one.
+    ///
+    /// **So the two modes that need a drag can be verified.** Area already had `capture-area`
+    /// with coordinates; window and text recognition had nothing, which made them the only capture
+    /// modes that could not be exercised without a mouse.
+    case captureWindowByID(CGWindowID?)
+    /// Reads the text in a named rectangle and puts it on the pasteboard, with no drag.
+    case recogniseRect(CGRect, displayIndex: Int?)
     /// Raises the pre-record bar, as ⌃⇧R does.
     ///
     /// **The bar and the aiming overlay are the two surfaces a script could not reach**, and both
@@ -95,6 +103,8 @@ enum CaptureURLCommand: Equatable {
         case .exportEditor: return "export"
         case .editorCommand: return "editor"
         case .addPicture: return "picture"
+        case .captureWindowByID: return "capture-window"
+        case .recogniseRect: return "capture-text"
         case .showRecordBar: return "record-bar"
         case .aimRecording: return "aim"
         case .action(let action): return Self.names[action] ?? action.rawValue
@@ -260,6 +270,14 @@ enum CaptureURLCommand: Equatable {
             // fourth would take a screenshot of the wrong thing rather than saying so.
             if match == .area, let rect = rect(from: url) {
                 return .captureRect(rect, displayIndex: displayIndex(from: url))
+            }
+            // Same shape as the area case: parameters turn an interactive mode into a scripted
+            // one, and their absence leaves the interactive mode exactly as it was.
+            if match == .textRecognition, let rect = rect(from: url) {
+                return .recogniseRect(rect, displayIndex: displayIndex(from: url))
+            }
+            if match == .window, let id = windowID(from: url) {
+                return .captureWindowByID(id)
             }
             return .action(match)
         }
