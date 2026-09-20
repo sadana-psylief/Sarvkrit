@@ -164,9 +164,14 @@ final class StudioDocumentModel: ObservableObject {
 
         if existing == nil {
             // **The moment that makes this feel like magic.** Stopping a recording should open an
-            // editor whose answer is already good: the zooms found, a background chosen from the
-            // recording's own colours, padding set. Anything else asks the user to do work before
-            // they can see whether the recording was any use.
+            // editor whose answer is already good, rather than asking for work before you can see
+            // whether the take was any use.
+            //
+            // The zooms are what it finds. Background and padding are the project's own defaults,
+            // not anything derived from the recording — this comment claimed otherwise for a
+            // while, and a release note nearly went out promising a background picked from the
+            // recording's own colours. `AutoBalance` does exactly that for screenshots and would
+            // transfer, but nothing calls it here yet.
             project.zooms = ZoomPlanner.plan(events: events,
                                              frameSize: manifest.pixelSize.size,
                                              duration: manifest.duration)
