@@ -812,7 +812,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let result = try await CaptureSession.captureRect(
                 rect, displayIndex: displayIndex, pointer: NSEvent.mouseLocation,
                 using: feature.capturer,
-                options: feature.captureOptions) else { return }
+                options: feature.captureOptions) else {
+                // **Nil means something different here than it does interactively.** In the
+                // hand-aimed path it is "the user cancelled", which deserves no toast. A script
+                // cannot cancel: nil means the rect is not on any display, and staying silent
+                // makes a typo in someone's coordinates indistinguishable from a capture that
+                // worked. Driving this from a URL is exactly how it was found.
+                captureLog.error("capture rect \(rect.debugDescription, privacy: .public) is not on any display")
+                ToastPresenter.shared.show("That area isn't on any screen",
+                                           symbolName: "rectangle.dashed")
+                return
+            }
             // `.area`, because that is what it is — the same destination rules, the same history
             // entry, the same overlay afterwards. Only the aiming was different.
             deliver(result, mode: .area, with: feature)
