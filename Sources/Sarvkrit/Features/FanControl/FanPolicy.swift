@@ -11,7 +11,7 @@ struct FanCurve: Equatable, Codable {
 }
 
 /// What the user has asked Sarvkrit to do about the fans.
-enum FanMode: Equatable {
+enum FanMode: Equatable, Codable {
     /// Watch only. The SMC keeps the fans.
     case monitor
     case manual(percent: Double)

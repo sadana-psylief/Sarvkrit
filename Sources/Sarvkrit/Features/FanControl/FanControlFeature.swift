@@ -59,7 +59,20 @@ final class FanControlFeature: Feature, ObservableObject {
 
     private let defaults: UserDefaults
     private let makeSampler: () -> FanSampler
+    private let makeSink: (String) -> FanCommandSink
+    private let readTemperature: () -> Double?
+    private let runPrivileged: (String) -> Bool
     private var sampler: FanSampler?
+    private var sink: FanCommandSink?
+    private let thermal = ThermalSampler()
+
+    private let throttle = FanWriteThrottle()
+    private var lastCommand: FanCommand?
+    private var lastCommandAt: Date?
+    private var isEngaged = false
+
+    /// The helper went away while we were driving. A stated condition, never a cue to re-prompt.
+    private(set) var controlWasLost = false
     private var timer: Timer?
     /// Invalidates a sample already in flight when the feature is switched off, so a reading
     /// computed for a run that has ended can never land in the panel.
@@ -73,9 +86,52 @@ final class FanControlFeature: Feature, ObservableObject {
     private static let interval: TimeInterval = 2
 
     init(defaults: UserDefaults = .standard,
-         makeSampler: @escaping () -> FanSampler = { FanSampler() }) {
+         makeSampler: @escaping () -> FanSampler = { FanSampler() },
+         makeSink: ((String) -> FanCommandSink)? = nil,
+         readTemperature: (() -> Double?)? = nil,
+         runPrivileged: @escaping (String) -> Bool = SleepDisableFlag.runPrivileged) {
         self.defaults = defaults
         self.makeSampler = makeSampler
+        self.runPrivileged = runPrivileged
+        self.makeSink = makeSink ?? { path in
+            FanHelperSession(socketPath: path, runPrivileged: runPrivileged)
+        }
+        // Its own ThermalSampler rather than System Monitor's. `Feature` has no way to depend on
+        // a sibling, and putting a second toggle in the failure path of a thermal safety loop
+        // would be a poor trade for one cached HID walk.
+        self.readTemperature = readTemperature ?? { [thermal] in thermal.read()?.cpu }
+    }
+
+    // MARK: - What the user asked for
+
+    private static let modeKey = "fanControl.mode"
+    private static let weForcedKey = "fanControl.weForcedIt"
+
+    /// Persisted, but **never acted on at launch**: a Mac that boots holding its fans because of
+    /// a setting from last week, with no prompt and no explanation, is not something to build.
+    /// Restoring a mode is the user picking it again.
+    var mode: FanMode {
+        get {
+            guard let data = defaults.data(forKey: Self.modeKey),
+                  let stored = try? JSONDecoder().decode(FanMode.self, from: data)
+            else { return .monitor }
+            return stored
+        }
+        set {
+            guard newValue != mode else { return }
+            objectWillChange.send()
+            store(newValue)
+            apply(newValue)
+        }
+    }
+
+    private func store(_ newMode: FanMode) {
+        defaults.set(try? JSONEncoder().encode(newMode), forKey: Self.modeKey)
+    }
+
+    private var weForcedIt: Bool {
+        get { defaults.bool(forKey: Self.weForcedKey) }
+        set { defaults.set(newValue, forKey: Self.weForcedKey) }
     }
 
     // MARK: - Lifecycle
@@ -84,6 +140,7 @@ final class FanControlFeature: Feature, ObservableObject {
         objectWillChange.send()
         generation += 1
         isRunning = true
+        controlWasLost = false
         sampler = makeSampler()
         poll()
     }
@@ -97,6 +154,14 @@ final class FanControlFeature: Feature, ObservableObject {
             timer?.invalidate()
             timer = nil
             sampler = nil
+            // Costs no password: the helper is already root and already connected. A prompt to
+            // *stop* doing something would be indefensible.
+            sink?.stop()
+            sink = nil
+            weForcedIt = false
+            isEngaged = false
+            lastCommand = nil
+            lastCommandAt = nil
             // Off means off. A panel still showing the last speed it saw would be claiming to
             // watch something it has stopped watching.
             hardware = .unreadable
@@ -135,10 +200,91 @@ final class FanControlFeature: Feature, ObservableObject {
         }
     }
 
+    // MARK: - Driving
+
+    /// One step of the control loop. Separate from the timer so a test can advance it by hand.
+    func tick() {
+        guard isRunning else { return }
+        let command = FanPolicy.command(
+            mode: mode, celsius: readTemperature(), isEngaged: isEngaged)
+
+        switch command {
+        case .hold: isEngaged = true
+        case .release: isEngaged = false
+        }
+
+        guard throttle.shouldWrite(command, lastWritten: lastCommand,
+                                   lastWriteAt: lastCommandAt, now: Date())
+        else { return }
+
+        deliver(command)
+    }
+
+    private func deliver(_ command: FanCommand) {
+        switch command {
+        case let .hold(percent):
+            guard let sink, sink.isConnected else { return }
+            sink.send(.set(percent: Int(percent.rounded())))
+            weForcedIt = true
+        case .release:
+            sink?.send(.auto)
+            weForcedIt = false
+        }
+        lastCommand = command
+        lastCommandAt = Date()
+    }
+
+    /// Starts or stops the helper to match the mode the user just picked.
+    private func apply(_ newMode: FanMode) {
+        guard isRunning else { return }
+
+        guard newMode != .monitor else {
+            sink?.stop()
+            sink = nil
+            weForcedIt = false
+            isEngaged = false
+            lastCommand = nil
+            lastCommandAt = nil
+            return
+        }
+
+        if sink == nil || sink?.isConnected == false {
+            let session = makeSink(FanHelperSession.defaultSocketPath())
+            session.onLost = { [weak self] in self?.helperWentAway() }
+            guard session.start() else {
+                // Cancelled, or the helper never appeared. Nothing half-on: fall back to
+                // watching, writing straight to defaults so the setter does not recurse.
+                objectWillChange.send()
+                store(.monitor)
+                sink = nil
+                return
+            }
+            sink = session
+        }
+
+        controlWasLost = false
+        lastCommand = nil
+        lastCommandAt = nil
+        tick()
+    }
+
+    /// The helper died. Say so and stop; **never re-prompt.** A crash loop that reopens a
+    /// password dialog every few seconds is indistinguishable from malware.
+    private func helperWentAway() {
+        objectWillChange.send()
+        controlWasLost = true
+        weForcedIt = false
+        isEngaged = false
+        sink = nil
+        store(.monitor)
+        Self.log.error("the fan helper went away; the fans are back on macOS")
+    }
+
     private func startTimerIfNeeded() {
         guard timer == nil, isRunning else { return }
         let timer = Timer(timeInterval: Self.interval, repeats: true) { [weak self] _ in
             self?.poll()
+            self?.tick()
         }
         // `.common`, so the readings do not freeze while a menu is open.
         RunLoop.main.add(timer, forMode: .common)
