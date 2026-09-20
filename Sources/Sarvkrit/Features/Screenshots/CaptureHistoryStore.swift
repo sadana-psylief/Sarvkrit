@@ -151,17 +151,36 @@ final class CaptureHistoryStore: ObservableObject {
 
     func remove(id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        try? fileManager.removeItem(at: url(for: items[index]))
+        discard(url(for: items[index]))
         forgetThumbnails(id)
         items.remove(at: index)
         save()
     }
 
     func clear() {
-        for item in items { try? fileManager.removeItem(at: url(for: item)) }
+        for item in items { discard(url(for: item)) }
         thumbnails.removeAll()
         items = []
         save()
+    }
+
+    /// Sends a capture's file to the Trash.
+    ///
+    /// **These are the user's screenshots and there was no way back to one.** Every deletion here
+    /// went through `removeItem`, which erases — so a capture that aged out of the retention
+    /// window, or one lost to a mis-click on "Delete All Captures", was gone with no undo and
+    /// nothing in the Trash to fish it out of. The recordings list already treats its bundles this
+    /// way, for the same reason.
+    ///
+    /// Falling back to erasing matters: some volumes have no Trash, and a delete that silently
+    /// does nothing is worse than one that is blunt. The entry is dropped either way — a history
+    /// row pointing at a file that is still there would be its own kind of lie.
+    private func discard(_ url: URL) {
+        do {
+            try fileManager.trashItem(at: url, resultingItemURL: nil)
+        } catch {
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     /// Drops anything past the retention window. Runs on load and whenever the setting changes.
@@ -171,7 +190,10 @@ final class CaptureHistoryStore: ObservableObject {
             now: now, window: retention))
         guard !expired.isEmpty else { return }
         for item in items where expired.contains(item.id) {
-            try? fileManager.removeItem(at: url(for: item))
+            // **The sweep nobody asked for.** This runs on load, so an expired capture goes while
+            // the user is doing something else entirely. Recoverable is the only defensible way
+            // to delete something nobody pressed a button for.
+            discard(url(for: item))
             forgetThumbnails(item.id)
         }
         items.removeAll { expired.contains($0.id) }

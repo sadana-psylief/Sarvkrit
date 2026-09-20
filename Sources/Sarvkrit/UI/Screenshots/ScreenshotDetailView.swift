@@ -11,6 +11,8 @@ struct ScreenshotDetailView: View {
     @ObservedObject var store: CaptureHistoryStore
     @EnvironmentObject private var app: AppState
 
+    @State private var confirmClear = false
+
     var body: some View {
         Form {
             Section {
@@ -185,7 +187,10 @@ struct ScreenshotDetailView: View {
                         NSWorkspace.shared.activateFileViewerSelecting(
                             [store.url(for: store.items[0])])
                     }
-                    Button("Delete All Captures", role: .destructive) { store.clear() }
+                    // **Asks first, like the clipboard's does.** This wipes every screenshot the
+                    // user has taken, and it sat one mis-click away in a settings pane with no
+                    // dialog and no ellipsis to warn that a click was the whole action.
+                    Button("Delete All Captures…", role: .destructive) { confirmClear = true }
                 }
             } header: {
                 Text("History")
@@ -242,6 +247,12 @@ struct ScreenshotDetailView: View {
 
         }
         .formStyle(.grouped)
+        .confirmationDialog("Delete every capture?", isPresented: $confirmClear) {
+            Button("Delete \(store.items.count) Captures", role: .destructive) { store.clear() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They go to the Trash, so you can put them back from there.")
+        }
         .navigationTitle(feature.title)
     }
 
