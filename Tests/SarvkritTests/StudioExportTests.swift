@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import VideoToolbox
 import XCTest
 @testable import Sarvkrit
 
@@ -491,6 +492,133 @@ final class StudioExportTests: XCTestCase {
         } catch {
             XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
         }
+    }
+
+    // MARK: - Throughput
+
+    /// **What a real recording costs per frame.** Every other test here exports 160×120, which is
+    /// why an export eleven times slower than realtime shipped: at that size a per-frame cost
+    /// problem cannot be seen. This is the size a Retina display actually records at.
+    func testARetinaSizedExportRendersAtAUsableRate() async throws {
+        let bundle = try makeRecording(seconds: 0.5, size: CGSize(width: 3024, height: 1964))
+        let project = try project(over: bundle, seconds: 0.5)
+
+        // The first export pays for the mesh render and the encoder's own start-up; neither is
+        // what this measures, so it is run once and not counted.
+        try await StudioExporter().export(
+            project: project, events: EventLog(), recording: bundle, preset: .small,
+            to: directory.appendingPathComponent("warm.mp4"), onProgress: { _ in })
+
+        var perFrame: [String: Double] = [:]
+        for preset in [ExportPreset.web, .sharpest] {
+            let destination = directory.appendingPathComponent("\(preset.id).mp4")
+            let started = Date()
+            try await StudioExporter().export(
+                project: project, events: EventLog(), recording: bundle,
+                preset: preset, to: destination, onProgress: { _ in })
+            let frames = 0.5 * Double(preset.frameRate(forRecording: 60))
+            perFrame[preset.id] = Date().timeIntervalSince(started) / frames * 1000
+            print("throughput: \(preset.id) \(String(format: "%.1f", perFrame[preset.id]!)) ms/frame")
+        }
+        let web = try XCTUnwrap(perFrame["web"])
+        let sharpest = try XCTUnwrap(perFrame["sharpest"])
+
+        // **Fewer pixels must cost less.** Web keeps about a third of Sharpest's pixels; when every
+        // frame was composited at canvas size first, the two cost the same — 165 ms against 166.
+        // Now Web costs 0.55 of Sharpest alone and about 0.67 with the rest of the suite running.
+        // On any machine, a 1080p export that is not clearly cheaper than a full-size one means
+        // the canvas-sized pass is back.
+        XCTAssertLessThan(web, sharpest * 0.85, "a downscaled export costs as much as a full one")
+        // Loose on purpose: the fixed code measures about 21 and 40 here, 165 before. A slower CI
+        // runner passes; repainting the background every frame again does not.
+        XCTAssertLessThan(web, 100, "a 1080p frame takes \(Int(web)) ms")
+        XCTAssertLessThan(sharpest, 100, "a full-size frame takes \(Int(sharpest)) ms")
+    }
+
+    /// **The file shows what the canvas shows.** The export draws straight into the encoder's
+    /// buffer at the output size rather than through `frame(of:)`, so this holds the two to the same
+    /// picture: a flip, a shadow left at full-canvas size or a missing layer is a difference here.
+    func testAScaledExportMatchesTheRenderedCanvas() async throws {
+        let bundle = try makeRecording(seconds: 1, size: CGSize(width: 640, height: 400))
+        let project = try project(over: bundle, seconds: 1)
+        let (canvas, _) = StudioRenderer.layout(for: project)
+        var half = ExportPreset.web
+        half.height = Int(canvas.height / 2)
+        let destination = directory.appendingPathComponent("half.mp4")
+
+        try await StudioExporter().export(
+            project: project, events: EventLog(), recording: bundle,
+            preset: half, to: destination, onProgress: { _ in })
+
+        let exported = try await image(of: destination, frame: 0)
+        let screen = try await image(of: bundle.screenURL, frame: 0)
+        let rendered = try XCTUnwrap(StudioRenderer.frame(
+            of: project, atSource: 0, events: EventLog(), sources: FrameSources(screen: screen),
+            clipSource: 0..<1, outputTime: 0))
+        let size = CGSize(width: exported.width, height: exported.height)
+        XCTAssertEqual(size, half.outputSize(forCanvas: canvas))
+
+        let expected = try pixels(of: rendered, size: size, flipped: false)
+        let upsideDown = try pixels(of: rendered, size: size, flipped: true)
+        let actual = try pixels(of: exported, size: size, flipped: false)
+        // H.264 and the trip through YUV cost about 5.5 levels on their own: the exporter that
+        // composited at canvas size and then shrank the frame measured 5.49 here, this one 5.51.
+        // Upside down is 16.
+        let difference = meanDifference(actual, expected)
+        XCTAssertLessThan(difference, 7, "the export does not look like the canvas")
+        XCTAssertLessThan(difference, meanDifference(actual, upsideDown) / 2,
+                          "the export is closer to the canvas upside down than the right way up")
+    }
+
+    /// One decoded frame of a movie, as an image.
+    private func image(of url: URL, frame index: Int) async throws -> CGImage {
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: [kCVPixelBufferPixelFormatTypeKey as String:
+                                kCVPixelFormatType_32BGRA])
+        reader.add(output)
+        reader.startReading()
+        var sample = output.copyNextSampleBuffer()
+        for _ in 0..<index { sample = output.copyNextSampleBuffer() }
+        let buffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(try XCTUnwrap(sample)))
+        var image: CGImage?
+        VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &image)
+        return try XCTUnwrap(image)
+    }
+
+    /// An image's RGB bytes at `size`, optionally turned upside down.
+    private func pixels(of image: CGImage, size: CGSize, flipped: Bool) throws -> [UInt8] {
+        let width = Int(size.width), height = Int(size.height)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        try bytes.withUnsafeMutableBytes { raw in
+            let context = try XCTUnwrap(CGContext(
+                data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+            context.interpolationQuality = .high
+            if flipped {
+                context.translateBy(x: 0, y: size.height)
+                context.scaleBy(x: 1, y: -1)
+            }
+            context.draw(image, in: CGRect(origin: .zero, size: size))
+        }
+        return bytes
+    }
+
+    private func meanDifference(_ a: [UInt8], _ b: [UInt8]) -> Double {
+        var total = 0
+        var count = 0
+        for index in stride(from: 0, to: min(a.count, b.count), by: 4) {
+            for channel in 0..<3 {
+                total += abs(Int(a[index + channel]) - Int(b[index + channel]))
+                count += 1
+            }
+        }
+        return Double(total) / Double(max(1, count))
     }
 
     /// The preset decides the size, and it must never be odd — an odd dimension makes the encoder

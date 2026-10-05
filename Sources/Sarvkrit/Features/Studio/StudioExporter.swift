@@ -48,7 +48,7 @@ actor StudioExporter {
             throw ExportError.cannotRead
         }
 
-        let (canvas, _) = StudioRenderer.layout(for: project)
+        let (canvas, imageRect) = StudioRenderer.layout(for: project)
         let output = preset.outputSize(forCanvas: canvas)
         // **The recording's own rate unless the preset insists otherwise.** This used to be
         // `preset.fps` outright and `manifest.fps` was read nowhere, so a 30fps take was exported
@@ -147,7 +147,11 @@ actor StudioExporter {
             }
         }
 
-        guard writer.startWriting(), reader.startReading() else { throw ExportError.cannotWrite }
+        guard writer.startWriting(), reader.startReading() else {
+            log.error("export: could not start — \(Self.reason(writer.error ?? reader.error), privacy: .public)")
+            abandon(writer, reader: reader, camera: cameraReader, file: destination)
+            throw ExportError.cannotWrite
+        }
 
         if let cameraReader, !cameraReader.startReading() {
             // Not fatal: a camera that cannot be read costs the picture-in-picture, not the export.
@@ -155,96 +159,126 @@ actor StudioExporter {
         }
         writer.startSession(atSourceTime: .zero)
 
-        // **Written first, and finished before a single frame goes in.** An `AVAssetWriter` with two
-        // open inputs will not let either run ahead of the other, so writing every frame and then
-        // every sample deadlocks: the video input spins on `isReadyForMoreMediaData` waiting for
-        // audio that the loop below has not reached yet. Closing this track first leaves the video
-        // pass with nothing to wait for. Found by an export that sat at zero bytes for two minutes.
-        if let audioInput, let audio {
-            try await writeAudio(audio, to: audioInput)
-        }
-
-        let duration = project.duration
-        let total = max(1, Int(duration * Double(fps)))
-        let cache = StudioRenderer.Cache()
-        var decoded: CGImage?
-        var decodedUntil: TimeInterval = -1
-
-        for index in 0..<total {
-            if isCancelled {
-                reader.cancelReading()
-                input.markAsFinished()
-                await writer.finishWriting()
-                // A cancelled export leaves nothing behind. A half-written file that looks finished
-                // is worse than no file.
-                try? FileManager.default.removeItem(at: destination)
-                throw ExportError.cancelled
+        do {
+            // **Written first, and finished before a single frame goes in.** An `AVAssetWriter` with
+            // two open inputs will not let either run ahead of the other, so writing every frame and
+            // then every sample deadlocks: the video input spins on `isReadyForMoreMediaData`
+            // waiting for audio that the loop below has not reached yet. Closing this track first
+            // leaves the video pass with nothing to wait for. Found by an export that sat at zero
+            // bytes for two minutes.
+            if let audioInput, let audio {
+                try await writeAudio(audio, to: audioInput)
             }
 
-            let outputTime = Double(index) / Double(fps)
-            guard let placed = project.timeline.sourceTime(forOutput: outputTime) else { break }
+            let duration = project.duration
+            let total = max(1, Int(duration * Double(fps)))
+            let cache = StudioRenderer.Cache()
+            var decoded: CGImage?
+            var decodedUntil: TimeInterval = -1
 
-            // The reader hands frames back in order, so it is pulled forward until it reaches the
-            // source moment this output frame needs. A speed-up consumes several; a slow-down
-            // reuses one.
-            while decodedUntil < placed.sourceTime,
-                  let sample = readerOutput.copyNextSampleBuffer() {
-                decodedUntil = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
-                if let buffer = CMSampleBufferGetImageBuffer(sample) {
-                    decoded = Self.image(from: buffer)
-                }
-            }
+            for index in 0..<total {
+                if isCancelled { throw ExportError.cancelled }
 
-            if let cameraReaderOutput {
-                // Nil outside the camera's own span — it starts after the screen and can stop
-                // before it — and the renderer draws nothing for a nil image.
-                if let wanted = PlaybackClock.cameraTime(forSource: placed.sourceTime,
-                                                         startOffset: cameraStartOffset,
-                                                         cameraDuration: cameraDuration) {
-                    while cameraDecodedUntil < wanted,
-                          let sample = cameraReaderOutput.copyNextSampleBuffer() {
-                        cameraDecodedUntil = CMTimeGetSeconds(
-                            CMSampleBufferGetPresentationTimeStamp(sample))
-                        if let buffer = CMSampleBufferGetImageBuffer(sample) {
-                            decodedCamera = Self.image(from: buffer)
-                        }
+                let outputTime = Double(index) / Double(fps)
+                guard let placed = project.timeline.sourceTime(forOutput: outputTime) else { break }
+
+                // The reader hands frames back in order, so it is pulled forward until it reaches
+                // the source moment this output frame needs. A speed-up consumes several; a
+                // slow-down reuses one.
+                while decodedUntil < placed.sourceTime,
+                      let sample = readerOutput.copyNextSampleBuffer() {
+                    decodedUntil = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample))
+                    if let buffer = CMSampleBufferGetImageBuffer(sample) {
+                        decoded = Self.image(from: buffer)
                     }
-                } else {
-                    decodedCamera = nil
                 }
+
+                if let cameraReaderOutput {
+                    // Nil outside the camera's own span — it starts after the screen and can stop
+                    // before it — and the renderer draws nothing for a nil image.
+                    if let wanted = PlaybackClock.cameraTime(forSource: placed.sourceTime,
+                                                             startOffset: cameraStartOffset,
+                                                             cameraDuration: cameraDuration) {
+                        while cameraDecodedUntil < wanted,
+                              let sample = cameraReaderOutput.copyNextSampleBuffer() {
+                            cameraDecodedUntil = CMTimeGetSeconds(
+                                CMSampleBufferGetPresentationTimeStamp(sample))
+                            if let buffer = CMSampleBufferGetImageBuffer(sample) {
+                                decodedCamera = Self.image(from: buffer)
+                            }
+                        }
+                    } else {
+                        decodedCamera = nil
+                    }
+                }
+
+                // **Drawn straight into the encoder's buffer, at the size the file will be.** This
+                // used to composite a whole frame at canvas size — six megapixels for a Retina
+                // capture — and then shrink it into the buffer with a second full-frame draw, so a
+                // 1080p export paid for three times the pixels it kept, twice.
+                guard let buffer = Self.makeBuffer(size: output, pool: adaptor.pixelBufferPool)
+                else { throw ExportError.cannotWrite }
+                let sources = FrameSources(screen: decoded, camera: decodedCamera,
+                                           wallpaper: wallpaper, media: media)
+                let clipSource = placed.clip.sourceEnd > placed.clip.sourceStart
+                    ? placed.clip.sourceStart..<placed.clip.sourceEnd
+                    : nil
+                Self.draw(into: buffer, canvas: canvas) { context in
+                    StudioRenderer.draw(project: project, sourceTime: placed.sourceTime,
+                                        events: events, sources: sources,
+                                        canvas: canvas, imageRect: imageRect,
+                                        in: context, cache: cache,
+                                        clipSource: clipSource,
+                                        outputTime: outputTime,
+                                        cameraStart: cameraStartOffset)
+                }
+
+                while !input.isReadyForMoreMediaData {
+                    // A writer that has failed never becomes ready again; waiting on it was a loop
+                    // with no way out.
+                    guard writer.status == .writing else { throw ExportError.cannotWrite }
+                    try? await Task.sleep(nanoseconds: 2_000_000)
+                }
+                // **Checked, because ignoring it hid a dead writer.** A refused frame means the
+                // writer has failed, and every frame rendered after it was work thrown away.
+                guard adaptor.append(buffer,
+                                     withPresentationTime: CMTime(value: CMTimeValue(index),
+                                                                  timescale: CMTimeScale(fps)))
+                else { throw ExportError.cannotWrite }
+                onProgress(Progress(completed: index + 1, total: total))
             }
 
-            let frame = StudioRenderer.frame(of: project, atSource: placed.sourceTime,
-                                             events: events,
-                                             sources: FrameSources(screen: decoded,
-                                                                   camera: decodedCamera,
-                                                                   wallpaper: wallpaper,
-                                                                   media: media),
-                                             cache: cache,
-                                             clipSource: placed.clip.sourceEnd
-                                                 > placed.clip.sourceStart
-                                                 ? placed.clip.sourceStart..<placed.clip.sourceEnd
-                                                 : nil,
-                                             outputTime: outputTime,
-                                             cameraStart: cameraStartOffset)
-            guard let frame, let buffer = Self.buffer(from: frame, size: output,
-                                                      pool: adaptor.pixelBufferPool) else {
-                continue
+            input.markAsFinished()
+            await writer.finishWriting()
+            reader.cancelReading()
+            cameraReader?.cancelReading()
+            guard writer.status == .completed else { throw ExportError.cannotWrite }
+        } catch {
+            if error as? ExportError != .cancelled {
+                log.error("export failed: \(Self.reason(writer.error ?? error), privacy: .public)")
             }
-
-            while !input.isReadyForMoreMediaData {
-                try? await Task.sleep(nanoseconds: 2_000_000)
-            }
-            adaptor.append(buffer,
-                           withPresentationTime: CMTime(value: CMTimeValue(index),
-                                                        timescale: CMTimeScale(fps)))
-            onProgress(Progress(completed: index + 1, total: total))
+            // **Nothing is left behind, whatever went wrong.** A cancelled export always removed
+            // its file; a failed one used to leave a part-written one, which has no header and
+            // looks exactly like the export having produced a broken video.
+            abandon(writer, reader: reader, camera: cameraReader, file: destination)
+            throw error
         }
+    }
 
-        input.markAsFinished()
-        await writer.finishWriting()
+    /// Stops everything and removes the file. A half-written file that looks finished is worse
+    /// than no file.
+    private func abandon(_ writer: AVAssetWriter, reader: AVAssetReader, camera: AVAssetReader?,
+                         file: URL) {
         reader.cancelReading()
-        guard writer.status == .completed else { throw ExportError.cannotWrite }
+        camera?.cancelReading()
+        // Only a writer that is still writing can be cancelled; one that has failed or finished
+        // raises instead.
+        if writer.status == .writing { writer.cancelWriting() }
+        try? FileManager.default.removeItem(at: file)
+    }
+
+    private static func reason(_ error: Error?) -> String {
+        error.map { String(describing: $0) } ?? "no error given"
     }
 
     /// Reads the mixed composition and hands its samples to the writer.
@@ -345,8 +379,7 @@ actor StudioExporter {
         return image
     }
 
-    private static func buffer(from image: CGImage, size: CGSize,
-                               pool: CVPixelBufferPool?) -> CVPixelBuffer? {
+    private static func makeBuffer(size: CGSize, pool: CVPixelBufferPool?) -> CVPixelBuffer? {
         var buffer: CVPixelBuffer?
         if let pool {
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
@@ -357,19 +390,29 @@ actor StudioExporter {
                                 [kCVPixelBufferCGImageCompatibilityKey: true] as CFDictionary,
                                 &buffer)
         }
-        guard let buffer else { return nil }
+        return buffer
+    }
 
+    /// Hands `body` a context over the buffer's own pixels, in canvas units with a top-left origin
+    /// — the space `StudioRenderer.frame(of:)` sets up, scaled to whatever size the buffer is.
+    private static func draw(into buffer: CVPixelBuffer, canvas: CGSize,
+                             _ body: (CGContext) -> Void) {
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
         guard let context = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer),
-            width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer),
+            width: width, height: height,
             bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-                | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+                | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+        // A pooled buffer comes back holding an earlier frame.
+        context.clear(CGRect(x: 0, y: 0, width: width, height: height))
         context.interpolationQuality = .high
-        context.draw(image, in: CGRect(origin: .zero, size: size))
-        return buffer
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: CGFloat(width) / canvas.width, y: -CGFloat(height) / canvas.height)
+        body(context)
     }
 }
