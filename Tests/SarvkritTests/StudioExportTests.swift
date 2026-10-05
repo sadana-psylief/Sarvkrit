@@ -494,6 +494,44 @@ final class StudioExportTests: XCTestCase {
         }
     }
 
+    // MARK: - Through the queue
+
+    /// **Two real exports, queued together, run in turn and both play.** The queue's own tests use
+    /// a stand-in; this is the one that proves the real exporter is what it drives.
+    @MainActor
+    func testTwoQueuedExportsRunInTurnAndBothPlay() async throws {
+        let bundle = try makeRecording(seconds: 1)
+        let project = try project(over: bundle, seconds: 1)
+        let spans = Spans()
+        var outcomes: [ExportQueue.Outcome] = []
+        let queue = ExportQueue(makeRunner: { TimedRunner(spans: spans) },
+                                report: { _, outcome, _ in outcomes.append(outcome) })
+
+        let destinations = ["first.mp4", "second.mp4"].map { directory.appendingPathComponent($0) }
+        for destination in destinations {
+            queue.enqueue(ExportJob.Work(project: project, events: EventLog(), bundle: bundle,
+                                         preset: .web, destination: destination),
+                          title: destination.lastPathComponent)
+        }
+
+        let deadline = Date().addingTimeInterval(30)
+        while !queue.jobs.isEmpty, Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertEqual(outcomes, [.finished, .finished])
+
+        let recorded = spans.all
+        XCTAssertEqual(recorded.count, 2)
+        if recorded.count == 2 {
+            XCTAssertGreaterThanOrEqual(recorded[1].start, recorded[0].end,
+                                        "the second export started before the first had finished")
+        }
+        for destination in destinations {
+            let duration = try await AVURLAsset(url: destination).load(.duration)
+            XCTAssertEqual(CMTimeGetSeconds(duration), 1, accuracy: 0.2)
+        }
+    }
+
     // MARK: - Throughput
 
     /// **What a real recording costs per frame.** Every other test here exports 160×120, which is
@@ -641,6 +679,30 @@ final class StudioExportTests: XCTestCase {
         XCTAssertEqual(Int(size.width) % 2, 0)
         XCTAssertEqual(Int(size.height) % 2, 0)
     }
+}
+
+/// When each export ran, written from whatever executor it ran on.
+private final class Spans: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [(start: Date, end: Date)] = []
+
+    func add(start: Date, end: Date) { lock.lock(); stored.append((start, end)); lock.unlock() }
+    var all: [(start: Date, end: Date)] { lock.lock(); defer { lock.unlock() }; return stored }
+}
+
+/// The real exporter, timed.
+private struct TimedRunner: ExportRunning {
+    let spans: Spans
+    let exporter = StudioExporter()
+
+    func run(_ work: ExportJob.Work,
+             onProgress: @Sendable @escaping (StudioExporter.Progress) -> Void) async throws {
+        let start = Date()
+        defer { spans.add(start: start, end: Date()) }
+        try await exporter.run(work, onProgress: onProgress)
+    }
+
+    func cancel() async { await exporter.cancel() }
 }
 
 /// A box the export's progress callback can write to from whatever executor it runs on.

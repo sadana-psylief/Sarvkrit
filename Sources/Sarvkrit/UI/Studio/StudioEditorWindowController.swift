@@ -15,8 +15,6 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
     let model: StudioDocumentModel
     private var window: NSWindow?
     private var monitor: Any?
-    /// Made fresh per export, so a Cancel always applies to the run it was pressed for.
-    private var activeExport: StudioExporter?
     private let onClose: (StudioEditorWindowController) -> Void
 
     /// Below this the timeline and the inspector both start hiding controls silently, which is the
@@ -42,10 +40,6 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
             model: model,
             player: model.player,
             onExport: { [weak self] in self?.export() },
-            onCancelExport: { [weak self] in
-                guard let exporter = self?.activeExport else { return }
-                Task { await exporter.cancel() }
-            },
             onPlayPause: { [weak self] in self?.togglePlayback() },
             onScrub: { [weak model] time in model?.player.scrub(to: time) })
         window.contentView = NSHostingView(rootView: root)
@@ -136,7 +130,6 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         case .save: model.markSaved()
         case .export: export()
         case .close: window?.performClose(nil)
-        case .export: export()
         case .showShortcuts: model.isShowingShortcuts = true
         case .loopPlayback:
             model.player.loops.toggle()
@@ -225,42 +218,20 @@ final class StudioEditorWindowController: NSObject, NSWindowDelegate {
         export(to: url, preset: preset)
     }
 
-    func export(to url: URL, preset: ExportPreset = .web) {
-        model.exportProgress = 0
-        let project = model.project
-        let events = model.events
-        let bundle = model.bundle
-        let exporter = StudioExporter()
-        activeExport = exporter
-
-        Task { [weak self] in
-            do {
-                try await exporter.export(
-                    project: project, events: events, recording: bundle,
-                    preset: preset, to: url,
-                    onProgress: { progress in
-                        Task { @MainActor in self?.model.exportProgress = progress.fraction }
-                    })
-                await MainActor.run {
-                    self?.model.exportProgress = nil
-                    self?.activeExport = nil
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                    ToastPresenter.shared.show("Exported", symbolName: "square.and.arrow.up")
-                }
-            } catch StudioExporter.ExportError.cancelled {
-                await MainActor.run {
-                    self?.model.exportProgress = nil
-                    self?.activeExport = nil
-                }
-            } catch {
-                await MainActor.run {
-                    self?.model.exportProgress = nil
-                    self?.activeExport = nil
-                    ToastPresenter.shared.show("Export failed",
-                                               symbolName: "exclamationmark.triangle")
-                }
-            }
+    /// Puts this editor's project in the export queue, as it is right now.
+    ///
+    /// Returns false only when that file is already being written; anything else waits its turn.
+    @discardableResult
+    func export(to url: URL, preset: ExportPreset = .web) -> Bool {
+        let work = ExportJob.Work(project: model.project, events: model.events,
+                                  bundle: model.bundle, preset: preset, destination: url)
+        let title = model.bundle.root.deletingPathExtension().lastPathComponent
+        guard ExportQueue.shared.enqueue(work, title: title) != nil else {
+            ToastPresenter.shared.show("Already exporting \(url.lastPathComponent)",
+                                       symbolName: "exclamationmark.triangle")
+            return false
         }
+        return true
     }
 
     // MARK: - Lifecycle
@@ -324,12 +295,12 @@ final class StudioEditorController {
     /// Exports the newest editor to a file, without either dialog.
     ///
     /// The same call the Export button makes, minus the panels — which is what makes "does the
-    /// export have sound, and at what size" answerable without a mouse.
+    /// export have sound, and at what size" answerable without a mouse. False when there is no
+    /// editor, or that file is already being written.
     @discardableResult
     func export(to url: URL, preset: ExportPreset = .web) -> Bool {
         guard let controller = controllers.last else { return false }
-        controller.export(to: url, preset: preset)
-        return true
+        return controller.export(to: url, preset: preset)
     }
 
     /// Starts or stops playback in the newest editor.
