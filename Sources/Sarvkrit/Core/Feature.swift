@@ -236,9 +236,10 @@ protocol Feature: AnyObject {
     /// False for almost everything: a mixer with no tap running, or a monitor with no samples, has
     /// nothing to draw, and its panel would be an empty card inviting you to go elsewhere.
     ///
-    /// True for Keep Awake alone, where switching the feature on *is* the thing the panel offers.
+    /// True for Keep Awake, where switching the feature on *is* the thing the panel offers.
     /// Hiding it while off would put "keep my Mac awake" behind a detour through Features — the
-    /// switch being the control is exactly why it must stay reachable.
+    /// switch being the control is exactly why it must stay reachable. And for Water Reminder,
+    /// whose count and log buttons work with the reminders switched off.
     var panelIsItsOwnSwitch: Bool { get }
 }
 

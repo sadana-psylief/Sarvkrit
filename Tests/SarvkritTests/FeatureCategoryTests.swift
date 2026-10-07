@@ -45,6 +45,7 @@ final class FeatureCategoryTests: XCTestCase {
         XCTAssertEqual(byID["privacy-guard"], .sound)
         XCTAssertEqual(byID["keep-awake"], .system)
         XCTAssertEqual(byID["system-monitor"], .system)
+        XCTAssertEqual(byID["water-reminder"], .system)
     }
 
     func testPopulatedCategoriesSkipEmptyOnesAndKeepDeclarationOrder() {
@@ -126,6 +127,7 @@ final class FeatureCategoryTests: XCTestCase {
                 // the generic pane's fixed prose cannot say.
                 "displays",
                 "system-monitor",
+                "water-reminder",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()

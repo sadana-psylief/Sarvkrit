@@ -92,6 +92,52 @@ final class MenuBarIconStateTests: XCTestCase {
                      "a leftover countdown must not resurrect the header")
     }
 
+    // MARK: - Water sits between the two sleep states
+
+    func testThirstOutranksTheKeepAwakeCup() {
+        // Keep Awake can be on all afternoon; a reminder it could hide would be no reminder.
+        XCTAssertEqual(
+            MenuBarIconState.current(keepAwakeRunning: true, systemSleepDisabled: false, thirst: .gentle),
+            .thirsty(.gentle)
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(keepAwakeRunning: false, systemSleepDisabled: false, thirst: .urgent),
+            .thirsty(.urgent)
+        )
+    }
+
+    func testEverySafetyAndPowerStateOutranksThirst() {
+        XCTAssertEqual(
+            MenuBarIconState.current(keepAwakeRunning: true, systemSleepDisabled: true, thirst: .urgent),
+            .systemSleepDisabled
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: false, systemSleepDisabled: false, microphoneMuted: true, thirst: .urgent),
+            .microphoneMuted
+        )
+        XCTAssertEqual(
+            MenuBarIconState.current(
+                keepAwakeRunning: false, systemSleepDisabled: false, cameraOn: true, thirst: .urgent),
+            .cameraOn
+        )
+    }
+
+    func testNoThirstLeavesTheIconAlone() {
+        XCTAssertEqual(
+            MenuBarIconState.current(keepAwakeRunning: false, systemSleepDisabled: false, thirst: .none),
+            .idle
+        )
+    }
+
+    func testThirstFillsTheDropAndSaysWhy() {
+        XCTAssertEqual(MenuBarIconState.thirsty(.gentle).symbolName, "drop")
+        XCTAssertEqual(MenuBarIconState.thirsty(.building).symbolName, "drop.halffull")
+        XCTAssertEqual(MenuBarIconState.thirsty(.urgent).symbolName, "drop.fill")
+        XCTAssertTrue(MenuBarIconState.thirsty(.gentle).accessibilityLabel.contains("water"))
+        XCTAssertEqual(MenuBarIconState.statusLine(state: .thirsty(.urgent), remaining: nil), "Time for water")
+    }
+
     // MARK: - The microphone outranks everything
 
     func testAMutedMicrophoneWinsOverEverySleepState() {

@@ -2,7 +2,7 @@
 
 The things macOS does differently than you'd expect — fixed. A menu bar app.
 
-Nineteen features, each an independent toggle you can turn on or off at any time. Nothing runs
+Twenty-one features, each an independent toggle you can turn on or off at any time. Nothing runs
 unless you switch it on, and turning something off stops it immediately.
 
 ```
@@ -338,6 +338,28 @@ at the same time that restores normal sleep **the moment Sarvkrit quits — incl
 so your Mac can't be left permanently awake in a bag. The one case that can't cover is restarting
 your Mac; if that happens, Sarvkrit tells you on next launch and offers to put it back.
 
+#### Water Reminder
+
+Keeps count of what you drink and reminds you when you fall behind. The reminders are paced toward a
+daily goal across your active hours, not fired on a fixed clock, so drinking early means you hear
+nothing.
+
+- **Log a drink** from the Water panel in one click: Glass, Bottle, or a size of your own. **Undo**
+  takes back the last one, and the pane lets you add one you forgot earlier in the day.
+- **Escalates quietly.** The menu bar drop fills first. Only if nothing is logged for 20 minutes
+  does a single notification follow, with **Drank**, **Snooze 15 min** and **Not today** buttons.
+  Ignore it and the next one waits twice as long.
+- **Stays out of the way.** Nothing pops up while the screen is locked, while you've stepped away,
+  during a call (camera or microphone in use), or while Focus is on. Come back from a long break and
+  you get one reminder a few minutes later, never a backlog.
+- **Done is done.** Once you reach the goal, nothing more today. A day turns over at 4 am, not
+  midnight, so a late glass counts toward the day you're still in.
+- **A history without guilt.** Two weeks of bars against the goal line. There are no streaks and no
+  red days.
+
+Logging works with the reminders switched off, if you just want the count. Goal, sizes, units (ml or
+fl oz), active hours, spacing and the quiet rules are in the pane.
+
 #### System Monitor
 
 Shows what your Mac is actually doing — **CPU**, **GPU**, **Power**, **Battery**, **Memory**,
@@ -493,6 +515,12 @@ prompts for this normally.
 Sarvkrit by hand in System Settings → Privacy & Security → Full Disk Access. Sarvkrit tells you when
 it's missing and links you there, rather than silently doing nothing.
 
+**Notifications** — Water Reminder only, asked the first time you switch it on. Say no and the
+reminders still work, as the menu bar drop alone. Sarvkrit asks for banners only, never sound, and
+marks every reminder as passive so it never breaks through Focus. Telling whether you're at the Mac
+or on a call needs nothing extra: idle time is read without Accessibility, and the camera and
+microphone are checked for *in use*, never opened.
+
 **Nothing at all** — Keep Awake, Displays, System Monitor and the audio device switcher ask for no
 permission of any kind. Two of them read through private but *unprivileged* interfaces, which is
 described where each one is: see [System Monitor](#system-monitor) for temperatures and
@@ -505,7 +533,8 @@ two separate grants.
 
 ## Privacy
 
-Clipboard history is kept on your Mac, in `~/Library/Application Support/Sarvkrit/`. It is never
+Clipboard history and the water log are kept on your Mac, in
+`~/Library/Application Support/Sarvkrit/`. It is never
 uploaded anywhere — **the app contains no network code at all.**
 
 **One thing does reach the internet, and it is deliberately not part of the app.** Sarvkrit ships

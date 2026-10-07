@@ -12,6 +12,13 @@ enum MenuBarIconState: Equatable {
     case awake
     /// Won't sleep at all, lid closed or not — the system-wide flag.
     case systemSleepDisabled
+    /// Behind on water. Ranked under every safety and power state — a reminder to drink is the one
+    /// thing here that costs nothing if it goes unnoticed for a minute — but above the routine
+    /// Keep Awake cup, which the tray header still reports, and which is on for hours at a time.
+    /// A water reminder that the cup could hide all afternoon would be no reminder at all.
+    ///
+    /// Escalates by filling the drop, never by tinting it: see `WaterThirst`.
+    case thirsty(WaterThirst)
     /// The microphone is muted. Ranked above the sleep states below, because a live-looking mic that
     /// is actually muted has an immediate cost — you talk to nobody — where sleep behaviour does
     /// not.
@@ -27,6 +34,7 @@ enum MenuBarIconState: Equatable {
         case .idle: return "command.square"
         case .awake: return "cup.and.saucer.fill"
         case .systemSleepDisabled: return "bolt.fill"
+        case .thirsty(let thirst): return thirst.symbolName
         case .microphoneMuted: return "mic.slash.fill"
         case .cameraOn: return "video.fill"
         }
@@ -38,6 +46,7 @@ enum MenuBarIconState: Equatable {
         case .idle: return "Sarvkrit"
         case .awake: return "Sarvkrit — keeping your Mac awake"
         case .systemSleepDisabled: return "Sarvkrit — system sleep is disabled"
+        case .thirsty: return "Sarvkrit — time for some water"
         case .microphoneMuted: return "Sarvkrit — microphone muted"
         case .cameraOn: return "Sarvkrit — the camera is on"
         }
@@ -48,16 +57,19 @@ enum MenuBarIconState: Equatable {
     /// A camera that is on beats everything: it is a live exposure the user may not have noticed. A
     /// muted microphone comes next — the cost of not noticing it is immediate and personal, though
     /// it is a safety measure already working rather than a risk. Below those, a Mac that can't
-    /// sleep at all matters more than one that merely won't idle out.
+    /// sleep at all matters more than one that merely won't idle out. A water reminder sits between
+    /// the two sleep states — see `thirsty`.
     static func current(
         keepAwakeRunning: Bool,
         systemSleepDisabled: Bool,
         microphoneMuted: Bool = false,
-        cameraOn: Bool = false
+        cameraOn: Bool = false,
+        thirst: WaterThirst = .none
     ) -> MenuBarIconState {
         if cameraOn { return .cameraOn }
         if microphoneMuted { return .microphoneMuted }
         if systemSleepDisabled { return .systemSleepDisabled }
+        if thirst != .none { return .thirsty(thirst) }
         return keepAwakeRunning ? .awake : .idle
     }
 
@@ -78,6 +90,7 @@ enum MenuBarIconState: Equatable {
         case .systemSleepDisabled: prefix = "Sleep disabled"
         case .microphoneMuted: return "Mic muted"
         case .cameraOn: return "Camera on"
+        case .thirsty: return "Time for water"
         }
         guard let countdown = countdownText(remaining: remaining) else { return prefix }
         return "\(prefix) · \(countdown) left"
