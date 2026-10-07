@@ -65,7 +65,7 @@ final class FeatureStoreTests: XCTestCase {
                              "app-sweep", "shelf", "screenshot", "screen-recording", "pin-to-screen", "audio-switcher",
                              "mute-microphone", "music-blocker",
                              "volume-mixer", "privacy-guard",
-                             "displays", "keep-awake", "water-reminder", "system-monitor"])
-                             "displays", "keep-awake", "system-monitor", "fan-control"])
+                             "displays", "keep-awake", "water-reminder", "system-monitor",
+                             "fan-control"])
     }
 }
