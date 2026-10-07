@@ -27,6 +27,7 @@ enum FeatureRegistry {
             DisplaysFeature(),
             KeepAwakeFeature(),
             SystemMonitorFeature(),
+            FanControlFeature(),
         ]
     }
 }

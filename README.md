@@ -2,7 +2,7 @@
 
 The things macOS does differently than you'd expect — fixed. A menu bar app.
 
-Nineteen features, each an independent toggle you can turn on or off at any time. Nothing runs
+Twenty-one features, each an independent toggle you can turn on or off at any time. Nothing runs
 unless you switch it on, and turning something off stops it immediately.
 
 ```
@@ -402,6 +402,56 @@ A screen left dark with nothing on it to explain why is the one failure worth en
 Setting brightness needs no permission of any kind. Reading and setting the backlight uses a private
 but unprivileged framework, resolved at runtime, for the same reasons as the temperatures above; the
 dimming fallback is public API.
+
+#### Fan Control
+
+Shows what each fan is doing, and — if you want it to — sets how fast they run.
+
+- **Watch only**, which is what you get by default. Speed, and where that sits in the fan's own
+  range, for each fan.
+- **Set a speed** — a percentage, held until you change it.
+- **Speed up when hot** — "above 75 °C, run the fans at 70%". Below that, macOS has them back.
+
+**It cannot stop a fan, and 0% does not mean off.** Every speed is a percentage of that fan's own
+range, so 0% is its slowest, not stopped. Turning Fan Control off hands the fans back to macOS
+rather than leaving them anywhere in particular. There is no setting here that makes a Mac quieter
+than macOS would have it when macOS thinks it is hot — this only ever raises the floor.
+
+**Above 95 °C Sarvkrit gets out of the way**, whatever you have set, including a speed you chose by
+hand. At that temperature macOS is coordinating both fans, the power delivery and the chip's own
+clock speed, and a number someone typed last Tuesday is worse than letting it work. That cutout is
+not a setting.
+
+**A stopped fan reads 0 rpm, not a dash.** On Apple Silicon a cool Mac genuinely stops its fans, so
+that is the normal state rather than a missing reading. A dash means the Mac would not say.
+
+**MacBook Airs have no fans** and say so, rather than showing an empty panel.
+
+**Reading the fans is free; setting them is not.** Speeds come from the System Management
+Controller — the same coprocessor macOS uses to decide how fast the fans should run — through an
+undocumented but *unprivileged* interface: no password, no permission prompt, and nothing leaves
+your Mac. Writing to it is different, and it is the bargain the Power section above declines for
+per-chip wattage: macOS only lets a program running **as root** set a fan speed, and it has to keep
+running for as long as Sarvkrit is holding them.
+
+So Sarvkrit asks for your password once and starts a small background program that does nothing but
+write fan speeds. It hands the fans back to macOS when Sarvkrit quits, **when Sarvkrit crashes**,
+when it is killed, when it loses contact for fifteen seconds, or if a single write fails — four
+ways out, and every one of them ends with macOS driving. Switching the feature off needs no
+password: that program is already running and already listening.
+
+If it dies anyway, Sarvkrit tells you and stops rather than asking for your password again. A
+prompt that reappears every few seconds is indistinguishable from something trying to wear you
+down. And unlike Keep Awake's lid-closed option, **restarting your Mac clears it regardless** — the
+controller forgets a forced fan speed when the power cycles, so the worst case here is loud fans
+until you reboot, not a setting that outlives the app.
+
+The honest cost, stated plainly: a program running as root is a bigger thing to trust than
+everything else in Sarvkrit put together. It is one file, it takes four commands, it holds no
+settings of its own, and it is the only part of Sarvkrit that can write to the fan controller —
+Sarvkrit itself cannot, and there is a test that fails if that ever stops being true. Before
+running it, Sarvkrit copies it somewhere only root can write, checks its signature there, and runs
+that copy, so that swapping the file for another one in between is not a way in.
 
 ---
 
