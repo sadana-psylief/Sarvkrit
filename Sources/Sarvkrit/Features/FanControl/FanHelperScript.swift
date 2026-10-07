@@ -37,20 +37,67 @@ enum FanHelperScript {
         "identifier \"\(bundleIdentifier)\" and anchor apple generic "
         + "and certificate leaf[subject.OU] = \"77A36893HP\""
 
-    /// One password, one long-lived root process listening on `socketPath`.
+    /// The launchd job the helper runs as. One label, so a second activation replaces the first.
+    static let jobLabel = "ai.psylief.sarvkrit.fanhelper"
+
+    /// One password, one long-lived root process connecting to `socketPath`.
+    ///
+    /// **The helper is handed to launchd rather than backgrounded.** `do shell script ... with
+    /// administrator privileges` reaps everything the script started the moment it returns, and
+    /// neither `nohup &` nor a `setsid()` re-exec escapes it. Both were shipped and both were
+    /// measured dying within 100 ms, without logging a line. A job bootstrapped into the system
+    /// domain belongs to launchd, not to the script, so it outlives it. `KeepAlive` is false, so
+    /// when the helper exits on any of its own ways out, launchd leaves it exited.
+    ///
+    /// The plist lives in the root-owned stage directory and is never installed anywhere that
+    /// persists, so a reboot leaves nothing behind.
     static func launchScript(helperPath: String, socketPath: String, pid: Int32, uid: uid_t)
         -> String? {
-        guard let helper = shellQuoted(helperPath), let socket = shellQuoted(socketPath) else {
+        guard let helper = shellQuoted(helperPath), shellQuoted(socketPath) != nil else {
             return nil
         }
-        let run = "/usr/bin/nohup \"$STAGE/helper\" --tag '\(tag)' --socket \(socket)"
-            + " --owner-pid \(pid) --owner-uid \(uid) >/dev/null 2>&1 &"
-        return preamble(helper: helper) + "\n" + run
+        // The helper's own path is set afterwards with PlistBuddy, because the plist is written
+        // through a quoted heredoc that expands nothing, so `$STAGE` cannot appear in it.
+        let arguments = [stagedPlaceholder, "--tag", tag, "--socket", socketPath,
+                         "--owner-pid", String(pid), "--owner-uid", String(uid)]
+        return """
+        \(preamble(helper: helper))
+        /bin/cat > "$STAGE/job.plist" <<'PLIST'
+        \(jobPlist(arguments: arguments))
+        PLIST
+        /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $STAGE/helper" "$STAGE/job.plist" || exit 4
+        /bin/chmod 0644 "$STAGE/job.plist" || exit 4
+        /bin/launchctl bootstrap system "$STAGE/job.plist" || exit 5
+        """
     }
 
-    /// A one-shot for the stranded case: hand the fans back and exit. No socket, no `nohup`, and
-    /// nothing left running — a release that left a root process behind would be the opposite of
-    /// what was asked for.
+    /// Stands in for the staged helper's path until PlistBuddy replaces it.
+    static let stagedPlaceholder = "STAGED_HELPER"
+
+    static func jobPlist(arguments: [String]) -> String {
+        let strings = arguments.map { "<string>\(xmlEscaped($0))</string>" }.joined()
+        return """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>\
+        <key>Label</key><string>\(jobLabel)</string>\
+        <key>ProgramArguments</key><array>\(strings)</array>\
+        <key>RunAtLoad</key><true/>\
+        <key>KeepAlive</key><false/>\
+        </dict></plist>
+        """
+    }
+
+    private static func xmlEscaped(_ text: String) -> String {
+        text.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    /// A one-shot for the stranded case: hand the fans back and exit. No socket, no job, and
+    /// nothing left running. A release that left a root process behind would be the opposite of
+    /// what was asked for. It runs in the foreground, so it finishes before the script returns.
     static func releaseScript(helperPath: String) -> String? {
         guard let helper = shellQuoted(helperPath) else { return nil }
         return """
@@ -60,10 +107,15 @@ enum FanHelperScript {
         """
     }
 
+    /// Stops whatever is already running before staging a new copy: the launchd job, and any
+    /// helper a pre-launchd build left behind. Booting the job out sends it SIGTERM, which the
+    /// helper answers by handing the fans back. Earlier stage directories go with it.
     private static func preamble(helper: String) -> String {
         let verify = "/usr/bin/codesign --verify --strict -R='\(codeRequirement)' \"$STAGE/helper\""
         return """
-        pkill -f '\(tag)' 2>/dev/null
+        /bin/launchctl bootout system/\(jobLabel) 2>/dev/null
+        /usr/bin/pkill -f '\(tag)' 2>/dev/null
+        /bin/rm -rf /var/run/sarvkrit-fan.*
         STAGE=$(/usr/bin/mktemp -d /var/run/sarvkrit-fan.XXXXXXXX) || exit 2
         /usr/sbin/chown root:wheel "$STAGE" || exit 2
         /bin/chmod 0700 "$STAGE" || exit 2

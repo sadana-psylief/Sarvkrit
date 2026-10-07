@@ -25,15 +25,12 @@ final class FanHelperOptionsTests: XCTestCase {
         let script = try XCTUnwrap(FanHelperScript.launchScript(
             helperPath: "/Applications/Sarvkrit.app/Contents/MacOS/sarvkrit-fan-helper",
             socketPath: "/tmp/fan.sock", pid: 4242, uid: 501))
-        let launchLine = try XCTUnwrap(
-            script.split(separator: "\n").first { $0.contains("--owner-pid") })
-
-        // Everything after the staged binary, unquoted the way a shell would.
-        let arguments = launchLine
-            .split(separator: " ")
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'")) }
-            .drop { $0 != "--tag" }
-            .prefix { $0 != ">/dev/null" }
+        // The job's ProgramArguments, read the way launchd reads them, minus the helper itself.
+        let start = try XCTUnwrap(script.range(of: "<?xml"))
+        let plist = script[start.lowerBound...].components(separatedBy: "\nPLIST")[0]
+        let parsed = try XCTUnwrap(PropertyListSerialization.propertyList(
+            from: Data(plist.utf8), format: nil) as? [String: Any])
+        let arguments = try XCTUnwrap(parsed["ProgramArguments"] as? [String]).dropFirst()
 
         let options = try XCTUnwrap(FanHelperOptions(arguments: Array(arguments)))
         XCTAssertEqual(options.ownerPID, 4242)
@@ -66,24 +63,6 @@ final class FanHelperOptionsTests: XCTestCase {
     func testAHelperWillNotWorkOnBehalfOfRoot() {
         XCTAssertNil(FanHelperOptions(arguments:
             ["--socket", "/tmp/f.sock", "--owner-pid", "4242", "--owner-uid", "0"]))
-    }
-
-    /// The helper re-execs itself into its own session to escape the process group that
-    /// `do shell script with administrator privileges` tears down. The second copy is told not to
-    /// do it again, or it would spawn itself forever.
-    func testTheDetachedFlagIsParsedAndDefaultsToFalse() throws {
-        XCTAssertFalse(try XCTUnwrap(FanHelperOptions(arguments: full)).hasDetached)
-        XCTAssertTrue(try XCTUnwrap(FanHelperOptions(arguments: full + ["--detached"])).hasDetached)
-    }
-
-    /// It is a bare flag, not a flag with a value — the parser must not swallow the next argument.
-    func testTheDetachedFlagDoesNotSwallowWhatFollowsIt() throws {
-        let options = try XCTUnwrap(FanHelperOptions(
-            arguments: ["--detached", "--socket", "/tmp/f.sock",
-                        "--owner-pid", "4242", "--owner-uid", "501"]))
-        XCTAssertTrue(options.hasDetached)
-        XCTAssertEqual(options.socketPath, "/tmp/f.sock")
-        XCTAssertEqual(options.ownerPID, 4242)
     }
 
     func testTheIdleTimeoutHasASaneDefaultAndCanBeSet() throws {

@@ -15,6 +15,19 @@ final class FanHelperScriptTests: XCTestCase {
             pid: 4242, uid: 501)
     }
 
+    /// The launchd job the script would bootstrap, parsed the way launchd parses it.
+    private func job(socketPath: String? = nil) throws -> [String: Any] {
+        let script = try XCTUnwrap(launch(socketPath: socketPath))
+        let start = try XCTUnwrap(script.range(of: "<?xml"))
+        let plist = script[start.lowerBound...].components(separatedBy: "\nPLIST")[0]
+        return try XCTUnwrap(PropertyListSerialization.propertyList(
+            from: Data(plist.utf8), format: nil) as? [String: Any])
+    }
+
+    private func arguments(socketPath: String? = nil) throws -> [String] {
+        try XCTUnwrap(job(socketPath: socketPath)["ProgramArguments"] as? [String])
+    }
+
     // MARK: - The signing requirement
 
     /// The team OU alone is satisfied by *every* binary this team ever signs — including Sarvkrit
@@ -53,7 +66,7 @@ final class FanHelperScriptTests: XCTestCase {
     func testTheScriptVerifiesTheHelperBeforeRunningIt() throws {
         let script = try XCTUnwrap(launch())
         let verify = try XCTUnwrap(script.range(of: "/usr/bin/codesign"))
-        let run = try XCTUnwrap(script.range(of: "--owner-pid"))
+        let run = try XCTUnwrap(script.range(of: "/bin/launchctl bootstrap"))
         XCTAssertLessThan(verify.lowerBound, run.lowerBound,
                           "the helper must be verified before it is run")
     }
@@ -61,10 +74,11 @@ final class FanHelperScriptTests: XCTestCase {
     /// The staged copy is what runs. Running the original would make the verification decorative.
     func testTheScriptRunsTheStagedCopyRatherThanTheBundledBinary() throws {
         let script = try XCTUnwrap(launch())
-        let launchLine = try XCTUnwrap(
-            script.split(separator: "\n").first { $0.contains("--owner-pid") })
-        XCTAssertFalse(launchLine.contains(helper),
-                       "the launch line must not exec the bundled path: \(launchLine)")
+        XCTAssertEqual(try arguments().first, FanHelperScript.stagedPlaceholder)
+        XCTAssertTrue(script.contains(
+            "/usr/libexec/PlistBuddy -c \"Set :ProgramArguments:0 $STAGE/helper\""))
+        let mentions = script.components(separatedBy: helper).count - 1
+        XCTAssertEqual(mentions, 1, "the bundled path should appear only in the copy")
     }
 
     func testTheStagingDirectoryIsRootOwnedAndPrivate() throws {
@@ -79,7 +93,8 @@ final class FanHelperScriptTests: XCTestCase {
     /// A relative path would resolve against whatever PATH root happens to have.
     func testEveryBinaryIsCalledByAbsolutePath() throws {
         let script = try XCTUnwrap(launch())
-        for tool in ["cp", "chmod", "chown", "mktemp", "codesign", "pkill"] {
+        for tool in ["cp", "chmod", "chown", "mktemp", "codesign", "pkill", "launchctl",
+                     "PlistBuddy", "rm", "cat"] {
             XCTAssertFalse(script.contains(" \(tool) "), "\(tool) is called without a full path")
         }
     }
@@ -89,16 +104,46 @@ final class FanHelperScriptTests: XCTestCase {
     func testAPreviousHelperIsKilledFirst() throws {
         let script = try XCTUnwrap(launch())
         XCTAssertTrue(script.contains("pkill -f '\(FanHelperScript.tag)'"))
-        let kill = try XCTUnwrap(script.range(of: "pkill"))
+        XCTAssertTrue(script.contains("/bin/launchctl bootout system/\(FanHelperScript.jobLabel)"))
         let copy = try XCTUnwrap(script.range(of: "/bin/cp"))
-        XCTAssertLessThan(kill.lowerBound, copy.lowerBound)
+        for step in ["/bin/launchctl bootout", "pkill"] {
+            let range = try XCTUnwrap(script.range(of: step))
+            XCTAssertLessThan(range.lowerBound, copy.lowerBound, "\(step) must come first")
+        }
     }
 
     func testTheHelperIsToldWhoItIsWorkingFor() throws {
+        XCTAssertEqual(try arguments().dropFirst(), [
+            "--tag", FanHelperScript.tag, "--socket", socket,
+            "--owner-pid", "4242", "--owner-uid", "501"])
+    }
+
+    // MARK: - Launched by launchd, not by the script
+
+    /// `do shell script ... with administrator privileges` reaps everything the script started
+    /// when it returns. `nohup &` and a `setsid()` re-exec were both measured dying within 100 ms.
+    /// A system-domain job belongs to launchd, so it survives the script.
+    func testTheHelperIsBootstrappedAsALaunchdJobRatherThanBackgrounded() throws {
         let script = try XCTUnwrap(launch())
-        XCTAssertTrue(script.contains("--owner-pid 4242"))
-        XCTAssertTrue(script.contains("--owner-uid 501"))
-        XCTAssertTrue(script.contains("--tag '\(FanHelperScript.tag)'"))
+        XCTAssertTrue(script.hasSuffix(#"/bin/launchctl bootstrap system "$STAGE/job.plist" || exit 5"#))
+        XCTAssertFalse(script.contains("nohup"))
+        XCTAssertFalse(script.contains(" &\n") || script.hasSuffix("&"), "nothing is backgrounded")
+        XCTAssertEqual(try job()["Label"] as? String, FanHelperScript.jobLabel)
+    }
+
+    /// The helper's ways out (app gone, socket closed, idle, signal) all end in exit. launchd must
+    /// let that stand rather than starting a fresh root process nobody asked for.
+    func testLaunchdDoesNotRestartTheHelperWhenItExits() throws {
+        XCTAssertEqual(try job()["KeepAlive"] as? Bool, false)
+        XCTAssertEqual(try job()["RunAtLoad"] as? Bool, true)
+    }
+
+    /// The plist goes through a quoted heredoc, so the shell expands nothing in it, and the socket
+    /// path is XML-escaped. Both have to hold for the path to reach the helper intact.
+    func testAnAwkwardSocketPathReachesTheHelperIntact() throws {
+        let awkward = "/Users/a&b <c>/$(whoami)/`id`/fan.sock"
+        XCTAssertEqual(try arguments(socketPath: awkward)[4], awkward)
+        XCTAssertTrue(try XCTUnwrap(launch(socketPath: awkward)).contains("<<'PLIST'"))
     }
 
     // MARK: - Quoting, because the user can rename the app
