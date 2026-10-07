@@ -114,7 +114,6 @@ final class StudioDocumentModel: ObservableObject {
     @Published private(set) var isDirty = false
     /// Whether the shortcuts sheet is up. Set from the window's ⌘/ and cleared by the sheet.
     @Published var isShowingShortcuts = false
-    @Published var exportProgress: Double?
     /// The banner offering the trimmed start-up seconds back, or nil once it has been acted on.
     ///
     /// Separate from `trimmedLeadIn`, which is a fact about how the project was created and never

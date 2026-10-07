@@ -60,7 +60,6 @@ enum StudioRenderer {
     final class Cache {
         fileprivate var backgroundKey: String?
         fileprivate var background: CGImage?
-        fileprivate var canvasSize: CGSize = .zero
         init() {}
     }
 
@@ -121,19 +120,12 @@ enum StudioRenderer {
                      /// metadata rather than a project edit, so it is passed rather than saved.
                      cameraStart: TimeInterval = 0) {
 
-        // 1 — background. Cached: it is the same picture every frame.
-        drawBackground(project: project, canvas: canvas, sources: sources,
-                       in: context, cache: cache)
-
-        // 2 and 3 — the screen, with its shadow underneath following the corner radius rather than
-        // the bitmap's square edges.
+        // 1 and 2 — the background, and the screen's shadow following the corner radius rather
+        // than the bitmap's square edges. One cached picture: neither changes between frames.
         var style = project.background
         style.aspect = project.aspect
-        BackgroundCompositor.drawSurround(style: style,
-                                          canvas: CGRect(origin: .zero, size: canvas),
-                                          imageRect: imageRect, in: context,
-                                          sources: .init(base: sources.screen,
-                                                         wallpaper: sources.wallpaper))
+        drawBackground(style: style, canvas: canvas, imageRect: imageRect, sources: sources,
+                       in: context, cache: cache)
 
         // A device frame insets the recording rather than growing the canvas, so turning it on
         // does not change how much of the picture is visible.
@@ -198,38 +190,90 @@ enum StudioRenderer {
 
     // MARK: - Background
 
-    private static func drawBackground(project: StudioProject, canvas: CGSize,
+    /// Device pixels per canvas point on `context`.
+    ///
+    /// **A shadow's offset and blur are in device pixels and ignore the transform**, so anything
+    /// that casts one onto a scaled context multiplies by this, or an export shrunk to 1080p keeps
+    /// shadows sized for the full canvas.
+    static func pixelScale(of context: CGContext) -> CGFloat {
+        let t = context.userSpaceToDeviceSpaceTransform
+        return max(0.0001, abs(t.a * t.d - t.b * t.c).squareRoot())
+    }
+
+    /// The fill and the screen's shadow, as one picture.
+    ///
+    /// **Painted once, not twice a frame.** This used to cache the fill alone, and then
+    /// `BackgroundCompositor.drawSurround` painted the same fill again, uncached, straight over it —
+    /// followed by two full-canvas Gaussian blurs for the shadow. Every one of those pixels was the
+    /// same from frame to frame, and repainting them was 45% of an export's time.
+    ///
+    /// **At the pixel size it lands at.** An export scaled down to 1080p then blits a 1080p picture,
+    /// rather than shrinking a six-megapixel one every frame; the preview gets one at its own size.
+    private static func drawBackground(style: CaptureBackground, canvas: CGSize, imageRect: CGRect,
                                        sources: FrameSources, in context: CGContext,
                                        cache: Cache) {
-        let key = backgroundKey(project.background, canvas: canvas)
-        if cache.backgroundKey == key, let cached = cache.background, cache.canvasSize == canvas {
-            context.drawFlipped(cached, in: CGRect(origin: .zero, size: canvas))
+        let rect = CGRect(origin: .zero, size: canvas)
+        let device = context.convertToDeviceSpace(rect)
+        // Device pixels per canvas point, exactly — and a bitmap rounded *up* to whole pixels and
+        // drawn back at its own size, so it sits on the destination's pixel grid and the blit is a
+        // copy rather than a resample. Rounding the bitmap to the canvas would stretch it by a
+        // fraction of a pixel whenever the canvas is fractional, which a padded one usually is.
+        let scaleX = abs(device.width) / canvas.width
+        let scaleY = abs(device.height) / canvas.height
+        let width = max(1, Int(abs(device.width).rounded(.up)))
+        let height = max(1, Int(abs(device.height).rounded(.up)))
+        let placed = CGRect(x: 0, y: 0, width: CGFloat(width) / scaleX,
+                            height: CGFloat(height) / scaleY)
+        let key = backgroundKey(style, canvas: canvas, imageRect: imageRect,
+                                width: width, height: height)
+        if cache.backgroundKey == key, let cached = cache.background {
+            context.drawFlipped(cached, in: placed)
             return
         }
 
+        // BGRA, the order the exporter's pixel buffers are in, so the blit is a copy.
         guard let scratch = CGContext(
-            data: nil, width: Int(canvas.width.rounded()), height: Int(canvas.height.rounded()),
+            data: nil, width: width, height: height,
             bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
-        BackgroundCompositor.drawFill(project.background.fill,
-                                      in: CGRect(origin: .zero, size: canvas),
-                                      context: scratch,
-                                      sources: .init(base: sources.screen,
-                                                     wallpaper: sources.wallpaper))
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
+        // Top-left origin in canvas units, the space `frame(of:)` sets up and `drawSurround` was
+        // written for: the shadow's offset and the rounded rect only mean what they say in it.
+        scratch.translateBy(x: 0, y: CGFloat(height))
+        scratch.scaleBy(x: scaleX, y: -scaleY)
+
+        // **A shadow ignores the transform.** Its offset and blur are in device pixels, so at any
+        // scale but 1 they are scaled by hand — or a frame shrunk to 1080p keeps a shadow sized for
+        // the full canvas.
+        var scaled = style
+        if var shadow = scaled.shadow {
+            shadow.radius *= (scaleX + scaleY) / 2
+            shadow.offsetY *= scaleY
+            scaled.shadow = shadow
+        }
+        BackgroundCompositor.drawSurround(style: scaled, canvas: rect, imageRect: imageRect,
+                                          in: scratch,
+                                          sources: .init(base: sources.screen,
+                                                         wallpaper: sources.wallpaper))
         guard let image = scratch.makeImage() else { return }
         cache.background = image
         cache.backgroundKey = key
-        cache.canvasSize = canvas
-        context.drawFlipped(image, in: CGRect(origin: .zero, size: canvas))
+        context.drawFlipped(image, in: placed)
     }
 
     /// A blurred fill is derived from the capture and therefore changes with it; everything else is
-    /// a description and can be keyed by its own value.
-    private static func backgroundKey(_ background: CaptureBackground, canvas: CGSize) -> String {
-        if case .blurred = background.fill { return "blurred-\(canvas)-\(UUID().uuidString)" }
-        let data = try? JSONEncoder().encode(background.fill)
-        return "\(canvas)-\(data?.hashValue ?? 0)"
+    /// a description and can be keyed by its own value — the whole style, since the shadow, the
+    /// corner radius and the screen's place are all in the picture now.
+    private static func backgroundKey(_ style: CaptureBackground, canvas: CGSize,
+                                      imageRect: CGRect, width: Int, height: Int) -> String {
+        let place = "\(canvas)-\(imageRect)-\(width)x\(height)"
+        if case .blurred = style.fill { return "blurred-\(place)-\(UUID().uuidString)" }
+        // Sorted, so the same style always encodes to the same bytes and the key cannot miss.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let data = try? encoder.encode(style)
+        return "\(place)-\(data?.hashValue ?? 0)"
     }
 
     // MARK: - Screen
@@ -668,8 +712,11 @@ extension StudioRenderer {
         if let shadow = project.camera.shadow {
             context.saveGState()
             context.setAlpha(CGFloat(state.opacity))
-            context.setShadow(offset: CGSize(width: 0, height: -shadow.offsetY),
-                              blur: shadow.radius,
+            // In device pixels, which ignore the transform: scaled so the shadow keeps its size
+            // relative to the bubble at any export size.
+            let pixels = pixelScale(of: context)
+            context.setShadow(offset: CGSize(width: 0, height: -shadow.offsetY * pixels),
+                              blur: shadow.radius * pixels,
                               color: CGColor(red: 0, green: 0, blue: 0,
                                              alpha: CGFloat(shadow.opacity)))
             context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))

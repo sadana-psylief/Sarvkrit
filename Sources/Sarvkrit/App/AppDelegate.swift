@@ -130,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case .exportEditor(let destination, let preset):
                 if !StudioEditorController.shared.export(to: destination, preset: preset) {
-                    Self.urlLog.error("export with no editor open")
+                    Self.urlLog.error("export refused: no editor open, or that file is being written")
                 }
             case .playPause:
                 if !StudioEditorController.shared.togglePlayback() {
@@ -242,7 +242,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Clipboard writes are coalesced onto a background queue so a copy never stalls the main
     /// thread. That trade is only safe if quitting waits for the last one — otherwise the most
     /// recent copies would be lost on the way out.
+    /// **An export is work somebody is waiting for, so quitting asks.** And if they quit anyway,
+    /// every export is cancelled and given a moment to stop — which is what removes its file. A
+    /// half-written video has no header, and left on the Desktop it looks exactly like the export
+    /// having produced a broken file.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let queue = ExportQueue.shared
+        guard queue.isBusy else { return .terminateNow }
+
+        let alert = NSAlert()
+        alert.messageText = queue.jobs.count == 1
+            ? "An export is still running"
+            : "\(queue.jobs.count) exports are still running or waiting"
+        alert.informativeText = "Quitting stops them, and nothing is kept of the ones that have not finished."
+        alert.addButton(withTitle: "Keep Exporting")
+        alert.addButton(withTitle: "Quit")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+
+        queue.stopAll { NSApp.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        // The export's own clean-up runs on a task that may never get its turn once the process is
+        // going; this one is synchronous, so a stopped export cannot outlive the app as a file.
+        if let running = ExportQueue.shared.running {
+            try? FileManager.default.removeItem(at: running.work.destination)
+        }
+
         // Belt and braces. Floating windows die with the process anyway, but quitting is exactly
         // the moment a user reaches for when something is stuck, and it must not leave anything
         // behind — including a hidden cursor.
