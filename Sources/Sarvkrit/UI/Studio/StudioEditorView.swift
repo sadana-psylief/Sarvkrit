@@ -6,7 +6,6 @@ struct StudioEditorView: View {
     @ObservedObject var model: StudioDocumentModel
     @ObservedObject var player: StudioPlayer
     let onExport: () -> Void
-    let onCancelExport: () -> Void
     let onPlayPause: () -> Void
     let onScrub: (TimeInterval) -> Void
 
@@ -80,23 +79,13 @@ struct StudioEditorView: View {
 
             Spacer()
 
-            if let progress = model.exportProgress {
-                ProgressView(value: progress)
-                    .frame(width: 120)
-                Text("\(Int(progress * 100))%")
-                    .font(.system(size: Theme.Typography.caption))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                // A progress bar with no way to stop it is a hostage situation, and an export of a
-                // long recording is exactly when somebody realises they picked the wrong preset.
-                Button("Cancel", action: onCancelExport)
-                    .accessibilityLabel("Cancel the export")
-            }
+            ExportStatusView(queue: ExportQueue.shared, bundle: model.bundle)
 
+            // **Never disabled by another export.** Pressing it while one runs queues this one
+            // behind it, which is what somebody exporting two presets of the same take wants.
             Button(action: onExport) {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
-            .disabled(model.exportProgress != nil)
         }
         .padding(.horizontal, Theme.Space.lg)
         .frame(height: 44)

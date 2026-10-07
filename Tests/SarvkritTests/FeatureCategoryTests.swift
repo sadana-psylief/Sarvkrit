@@ -128,6 +128,9 @@ final class FeatureCategoryTests: XCTestCase {
                 "displays",
                 "system-monitor",
                 "water-reminder",
+                // Fan Control lists each fan with its own speed and range, which the generic
+                // pane's fixed prose cannot say — and on a fanless Mac it has to say so instead.
+                "fan-control",
             ]
             for feature in features {
                 let custom = feature.makeDetailView()
