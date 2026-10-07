@@ -30,6 +30,10 @@ struct MenuBarLabel: View {
     /// Observed directly so each sample it publishes moves the numbers. This is also why the
     /// monitor needs no ticker here: unlike the countdown, its value arrives already published.
     @ObservedObject var monitor: SystemMonitorFeature
+    /// Observed directly like the rest. The drop filling is the whole first stage of the reminder,
+    /// so an icon that caught up only on some unrelated redraw would skip straight to the
+    /// notification.
+    @ObservedObject var water: WaterReminderFeature
 
     /// Re-read only while a countdown is running, and only twice a minute: minute resolution needs
     /// nothing finer, and a per-second timer in the menu bar is exactly the idle cost this app has
@@ -65,7 +69,8 @@ struct MenuBarLabel: View {
             keepAwakeRunning: keepAwake.isRunning,
             systemSleepDisabled: keepAwake.systemSleepDisabled,
             microphoneMuted: micMute.isMuted || privacy.isMicrophoneMuted,
-            cameraOn: privacy.isCameraOn
+            cameraOn: privacy.isCameraOn,
+            thirst: water.thirst
         )
     }
 

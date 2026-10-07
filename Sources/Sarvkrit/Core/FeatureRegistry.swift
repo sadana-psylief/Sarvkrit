@@ -26,6 +26,7 @@ enum FeatureRegistry {
             PrivacyGuardFeature(),
             DisplaysFeature(),
             KeepAwakeFeature(),
+            WaterReminderFeature(),
             SystemMonitorFeature(),
             FanControlFeature(),
         ]

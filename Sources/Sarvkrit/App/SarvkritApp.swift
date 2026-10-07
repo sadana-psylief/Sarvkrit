@@ -24,9 +24,11 @@ struct SarvkritApp: App {
             if let keepAwake = state.features.compactMap({ $0 as? KeepAwakeFeature }).first,
                let micMute = state.features.compactMap({ $0 as? MuteMicrophoneFeature }).first,
                let privacy = state.features.compactMap({ $0 as? PrivacyGuardFeature }).first,
-               let monitor = state.features.compactMap({ $0 as? SystemMonitorFeature }).first {
+               let monitor = state.features.compactMap({ $0 as? SystemMonitorFeature }).first,
+               let water = state.features.compactMap({ $0 as? WaterReminderFeature }).first {
                 MenuBarLabel(
-                    keepAwake: keepAwake, micMute: micMute, privacy: privacy, monitor: monitor)
+                    keepAwake: keepAwake, micMute: micMute, privacy: privacy, monitor: monitor,
+                    water: water)
             } else {
                 Image(systemName: MenuBarIconState.idle.symbolName)
             }

@@ -150,11 +150,13 @@ final class TrayPanelTests: XCTestCase {
         }
     }
 
-    func testKeepAwakeIsTheOnlyFeatureThatDoesThat() {
-        // A second one would mean a panel that draws nothing, which is what the flag exists to
-        // prevent. If this ever fails deliberately, the reason belongs in the new feature's header.
+    func testOnlyFeaturesWithSomethingToShowWhileOffDoThat() {
+        // A feature here must have a panel that draws something while switched off, which is what
+        // the flag exists to protect. Water Reminder is the second: its count and log buttons work
+        // with the reminders off — see the header of `WaterReminderFeature`. Any further one needs
+        // its reason in its own header too.
         let owned = FeatureRegistry.makeAll().filter(\.panelIsItsOwnSwitch).map(\.id)
-        XCTAssertEqual(owned, ["keep-awake"])
+        XCTAssertEqual(owned, ["keep-awake", "water-reminder"])
     }
 
     // MARK: - Persistence and publish behaviour

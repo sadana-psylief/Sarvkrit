@@ -230,6 +230,59 @@ final class TrayPanelRenderTests: XCTestCase {
         }
     }
 
+    /// Stands in for the notification center, so switching the feature on in a render test can't
+    /// raise a real permission prompt in the test host.
+    private final class SilentNotifier: NotificationPosting {
+        func permission(_ completion: @escaping (NotificationPermission) -> Void) { completion(.denied) }
+        func requestPermission(_ completion: @escaping (NotificationPermission) -> Void) { completion(.denied) }
+        func register(category: String, actions: [NotificationAction]) {}
+        func post(id: String, category: String, title: String, body: String) {}
+        func remove(ids: [String]) {}
+        func onAction(category: String, _ handler: @escaping (String) -> Void) {}
+    }
+
+    func testTheWaterPanelAndPaneLayOutWithADayLogged() throws {
+        // Fresh defaults and a scratch log, so the picture is the same on every machine and never
+        // shows — or writes to — the developer's own water log.
+        let suite = "water.render.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let now = Date()
+        let feature = WaterReminderFeature(
+            defaults: defaults, store: HydrationStore(directory: directory),
+            notifier: SilentNotifier(), usesTimers: false, now: { now })
+        feature.unit = .milliliters
+        for daysAgo in 1...13 {
+            feature.logDrink(milliliters: 1_000 + (daysAgo * 137) % 1_200,
+                             at: now.addingTimeInterval(Double(-daysAgo) * 86_400))
+        }
+        feature.logDrink(milliliters: 250, at: now.addingTimeInterval(-3 * 3_600))
+        feature.logDrink(milliliters: 500, at: now.addingTimeInterval(-3_600))
+        feature.activate()
+        defer { feature.deactivate() }
+
+        for scheme in [ColorScheme.light, .dark] {
+            let panel = try snapshot(
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    SectionHeader("Water")
+                    WaterTrayView(feature: feature)
+                }
+                .padding(Theme.Space.md),
+                scheme: scheme)
+            XCTAssertGreaterThan(panel.pixelsHigh, 0)
+            try write(panel, named: "live-water-\(scheme == .dark ? "dark" : "light")")
+
+            let pane = try snapshot(
+                WaterDetailView(feature: feature).frame(height: 1_400), scheme: scheme)
+            XCTAssertGreaterThan(pane.pixelsHigh, 0)
+            try write(pane, named: "pane-water-\(scheme == .dark ? "dark" : "light")")
+        }
+    }
+
     func testEveryMonitorPanelSurvivesAHistoryThatIsEntirelyGaps() throws {
         // The NaN-shaped case `SystemMonitorPaneRenderTests` pins for the window's pane: an all-gap
         // window is an empty y-domain, and a chart handed one draws nothing or crashes. All four

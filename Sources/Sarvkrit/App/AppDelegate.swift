@@ -4,6 +4,13 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Before launch finishes, not in `applicationDidFinishLaunching`: a button tapped on a
+    /// notification while the app wasn't running is delivered to the center's delegate during
+    /// launch, and a delegate set afterwards never hears about it.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        SystemNotifications.shared.install()
+    }
+
     /// An LSUIElement app has no Dock icon and no window of its own, so a first launch would
     /// otherwise be completely silent: the user double-clicks the app they just installed and
     /// nothing happens except a new glyph quietly appearing in the menu bar. Show onboarding
@@ -285,6 +292,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppState.shared.features
             .compactMap { $0 as? ScreenshotFeature }
             .forEach { $0.store.flush() }
+        AppState.shared.features
+            .compactMap { $0 as? WaterReminderFeature }
+            .forEach { $0.flush() }
     }
 
     /// Same closure-wiring as the clipboard picker, for the same reason: the feature never imports
