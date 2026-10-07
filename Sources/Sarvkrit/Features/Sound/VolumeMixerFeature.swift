@@ -16,10 +16,14 @@ final class VolumeMixerFeature: Feature, ObservableObject {
     let id = "volume-mixer"
     let category = FeatureCategory.sound
     let title = "Volume Mixer"
-    let summary = "A separate volume for each app"
+    let summary = "A separate volume and output for each app"
     let details = """
         Give each app its own volume. Turn a noisy one down without touching everything else, and \
         the setting sticks — an app you set to 40% is still at 40% next week.
+
+        You can also send an app to its own speakers or headphones — music on the speakers, a call \
+        in your AirPods. If that device goes away the app plays on your usual output, and goes back \
+        when the device returns.
 
         Apps appear here while they're playing, because that's when a mixer is useful.
 
@@ -36,8 +40,13 @@ final class VolumeMixerFeature: Feature, ObservableObject {
     /// Set once we've been rendering for a while and heard nothing but silence — which is what a
     /// refused permission looks like, since every call still reports success.
     @Published private(set) var permissionLooksDenied = false
+    /// The devices an app can be sent to.
+    @Published private(set) var outputDevices: [AudioDevice] = []
 
     private var levels: MixerLevels
+    private var routes: MixerRoutes
+    private var defaultOutputUID: String?
+    private let deviceMonitor = AudioDeviceMonitor()
     private var taps: [String: AudioProcessTap] = [:]
     private var pollTimer: Timer?
 
@@ -50,6 +59,7 @@ final class VolumeMixerFeature: Feature, ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         levels = MixerLevels(defaults: defaults)
+        routes = MixerRoutes(defaults: defaults)
     }
 
     // MARK: - Levels
@@ -66,24 +76,51 @@ final class VolumeMixerFeature: Feature, ObservableObject {
         reconcileTaps()
     }
 
+    /// Puts an app back to full volume on the system output.
     @MainActor
-    func resetLevel(for bundleID: String) {
+    func reset(_ bundleID: String) {
         objectWillChange.send()
         levels.reset(bundleID)
+        routes.reset(bundleID)
         taps[bundleID]?.setLevel(1)
         reconcileTaps()
     }
 
     @MainActor
-    func resetAllLevels() {
+    func resetAll() {
         objectWillChange.send()
         levels.resetAll()
+        routes.resetAll()
         teardownTaps()
     }
 
-    /// Every app the user has set a level for, so nothing is quietly turned down somewhere they
-    /// can't find it.
-    var customisedBundleIDs: [String] { levels.levels.keys.sorted() }
+    /// Every app the user has set a level or an output for, so nothing is quietly turned down or
+    /// sent somewhere they can't find it.
+    var customisedBundleIDs: [String] {
+        Set(levels.levels.keys).union(routes.routes.keys).sorted()
+    }
+
+    // MARK: - Outputs
+
+    /// Nil when the app follows the system output.
+    func route(for bundleID: String) -> MixerRoutes.Route? { routes.route(for: bundleID) }
+
+    /// Whether the app's chosen device is connected right now. When it isn't, the app is playing on
+    /// the system output and the UI should say so.
+    func isRouteAvailable(for bundleID: String) -> Bool {
+        guard let uid = routes.route(for: bundleID)?.uid else { return true }
+        return outputDevices.contains { $0.uid == uid }
+    }
+
+    /// Nil sends the app back to the system output.
+    @MainActor
+    func setOutput(_ device: AudioDevice?, for bundleID: String) {
+        let route = device.map { MixerRoutes.Route(uid: $0.uid, name: $0.name) }
+        guard route != routes.route(for: bundleID) else { return }
+        objectWillChange.send()
+        routes.setRoute(route, for: bundleID)
+        reconcileTaps()
+    }
 
     // MARK: - Lifecycle
 
@@ -94,6 +131,10 @@ final class VolumeMixerFeature: Feature, ObservableObject {
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
+        // Devices, unlike processes, have a listener — and a re-route should happen when the
+        // AirPods connect, not up to two seconds later.
+        deviceMonitor.onChange = { [weak self] _ in self?.refresh() }
+        deviceMonitor.start()
         refresh()
     }
 
@@ -103,6 +144,7 @@ final class VolumeMixerFeature: Feature, ObservableObject {
         MainActor.assumeIsolated {
             pollTimer?.invalidate()
             pollTimer = nil
+            deviceMonitor.stop()
             teardownTaps()
             processes = []
             permissionLooksDenied = false
@@ -127,36 +169,53 @@ final class VolumeMixerFeature: Feature, ObservableObject {
     func refresh() {
         Self.workQueue.async { [weak self] in
             let found = AudioProcesses.current().filter(\.isPlaying)
+            // Read here, off main, with the processes: `AudioSystem` blocks on coreaudiod.
+            let devices = AudioSystem.devices()
+            let defaultID = AudioSystem.defaultDevice(.output)
+            let defaultUID = devices.first { $0.id == defaultID }?.uid
+            let outputs = AudioDeviceList.selectable(from: devices, kind: .output)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if self.processes.map(\.id) != found.map(\.id) { self.processes = found }
+                if self.outputDevices != outputs { self.outputDevices = outputs }
+                self.defaultOutputUID = defaultUID
                 self.reconcileTaps()
                 self.checkForSilence()
             }
         }
     }
 
-    /// A tap exists only for an app that is both playing and turned down. Tapping an app at full
-    /// volume would route its audio through us for no reason at all.
+    /// A tap exists only for an app that is playing and either turned down or sent to another
+    /// device — see `MixerPlan`. Tapping an app that would sound the same untapped would route its
+    /// audio through us for no reason at all.
+    ///
+    /// A tap is bound to one output for its life, so a tap on the wrong device — the app was
+    /// re-routed, its device left, or the system output changed under it — is torn down and made
+    /// again. That costs a short gap in the audio, which is why it only happens on a real change.
     @MainActor
     private func reconcileTaps() {
-        let wanted = Set(
-            processes
-                .filter { levels.hasCustomLevel(for: $0.bundleID) }
-                .map(\.bundleID)
+        let wanted = MixerPlan.desiredTaps(
+            playing: processes.map(\.bundleID),
+            levels: levels,
+            routes: routes,
+            outputs: outputDevices,
+            defaultOutputUID: defaultOutputUID
         )
 
-        for (bundleID, tap) in taps where !wanted.contains(bundleID) {
+        for (bundleID, tap) in taps where wanted[bundleID] != tap.outputUID {
             tap.destroy()
             taps.removeValue(forKey: bundleID)
         }
 
-        for process in processes where wanted.contains(process.bundleID) && taps[process.bundleID] == nil {
-            guard let tap = AudioProcessTap(
-                processObjectID: process.id,
-                bundleID: process.bundleID,
-                level: levels.level(for: process.bundleID)
-            ) else { continue }
+        for process in processes where taps[process.bundleID] == nil {
+            guard let outputUID = wanted[process.bundleID],
+                  let tap = AudioProcessTap(
+                      processObjectID: process.id,
+                      bundleID: process.bundleID,
+                      level: levels.level(for: process.bundleID),
+                      outputUID: outputUID
+                  )
+            else { continue }
             taps[process.bundleID] = tap
         }
     }

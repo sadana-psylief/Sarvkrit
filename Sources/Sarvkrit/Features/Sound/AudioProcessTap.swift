@@ -31,6 +31,9 @@ final class AudioProcessTap {
 
     private let processObjectID: AudioObjectID
     let bundleID: String
+    /// The device this app's audio plays on. Fixed for the tap's life: a different output means a
+    /// different aggregate, so a re-route is a teardown and a fresh tap.
+    let outputUID: String
 
     /// Read on the audio thread every render. Deliberately a plain stored property: a lock here
     /// would be a priority inversion waiting to happen.
@@ -41,9 +44,10 @@ final class AudioProcessTap {
     /// ever drives a piece of UI copy.
     private(set) var silentRenderCount: Int = 0
 
-    init?(processObjectID: AudioObjectID, bundleID: String, level: Float) {
+    init?(processObjectID: AudioObjectID, bundleID: String, level: Float, outputUID: String) {
         self.processObjectID = processObjectID
         self.bundleID = bundleID
+        self.outputUID = outputUID
         self.level = level
         guard start() else { return nil }
     }
@@ -71,10 +75,6 @@ final class AudioProcessTap {
             return false
         }
 
-        guard let outputUID = defaultOutputUID() else {
-            destroy()
-            return false
-        }
         let tapUID = description.uuid.uuidString
 
         let aggregateDescription: [String: Any] = [
@@ -177,10 +177,5 @@ final class AudioProcessTap {
     /// visible cause — far worse than the usual cost of a leak.
     deinit {
         destroy()
-    }
-
-    private func defaultOutputUID() -> String? {
-        guard let device = AudioSystem.defaultDevice(.output) else { return nil }
-        return AudioSystem.devices().first { $0.id == device }?.uid
     }
 }

@@ -10,7 +10,7 @@ struct VolumeMixerDetailView: View {
             Section {
                 Toggle("Volume Mixer", isOn: app.binding(for: feature))
             } footer: {
-                Text("Give each app its own volume. Apps appear while they're playing.")
+                Text("Give each app its own volume and output. Apps appear while they're playing.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -60,6 +60,10 @@ struct VolumeMixerDetailView: View {
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
                                     .frame(width: 38, alignment: .trailing)
+                                MixerOutputMenu(
+                                    feature: feature, bundleID: process.bundleID,
+                                    appName: process.name
+                                )
                             }
                         }
                     }
@@ -70,7 +74,7 @@ struct VolumeMixerDetailView: View {
 
             Section {
                 if feature.customisedBundleIDs.isEmpty {
-                    Text("You haven't changed any app's volume.")
+                    Text("You haven't changed any app's volume or output.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(feature.customisedBundleIDs, id: \.self) { bundleID in
@@ -80,12 +84,16 @@ struct VolumeMixerDetailView: View {
                                     .font(.caption)
                                     .monospacedDigit()
                                     .foregroundStyle(.secondary)
-                                Button("Reset") { feature.resetLevel(for: bundleID) }
+                                MixerOutputMenu(
+                                    feature: feature, bundleID: bundleID,
+                                    appName: displayName(bundleID)
+                                )
+                                Button("Reset") { feature.reset(bundleID) }
                                     .controlSize(.small)
                             }
                         }
                     }
-                    Button("Reset every app", role: .destructive) { feature.resetAllLevels() }
+                    Button("Reset every app", role: .destructive) { feature.resetAll() }
                 }
             } header: {
                 Text("Remembered")
@@ -93,9 +101,10 @@ struct VolumeMixerDetailView: View {
                 // Every app that's been turned down, listed — so nothing is quietly attenuated in a
                 // place the user can't find weeks later.
                 Text("""
-                    Volumes are remembered by app, so they survive quitting and restarting. Every \
-                    app you've changed is listed here, and only apps you've actually turned down \
-                    are routed through Sarvkrit at all.
+                    Volumes and outputs are remembered by app, so they survive quitting and \
+                    restarting. Every app you've changed is listed here, and only apps you've \
+                    actually turned down or sent elsewhere are routed through Sarvkrit at all. An \
+                    app whose device isn't connected plays on the system output until it is.
                     """)
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -281,6 +281,10 @@ near full scale produces samples the hardware can't play. Sarvkrit runs the boos
 soft limiter, which leaves anything below the threshold **bit-for-bit untouched** — a quiet podcast
 at 200% never reaches it — and bends the loudest peaks over smoothly instead of flattening them.
 
+Each app can also have **its own output device** — music on the speakers, a call in your AirPods.
+Pick it from the speaker icon on the app's row. If that device disconnects, the app plays on the
+system output until it comes back, then returns to it on its own.
+
 There's no audio driver and no installer. It works by tapping the app's audio and playing it back at
 the level you chose, which is the only way to do this that doesn't put a plug-in in
 `/Library/Audio/Plug-Ins/HAL/`.
