@@ -45,6 +45,11 @@ final class FanHelperBundleTests: XCTestCase {
     /// after a password prompt in front of a user.
     func testTheHelperSatisfiesTheRequirementTheRootScriptDemands() throws {
         let url = try helperURL()
+        // CI builds with signing off, so nothing carries a team and the requirement cannot be met.
+        // Skip on the *app's* signature, not the helper's: a team-signed app shipping an unsigned
+        // helper is exactly the bug this test exists to catch.
+        try XCTSkipIf(Self.hostTeamIdentifier() == nil,
+                      "unsigned build: no team to check the helper against")
 
         var staticCode: SecStaticCode?
         XCTAssertEqual(SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode), errSecSuccess)
@@ -63,5 +68,18 @@ final class FanHelperBundleTests: XCTestCase {
             the shipped helper does not satisfy the root script's requirement (OSStatus \(status)).
             The script would exit 3 after the user typed their password.
             """)
+    }
+
+    private static func hostTeamIdentifier() -> String? {
+        var me: SecCode?
+        guard SecCodeCopySelf([], &me) == errSecSuccess, let me else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(me, [], &staticCode) == errSecSuccess,
+              let staticCode else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(
+                staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let info = info as? [String: Any] else { return nil }
+        return info[kSecCodeInfoTeamIdentifier as String] as? String
     }
 }

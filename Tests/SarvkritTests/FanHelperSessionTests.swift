@@ -15,6 +15,11 @@ final class FanHelperSessionTests: XCTestCase {
             .appendingPathComponent(FanHelperScript.bundledPath).path
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: path),
                           "not hosted in a built Sarvkrit.app")
+        // The helper opens the SMC before it connects and exits 70 if it cannot, so on a Mac
+        // without one (CI's virtualized runners) it never reaches anything these tests look at.
+        // The refusal tests would still pass there, but only because nothing connected at all.
+        try XCTSkipUnless(SMCClient().open(),
+                          "no AppleSMC user client here, so the helper exits before connecting")
         return path
     }
 
