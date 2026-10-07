@@ -72,7 +72,8 @@ struct VolumeMixerTrayView: View {
             Text(process.name)
                 .font(.system(size: Theme.Typography.body))
                 .lineLimit(1)
-                .frame(width: 92, alignment: .leading)
+                // Narrower than it was, to make room for the output menu at the end of the row.
+                .frame(width: 80, alignment: .leading)
 
             Slider(
                 value: Binding(
@@ -88,6 +89,9 @@ struct VolumeMixerTrayView: View {
             .tint(isBoosted ? .orange : .accentColor)
 
             percentage(level, isBoosted: isBoosted)
+            MixerOutputMenu(
+                feature: feature, bundleID: process.bundleID, appName: process.name, compact: true
+            )
             muteButton(for: process, level: level)
         }
         .padding(.horizontal, Theme.Metrics.rowInset)
